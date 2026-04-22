@@ -33,18 +33,29 @@ mcp.mount(ws_mcp, namespace="ws")
 
 def _build_app():
     """Combine MCP + setup UI into one ASGI app for HTTP mode."""
-    from fastapi import FastAPI
-    from fastapi.responses import HTMLResponse
+    from fastapi import FastAPI, Request
+    from fastapi.responses import HTMLResponse, JSONResponse
+    from starlette.middleware.base import BaseHTTPMiddleware
     from setup_ui import setup_page, health
     from auth import API_KEY
 
-    app = FastAPI(title="Nexus", docs_url=None, redoc_url=None)
+    class TokenAuthMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            if request.url.path.startswith("/mcp"):
+                token = (
+                    request.query_params.get("token")
+                    or request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+                )
+                if token != API_KEY:
+                    return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            return await call_next(request)
 
-    # Setup UI routes
+    app = FastAPI(title="Nexus", docs_url=None, redoc_url=None)
+    app.add_middleware(TokenAuthMiddleware)
+
     app.get("/", response_class=HTMLResponse)(setup_page)
     app.get("/health")(health)
 
-    # MCP endpoint at /mcp
     mcp_app = mcp.http_app(path="/mcp")
     app.mount("/mcp", mcp_app)
 

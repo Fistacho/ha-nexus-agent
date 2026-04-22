@@ -15,7 +15,7 @@ def _ha_url() -> str:
 
 def _mcp_url() -> str:
     host = os.getenv("HA_IP", "homeassistant.local")
-    return f"http://{host}:{_PORT}/mcp"
+    return f"http://{host}:{_PORT}/mcp?token={API_KEY}"
 
 
 async def setup_page():
@@ -103,7 +103,7 @@ async def setup_page():
 <p>Run in terminal. That's it.</p>
 
 <h2>Claude Desktop</h2>
-<p>Paste into <code>%APPDATA%\Claude\claude_desktop_config.json</code> (Windows) or <code>~/Library/Application Support/Claude/claude_desktop_config.json</code> (macOS):</p>
+<p>Paste into <code>%APPDATA%\\Claude\\claude_desktop_config.json</code> (Windows) or <code>~/Library/Application Support/Claude/claude_desktop_config.json</code> (macOS):</p>
 <pre><button class="copy-btn" onclick="navigator.clipboard.writeText(this.nextSibling.textContent.trim())">copy</button>{claude_desktop}</pre>
 
 <div class="grid">
