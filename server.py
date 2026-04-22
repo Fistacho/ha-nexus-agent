@@ -39,10 +39,13 @@ def _build_app():
     from setup_ui import setup_page, health, regenerate
     from auth import API_KEY
 
+    # Must create mcp_app first — FastAPI needs its lifespan
+    mcp_app = mcp.http_app(path="/mcp", transport="sse")
+
     class TokenAuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
-            # Only guard the SSE entry point — /mcp/messages/ is session-authenticated by FastMCP
-            if request.url.path == "/mcp/sse":
+            # Guard only the SSE entry point (GET /mcp); /messages/ is session-authenticated
+            if request.url.path == "/mcp" and request.method == "GET":
                 token = (
                     request.query_params.get("token")
                     or request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
@@ -51,14 +54,13 @@ def _build_app():
                     return JSONResponse({"error": "Unauthorized"}, status_code=401)
             return await call_next(request)
 
-    app = FastAPI(title="Nexus", docs_url=None, redoc_url=None)
+    app = FastAPI(title="Nexus", docs_url=None, redoc_url=None, lifespan=mcp_app.lifespan)
     app.add_middleware(TokenAuthMiddleware)
 
     app.get("/", response_class=HTMLResponse)(setup_page)
     app.get("/health")(health)
     app.post("/regenerate")(regenerate)
 
-    mcp_app = mcp.http_app(path="/mcp", transport="sse")
     app.mount("/", mcp_app)
 
     return app
