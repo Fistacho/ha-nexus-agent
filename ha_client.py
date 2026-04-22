@@ -6,7 +6,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _HA_URL = os.getenv("HA_URL", "http://homeassistant.local:8123").rstrip("/")
-_HA_TOKEN = os.getenv("HA_TOKEN", "")
+
+def _load_ha_token() -> str:
+    from auth import get_ha_token
+    try:
+        return get_ha_token()
+    except RuntimeError:
+        return ""
+
+_HA_TOKEN = _load_ha_token()
 
 
 def _headers() -> dict:

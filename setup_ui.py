@@ -81,7 +81,7 @@ api_key = {api_key}"""
 
 @app.get("/health")
 async def health():
-    return {{"status": "ok", "ha_url": _ha_url(), "tools": 93}}
+    return {"status": "ok", "ha_url": _ha_url(), "tools": 93}
 
 
 def start_ui():
