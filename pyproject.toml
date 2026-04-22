@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "ha-super-mcp"
+name = "nexus"
 version = "0.1.0"
-description = "Super MCP server for Home Assistant — full control via AI"
+description = "Nexus — MCP server for Home Assistant"
 requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=2.0.0",
@@ -14,10 +14,12 @@ dependencies = [
     "pyyaml>=6.0",
     "python-dotenv>=1.0.0",
     "gitpython>=3.1.40",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
 ]
 
 [project.scripts]
-ha-super-mcp = "server:main"
+nexus = "server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]

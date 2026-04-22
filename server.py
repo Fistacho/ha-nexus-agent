@@ -1,3 +1,4 @@
+import threading
 from fastmcp import FastMCP
 from dotenv import load_dotenv
 
@@ -14,7 +15,7 @@ from tools.dashboards import mcp as dashboards_mcp
 from tools.files import mcp as files_mcp
 from tools.git_ops import mcp as git_mcp
 
-mcp = FastMCP("ha-super-mcp")
+mcp = FastMCP("nexus")
 
 mcp.mount(entities_mcp, namespace="entities")
 mcp.mount(services_mcp, namespace="services")
@@ -29,6 +30,17 @@ mcp.mount(git_mcp, namespace="git")
 
 
 def main():
+    from auth import API_KEY
+    import os
+    port = int(os.getenv("NEXUS_PORT", "7123"))
+    print(f"Nexus MCP server starting…")
+    print(f"Setup UI → http://localhost:{port}")
+    print(f"API key  → {API_KEY}")
+
+    from setup_ui import start_ui
+    ui_thread = threading.Thread(target=start_ui, daemon=True)
+    ui_thread.start()
+
     mcp.run()
 
 
