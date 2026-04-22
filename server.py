@@ -16,16 +16,16 @@ from tools.git_ops import mcp as git_mcp
 
 mcp = FastMCP("ha-super-mcp")
 
-mcp.mount("entities", entities_mcp)
-mcp.mount("services", services_mcp)
-mcp.mount("automations", automations_mcp)
-mcp.mount("areas", areas_mcp)
-mcp.mount("history", history_mcp)
-mcp.mount("helpers", helpers_mcp)
-mcp.mount("system", system_mcp)
-mcp.mount("dashboards", dashboards_mcp)
-mcp.mount("files", files_mcp)
-mcp.mount("git", git_mcp)
+mcp.mount(entities_mcp, namespace="entities")
+mcp.mount(services_mcp, namespace="services")
+mcp.mount(automations_mcp, namespace="automations")
+mcp.mount(areas_mcp, namespace="areas")
+mcp.mount(history_mcp, namespace="history")
+mcp.mount(helpers_mcp, namespace="helpers")
+mcp.mount(system_mcp, namespace="system")
+mcp.mount(dashboards_mcp, namespace="dashboards")
+mcp.mount(files_mcp, namespace="files")
+mcp.mount(git_mcp, namespace="git")
 
 
 def main():

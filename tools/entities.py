@@ -27,10 +27,16 @@ def get_entity(entity_id: str) -> dict:
 
 
 @mcp.tool()
-def turn_on(entity_id: str, **kwargs) -> list[dict]:
-    """Turn on an entity (light, switch, fan, media_player…). Pass brightness, color_temp etc. as kwargs."""
+def turn_on(entity_id: str, brightness: int | None = None, color_temp: int | None = None, rgb_color: list[int] | None = None) -> list[dict]:
+    """Turn on an entity. Optional: brightness (0-255), color_temp (mireds), rgb_color ([r,g,b])."""
     domain = entity_id.split(".")[0]
-    data = {"entity_id": entity_id, **kwargs}
+    data: dict = {"entity_id": entity_id}
+    if brightness is not None:
+        data["brightness"] = brightness
+    if color_temp is not None:
+        data["color_temp"] = color_temp
+    if rgb_color is not None:
+        data["rgb_color"] = rgb_color
     return ha.call_service(domain, "turn_on", data)
 
 
