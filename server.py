@@ -33,26 +33,33 @@ mcp.mount(ws_mcp, namespace="ws")
 
 def _build_app():
     """Combine MCP + setup UI into one ASGI app for HTTP mode."""
-    from fastapi import FastAPI, Request
-    from fastapi.responses import HTMLResponse, JSONResponse
-    from starlette.middleware.base import BaseHTTPMiddleware
+    from fastapi import FastAPI
+    from fastapi.responses import HTMLResponse
     from setup_ui import setup_page, health, regenerate
     from auth import API_KEY
+    from urllib.parse import parse_qs
 
     # Must create mcp_app first — FastAPI needs its lifespan
     mcp_app = mcp.http_app(path="/mcp", transport="sse")
 
-    class TokenAuthMiddleware(BaseHTTPMiddleware):
-        async def dispatch(self, request: Request, call_next):
-            # Guard only the SSE entry point (GET /mcp); /messages/ is session-authenticated
-            if request.url.path == "/mcp" and request.method == "GET":
-                token = (
-                    request.query_params.get("token")
-                    or request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-                )
+    # Pure ASGI middleware — BaseHTTPMiddleware buffers responses and breaks SSE streaming
+    class TokenAuthMiddleware:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http" and scope.get("path") == "/mcp" and scope.get("method") == "GET":
+                query = parse_qs(scope.get("query_string", b"").decode())
+                token = query.get("token", [None])[0]
+                if not token:
+                    headers = dict(scope.get("headers", []))
+                    auth = headers.get(b"authorization", b"").decode()
+                    token = auth.removeprefix("Bearer ").strip()
                 if token != API_KEY:
-                    return JSONResponse({"error": "Unauthorized"}, status_code=401)
-            return await call_next(request)
+                    await send({"type": "http.response.start", "status": 401, "headers": [(b"content-type", b"application/json")]})
+                    await send({"type": "http.response.body", "body": b'{"error":"Unauthorized"}'})
+                    return
+            await self.app(scope, receive, send)
 
     app = FastAPI(title="Nexus", docs_url=None, redoc_url=None, lifespan=mcp_app.lifespan)
     app.add_middleware(TokenAuthMiddleware)
