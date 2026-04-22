@@ -40,11 +40,9 @@ Open **http://localhost:7123** — copy the generated config into your MCP clien
 
 ## Connecting to your MCP client
 
-After starting Nexus, open **<http://localhost:7123>** — the setup UI shows the exact config snippet to paste into your client.
+After starting Nexus, open **<http://your-ha-ip:7123>** — the setup UI generates the exact config for each client automatically.
 
 ### Claude Desktop
-
-Paste into `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
 
 ```json
 {
@@ -62,13 +60,55 @@ Paste into `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library
 }
 ```
 
-### Cursor / VS Code
+### Claude Code (CLI)
 
+```bash
+claude mcp add nexus --transport sse http://your-ha-ip:7123/mcp
 ```
-[mcp]
-name = nexus
-url = http://localhost:7123/mcp
-api_key = YOUR_API_KEY
+
+### VS Code
+
+Create `.vscode/mcp.json` in your workspace:
+
+```json
+{
+  "servers": {
+    "nexus": {
+      "type": "sse",
+      "url": "http://your-ha-ip:7123/mcp"
+    }
+  }
+}
+```
+
+### Cursor
+
+Paste into `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "nexus": {
+      "url": "http://your-ha-ip:7123/mcp",
+      "type": "sse"
+    }
+  }
+}
+```
+
+### Windsurf
+
+Paste into `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "nexus": {
+      "url": "http://your-ha-ip:7123/mcp",
+      "type": "sse"
+    }
+  }
+}
 ```
 
 ## Features
