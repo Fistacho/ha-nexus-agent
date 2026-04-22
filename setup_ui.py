@@ -59,7 +59,7 @@ api_key = {api_key}"""
 </head>
 <body>
 <h1>Nexus <span class="badge">running</span></h1>
-<p class="sub">MCP server for Home Assistant · 93 tools</p>
+<p class="sub">MCP server for Home Assistant · 100 tools</p>
 
 <h2>Your API Key</h2>
 <div class="key">{api_key}</div>
@@ -81,7 +81,7 @@ api_key = {api_key}"""
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "ha_url": _ha_url(), "tools": 93}
+    return {"status": "ok", "ha_url": _ha_url(), "tools": 100}
 
 
 def start_ui():
