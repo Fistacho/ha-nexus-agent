@@ -13,7 +13,6 @@ def _ha_url() -> str:
     return os.getenv("HA_URL", "http://homeassistant.local:8123")
 
 
-@app.get("/", response_class=HTMLResponse)
 async def setup_page():
     ha_url = _ha_url()
     api_key = API_KEY
