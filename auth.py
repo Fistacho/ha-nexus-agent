@@ -46,6 +46,14 @@ def get_or_create_api_key() -> str:
 API_KEY = get_or_create_api_key()
 
 
+def delete_api_key() -> None:
+    """Delete the persisted key file so a new key is generated on next startup."""
+    try:
+        _KEY_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 async def verify_token(credentials: HTTPAuthorizationCredentials = Security(_bearer)) -> str:
     if credentials is None or credentials.credentials != API_KEY:
         raise HTTPException(

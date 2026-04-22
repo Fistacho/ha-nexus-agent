@@ -1,5 +1,5 @@
 from fastapi import Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import os
 from auth import API_KEY
 
@@ -111,7 +111,11 @@ async def setup_page(request: Request):
 
 <h2>Home Assistant</h2>
 <p>Connected to: <code>""" + ha_url + """</code></p>
-<div class="warn">Never share your API key. Delete <code>/config/.nexus_api_key</code> and restart to regenerate.</div>
+<div class="warn">
+  Never share your API key.
+  <button onclick="regenerateKey()" style="margin-left:12px;background:#92400e;border:1px solid #fcd34d;color:#fcd34d;padding:4px 14px;border-radius:4px;font-size:12px;cursor:pointer" id="regen-btn">Regenerate key</button>
+  <span id="regen-msg" style="margin-left:10px;font-size:12px"></span>
+</div>
 
 <script>
 function copyBlock(id) {
@@ -131,6 +135,24 @@ function copyBlock(id) {
     document.body.removeChild(ta);
   }
 }
+function regenerateKey() {
+  var btn = document.getElementById('regen-btn');
+  var msg = document.getElementById('regen-msg');
+  btn.disabled = true;
+  btn.textContent = 'Deleting...';
+  fetch('regenerate', {method:'POST'}).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) {
+      msg.style.color = '#86efac';
+      msg.textContent = 'Key deleted — restart add-on to activate new key.';
+      btn.textContent = 'Done';
+    } else {
+      msg.style.color = '#fca5a5';
+      msg.textContent = d.error || 'Error';
+      btn.disabled = false;
+      btn.textContent = 'Regenerate key';
+    }
+  });
+}
 function flash(btn) {
   btn.textContent = 'copied!';
   btn.classList.add('ok');
@@ -143,3 +165,9 @@ function flash(btn) {
 
 async def health():
     return {"status": "ok", "ha_url": _ha_url(), "tools": 100}
+
+
+async def regenerate():
+    from auth import delete_api_key
+    delete_api_key()
+    return JSONResponse({"ok": True})

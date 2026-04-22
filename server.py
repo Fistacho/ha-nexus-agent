@@ -36,7 +36,7 @@ def _build_app():
     from fastapi import FastAPI, Request
     from fastapi.responses import HTMLResponse, JSONResponse
     from starlette.middleware.base import BaseHTTPMiddleware
-    from setup_ui import setup_page, health
+    from setup_ui import setup_page, health, regenerate
     from auth import API_KEY
 
     class TokenAuthMiddleware(BaseHTTPMiddleware):
@@ -55,6 +55,7 @@ def _build_app():
 
     app.get("/", response_class=HTMLResponse)(setup_page)
     app.get("/health")(health)
+    app.post("/regenerate")(regenerate)
 
     mcp_app = mcp.http_app(path="/mcp")
     app.mount("/", mcp_app)
