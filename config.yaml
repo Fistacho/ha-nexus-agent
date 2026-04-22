@@ -1,0 +1,47 @@
+name: Nexus Agent
+version: "0.1.0"
+slug: nexus_agent
+description: "MCP server for Home Assistant — gives AI assistants (Claude, Cursor, VS Code) full control over your smart home through 93 tools"
+url: https://github.com/Fistacho/ha-nexus-agent
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+init: false
+startup: application
+boot: auto
+host_network: false
+hassio_api: true
+hassio_role: manager
+homeassistant_api: true
+auth_api: true
+
+options:
+  port: 7123
+  log_level: info
+  git_versioning_auto: true
+  max_backups: 30
+  api_key: ""
+
+schema:
+  port: int
+  log_level: list(debug|info|warning|error)
+  git_versioning_auto: bool
+  max_backups: int
+  api_key: str?
+
+ports:
+  7123/tcp: 7123
+
+ports_description:
+  7123/tcp: Nexus Agent — MCP + Setup UI
+
+map:
+  - config:rw
+
+ingress: true
+ingress_port: 7123
+panel_icon: mdi:robot
+panel_title: Nexus
