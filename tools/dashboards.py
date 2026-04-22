@@ -12,11 +12,21 @@ def list_dashboards() -> list[dict]:
 
 @mcp.tool()
 def get_dashboard_config(url_path: str | None = None) -> dict:
-    """Get raw Lovelace dashboard config (views, cards). Omit url_path for the default dashboard."""
-    kwargs = {}
-    if url_path and url_path != "lovelace":
-        kwargs["url_path"] = url_path
-    return ha._ws_call("lovelace/config", **kwargs)
+    """Get Lovelace dashboard config. `url_path` can be a dashboard (e.g. 'map') or a view path
+    inside the default dashboard (e.g. 'lukasz' from /lovelace/lukasz). Omit for the full default dashboard."""
+    if not url_path or url_path == "lovelace":
+        return ha._ws_call("lovelace/config")
+    try:
+        return ha._ws_call("lovelace/config", url_path=url_path)
+    except RuntimeError as e:
+        if "config_not_found" not in str(e):
+            raise
+    # Fallback — url_path is a view inside the default dashboard
+    default = ha._ws_call("lovelace/config")
+    for view in default.get("views", []):
+        if view.get("path") == url_path:
+            return {"view": view, "source": "default_dashboard_view", "path": url_path}
+    raise RuntimeError(f"No dashboard or view found for url_path='{url_path}'")
 
 
 @mcp.tool()
