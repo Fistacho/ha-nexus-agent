@@ -58,7 +58,7 @@ http://your-ha-ip:7123/mcp?token=YOUR_API_KEY
 ### Claude Code CLI
 
 ```bash
-claude mcp add nexus --transport sse "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY"
+claude mcp add nexus --transport sse "http://your-ha-ip:7123/mcp/sse?token=YOUR_API_KEY" --scope user
 ```
 
 ### OpenAI Codex CLI
