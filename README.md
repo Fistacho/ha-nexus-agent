@@ -52,7 +52,7 @@ Open **<http://your-ha-ip:7123>** after starting Nexus. The setup page generates
 All SSE-based clients connect to:
 
 ```text
-http://your-ha-ip:7123/mcp?token=YOUR_API_KEY
+http://your-ha-ip:7123/mcp/sse?token=YOUR_API_KEY
 ```
 
 ### Claude Code CLI
@@ -64,13 +64,13 @@ claude mcp add nexus --transport sse "http://your-ha-ip:7123/mcp/sse?token=YOUR_
 ### OpenAI Codex CLI
 
 ```bash
-codex mcp add nexus --url "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY"
+codex mcp add nexus --url "http://your-ha-ip:7123/mcp/sse?token=YOUR_API_KEY"
 ```
 
 ### Gemini CLI
 
 ```bash
-gemini mcp add nexus --url "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY"
+gemini mcp add nexus --url "http://your-ha-ip:7123/mcp/sse?token=YOUR_API_KEY"
 ```
 
 ### VS Code
@@ -82,7 +82,7 @@ Create `.vscode/mcp.json`:
   "servers": {
     "nexus": {
       "type": "sse",
-      "url": "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY"
+      "url": "http://your-ha-ip:7123/mcp/sse?token=YOUR_API_KEY"
     }
   }
 }
@@ -96,7 +96,7 @@ Paste into `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "nexus": {
-      "url": "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY",
+      "url": "http://your-ha-ip:7123/mcp/sse?token=YOUR_API_KEY",
       "type": "sse"
     }
   }
@@ -111,7 +111,7 @@ Paste into `~/.codeium/windsurf/mcp_config.json`:
 {
   "mcpServers": {
     "nexus": {
-      "url": "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY",
+      "url": "http://your-ha-ip:7123/mcp/sse?token=YOUR_API_KEY",
       "type": "sse"
     }
   }
