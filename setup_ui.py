@@ -19,13 +19,13 @@ async def setup_page(request: Request):
     cwd = os.getcwd().replace("\\", "/")
 
     configs = {
-        "claude-code":    f'claude mcp add nexus --transport sse "{mcp_url}" --scope user',
+        "claude-code":    f'claude mcp add nexus --transport http "{mcp_url}" --scope user',
         "codex":          f'codex mcp add nexus --url "{mcp_url}"',
         "gemini":         f'gemini mcp add nexus --url "{mcp_url}"',
         "claude-desktop": '{{\n  "mcpServers": {{\n    "nexus": {{\n      "command": "python",\n      "args": ["server.py"],\n      "cwd": "{cwd}",\n      "env": {{\n        "HA_URL": "{ha_url}",\n        "NEXUS_API_KEY": "{api_key}"\n      }}\n    }}\n  }}\n}}'.format(cwd=cwd, ha_url=ha_url, api_key=api_key),
-        "vscode":         '{{\n  "servers": {{\n    "nexus": {{\n      "type": "sse",\n      "url": "{mcp_url}"\n    }}\n  }}\n}}'.format(mcp_url=mcp_url),
-        "cursor":         '{{\n  "mcpServers": {{\n    "nexus": {{\n      "url": "{mcp_url}",\n      "type": "sse"\n    }}\n  }}\n}}'.format(mcp_url=mcp_url),
-        "windsurf":       '{{\n  "mcpServers": {{\n    "nexus": {{\n      "url": "{mcp_url}",\n      "type": "sse"\n    }}\n  }}\n}}'.format(mcp_url=mcp_url),
+        "vscode":         '{{\n  "servers": {{\n    "nexus": {{\n      "type": "http",\n      "url": "{mcp_url}"\n    }}\n  }}\n}}'.format(mcp_url=mcp_url),
+        "cursor":         '{{\n  "mcpServers": {{\n    "nexus": {{\n      "url": "{mcp_url}",\n      "type": "http"\n    }}\n  }}\n}}'.format(mcp_url=mcp_url),
+        "windsurf":       '{{\n  "mcpServers": {{\n    "nexus": {{\n      "url": "{mcp_url}",\n      "type": "http"\n    }}\n  }}\n}}'.format(mcp_url=mcp_url),
     }
 
     return HTMLResponse("""<!DOCTYPE html>

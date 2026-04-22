@@ -39,16 +39,16 @@ def _build_app():
     from auth import API_KEY
     from urllib.parse import parse_qs
 
-    # Must create mcp_app first — FastAPI needs its lifespan
-    mcp_app = mcp.http_app(path="/mcp", transport="sse")
+    # Streamable HTTP transport — modern MCP spec, more robust than SSE
+    mcp_app = mcp.http_app(path="/mcp", transport="http", stateless_http=True)
 
-    # Pure ASGI middleware — BaseHTTPMiddleware buffers responses and breaks SSE streaming
+    # Pure ASGI middleware — BaseHTTPMiddleware buffers responses and breaks streaming
     class TokenAuthMiddleware:
         def __init__(self, app):
             self.app = app
 
         async def __call__(self, scope, receive, send):
-            if scope["type"] == "http" and scope.get("path") == "/mcp" and scope.get("method") == "GET":
+            if scope["type"] == "http" and scope.get("path", "").startswith("/mcp"):
                 query = parse_qs(scope.get("query_string", b"").decode())
                 token = query.get("token", [None])[0]
                 if not token:
