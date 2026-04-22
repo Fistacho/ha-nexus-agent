@@ -56,8 +56,8 @@ def _build_app():
     app.get("/", response_class=HTMLResponse)(setup_page)
     app.get("/health")(health)
 
-    mcp_app = mcp.http_app(path="/")
-    app.mount("/mcp", mcp_app)
+    mcp_app = mcp.http_app(path="/mcp")
+    app.mount("/", mcp_app)
 
     return app
 
