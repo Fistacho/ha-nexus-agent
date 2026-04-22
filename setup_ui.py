@@ -1,3 +1,4 @@
+from fastapi import Request
 from fastapi.responses import HTMLResponse
 import os
 from auth import API_KEY
@@ -9,14 +10,10 @@ def _ha_url() -> str:
     return os.getenv("HA_URL", "http://homeassistant.local:8123")
 
 
-def _mcp_url() -> str:
-    host = os.getenv("HA_IP", "homeassistant.local")
-    return f"http://{host}:{_PORT}/mcp?token={API_KEY}"
-
-
-async def setup_page():
+async def setup_page(request: Request):
+    host = request.headers.get("host", os.getenv("HA_IP", f"homeassistant.local:{_PORT}"))
     ha_url = _ha_url()
-    mcp_url = _mcp_url()
+    mcp_url = f"http://{host}/mcp?token={API_KEY}"
     api_key = API_KEY
     cwd = os.getcwd().replace("\\", "/")
 
@@ -36,33 +33,33 @@ async def setup_page():
 <meta charset="UTF-8">
 <title>Nexus</title>
 <style>
-  *{{box-sizing:border-box}}
-  body{{font-family:system-ui,sans-serif;max-width:820px;margin:40px auto;padding:0 24px 60px;background:#0f172a;color:#e2e8f0}}
-  h1{{color:#38bdf8;font-size:2rem;margin-bottom:4px}}
-  .sub{{color:#64748b;margin-bottom:32px;font-size:.9rem}}
-  h2{{color:#7dd3fc;border-bottom:1px solid #1e3a5f;padding-bottom:6px;margin-top:32px;font-size:1rem}}
-  .code-wrap{{position:relative;margin:6px 0 16px}}
-  pre{{background:#1e293b;padding:14px 50px 14px 16px;border-radius:8px;overflow-x:auto;font-size:12.5px;border:1px solid #334155;margin:0;white-space:pre-wrap;word-break:break-all}}
-  .copy-btn{{position:absolute;top:8px;right:8px;background:#334155;border:none;color:#94a3b8;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer}}
-  .copy-btn:hover{{background:#475569;color:#e2e8f0}}
-  .copy-btn.ok{{background:#166534;color:#bbf7d0}}
-  .key{{background:#1e293b;border:1px solid #0ea5e9;border-radius:6px;padding:10px 16px;font-family:monospace;font-size:13px;color:#38bdf8;word-break:break-all;margin-bottom:6px}}
-  .badge{{display:inline-block;background:#166534;color:#bbf7d0;padding:2px 10px;border-radius:12px;font-size:12px;margin-left:8px;vertical-align:middle}}
-  .tip{{background:#0c2a1a;border:1px solid #166534;border-radius:6px;padding:8px 14px;color:#86efac;font-size:12.5px;margin-bottom:10px}}
-  .warn{{background:#422006;border:1px solid #92400e;border-radius:6px;padding:10px 16px;color:#fcd34d;font-size:13px;margin-top:24px}}
-  .grid{{display:grid;grid-template-columns:1fr 1fr;gap:20px}}
-  p{{color:#94a3b8;font-size:.875rem;margin:4px 0 6px}}
-  code{{background:#1e293b;padding:2px 6px;border-radius:4px;font-size:11px}}
-  a{{color:#38bdf8}}
+  *{box-sizing:border-box}
+  body{font-family:system-ui,sans-serif;max-width:820px;margin:40px auto;padding:0 24px 60px;background:#0f172a;color:#e2e8f0}
+  h1{color:#38bdf8;font-size:2rem;margin-bottom:4px}
+  .sub{color:#64748b;margin-bottom:32px;font-size:.9rem}
+  h2{color:#7dd3fc;border-bottom:1px solid #1e3a5f;padding-bottom:6px;margin-top:32px;font-size:1rem}
+  .code-wrap{position:relative;margin:6px 0 16px}
+  pre{background:#1e293b;padding:14px 50px 14px 16px;border-radius:8px;overflow-x:auto;font-size:12.5px;border:1px solid #334155;margin:0;white-space:pre-wrap;word-break:break-all}
+  .copy-btn{position:absolute;top:8px;right:8px;background:#334155;border:none;color:#94a3b8;padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer}
+  .copy-btn:hover{background:#475569;color:#e2e8f0}
+  .copy-btn.ok{background:#166534;color:#bbf7d0}
+  .key{background:#1e293b;border:1px solid #0ea5e9;border-radius:6px;padding:10px 16px;font-family:monospace;font-size:13px;color:#38bdf8;word-break:break-all;margin-bottom:6px}
+  .badge{display:inline-block;background:#166534;color:#bbf7d0;padding:2px 10px;border-radius:12px;font-size:12px;margin-left:8px;vertical-align:middle}
+  .tip{background:#0c2a1a;border:1px solid #166634;border-radius:6px;padding:8px 14px;color:#86efac;font-size:12.5px;margin-bottom:10px}
+  .warn{background:#422006;border:1px solid #92400e;border-radius:6px;padding:10px 16px;color:#fcd34d;font-size:13px;margin-top:24px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  p{color:#94a3b8;font-size:.875rem;margin:4px 0 6px}
+  code{background:#1e293b;padding:2px 6px;border-radius:4px;font-size:11px}
+  a{color:#38bdf8}
 </style>
 </head>
 <body>
 <h1>Nexus <span class="badge">running</span></h1>
-<p class="sub">MCP server for Home Assistant &nbsp;·&nbsp; 100 tools &nbsp;·&nbsp; <a href="health">health check</a></p>
+<p class="sub">MCP server for Home Assistant &nbsp;&middot;&nbsp; 100 tools &nbsp;&middot;&nbsp; <a href="health">health check</a></p>
 
 <h2>MCP URL (with token)</h2>
 <div class="key" id="mcp-url">""" + mcp_url + """</div>
-<p>This URL includes your API key — paste it directly into any MCP client.</p>
+<p>This URL includes your API key &mdash; paste it directly into any MCP client.</p>
 
 <h2>API Key</h2>
 <div class="key">""" + api_key + """</div>
@@ -117,7 +114,6 @@ async def setup_page():
 function copyBlock(id) {
   var text = document.getElementById(id).textContent;
   var btn = event.target;
-  // Try modern clipboard API first, fall back to execCommand
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard.writeText(text).then(function() { flash(btn); });
   } else {
@@ -143,4 +139,4 @@ function flash(btn) {
 
 
 async def health():
-    return {"status": "ok", "ha_url": _ha_url(), "mcp_url": _mcp_url(), "tools": 100}
+    return {"status": "ok", "ha_url": _ha_url(), "tools": 100}

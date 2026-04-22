@@ -1,23 +1,28 @@
 # ha-nexus-agent
 
-MCP server for Home Assistant — gives AI assistants (Claude, Cursor, VS Code) full control over your smart home through **100 tools** covering entities, automations, scripts, dashboards, helpers, areas, history, system management, YAML config files, git-based versioning and real-time WebSocket events.
+MCP server for Home Assistant — gives AI assistants full control over your smart home through **100 tools** covering entities, automations, scripts, dashboards, helpers, areas, history, system management, YAML config files, git-based versioning and real-time WebSocket events.
+
+Works with **Claude Code CLI**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
+
+---
 
 ## Installation — Home Assistant Add-on (recommended)
 
 1. In Home Assistant go to **Settings → Add-ons → Add-on Store**
-2. Click the three-dot menu (⋮) in the top right → **Repositories**
-3. Add this URL:
+2. Click the three-dot menu (⋮) → **Repositories**
+3. Add:
 
    ```text
    https://github.com/Fistacho/ha-nexus-agent
    ```
 
-4. Find **Nexus Agent** in the store and click **Install**
-5. Go to the add-on **Configuration** tab and set your options (port, log level, etc.)
-6. Click **Start**
-7. Click **Open Web UI** — you'll see your API key and ready-to-paste config for your MCP client
+4. Find **Nexus Agent** and click **Install**
+5. Click **Start**
+6. Click **Open Web UI**
 
-That's it. No token setup needed — the add-on gets access to Home Assistant automatically.
+The web UI shows your API key and generates ready-to-paste config for every MCP client. No manual token setup — the add-on connects to Home Assistant automatically.
+
+---
 
 ## Installation — Standalone (outside HA)
 
@@ -26,56 +31,58 @@ git clone https://github.com/Fistacho/ha-nexus-agent
 cd ha-nexus-agent
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env — set HA_URL and HA_TOKEN
+# Edit .env: set HA_URL and HA_TOKEN
 python server.py
 ```
 
-Open **http://localhost:7123** — copy the generated config into your MCP client.
+Open **<http://localhost:7123>** to get your API key and MCP client configs.
 
-### Getting a Home Assistant token (standalone only)
+### Getting a Home Assistant token
 
 1. In HA go to **Profile → Security → Long-Lived Access Tokens**
-2. Click **Create Token**, give it a name (e.g. `nexus`)
-3. Paste the token as `HA_TOKEN` in your `.env`
+2. Click **Create Token**, name it `nexus`
+3. Paste as `HA_TOKEN` in `.env`
 
-## Connecting to your MCP client
+---
 
-After starting Nexus, open **<http://your-ha-ip:7123>** — the setup UI generates the exact config for each client automatically.
+## Connecting MCP clients
 
-### Claude Desktop
+Open **<http://your-ha-ip:7123>** after starting Nexus. The setup page generates the exact command or config snippet for each client — just copy and paste.
 
-```json
-{
-  "mcpServers": {
-    "nexus": {
-      "command": "python",
-      "args": ["server.py"],
-      "cwd": "/path/to/ha-nexus-agent",
-      "env": {
-        "HA_URL": "http://homeassistant.local:8123",
-        "HA_TOKEN": "your_token_here"
-      }
-    }
-  }
-}
+All SSE-based clients connect to:
+
+```text
+http://your-ha-ip:7123/mcp?token=YOUR_API_KEY
 ```
 
-### Claude Code (CLI)
+### Claude Code CLI
 
 ```bash
-claude mcp add nexus --transport sse http://your-ha-ip:7123/mcp
+claude mcp add nexus --transport sse "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY"
+```
+
+### OpenAI Codex CLI
+
+```bash
+codex mcp add nexus --url "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY"
+```
+
+### Gemini CLI
+
+```bash
+gemini mcp add nexus --url "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY"
 ```
 
 ### VS Code
 
-Create `.vscode/mcp.json` in your workspace:
+Create `.vscode/mcp.json`:
 
 ```json
 {
   "servers": {
     "nexus": {
       "type": "sse",
-      "url": "http://your-ha-ip:7123/mcp"
+      "url": "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY"
     }
   }
 }
@@ -89,7 +96,7 @@ Paste into `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "nexus": {
-      "url": "http://your-ha-ip:7123/mcp",
+      "url": "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY",
       "type": "sse"
     }
   }
@@ -104,27 +111,53 @@ Paste into `~/.codeium/windsurf/mcp_config.json`:
 {
   "mcpServers": {
     "nexus": {
-      "url": "http://your-ha-ip:7123/mcp",
+      "url": "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY",
       "type": "sse"
     }
   }
 }
 ```
 
+### Claude Desktop (standalone, subprocess mode)
+
+Paste into `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac):
+
+```json
+{
+  "mcpServers": {
+    "nexus": {
+      "command": "python",
+      "args": ["server.py"],
+      "cwd": "/path/to/ha-nexus-agent",
+      "env": {
+        "HA_URL": "http://homeassistant.local:8123",
+        "HA_TOKEN": "your_ha_token_here"
+      }
+    }
+  }
+}
+```
+
+> **Tip:** Copy the exact config (with your real paths and key) from the Nexus web UI at `http://your-ha-ip:7123`.
+
+---
+
 ## Features
 
 - **100 MCP tools** across 11 categories
-- **Real-time WebSocket** — listen for state changes, events and triggers live
-- **Git versioning** — every config change auto-committed with rollback to any point
-- **YAML validation** before saving any config file
-- **Setup web UI** — auto-generates MCP client config, shows API key
-- **HA add-on native** — installs from Add-on Store, no manual token setup
-- Works with Claude Desktop, Cursor, VS Code, Gemini CLI
+- **Real-time WebSocket** — subscribe to state changes, events and triggers live
+- **Git versioning** — every config change auto-committed with instant rollback
+- **YAML validation** before writing any config file
+- **Setup web UI** — auto-generates ready-to-use MCP config for every client
+- **HA add-on native** — one-click install from Add-on Store, no manual token setup
+- **API key auth** — MCP endpoint protected, token passed via URL query parameter
+
+---
 
 ## Tools overview
 
 | Category | Count | Examples |
-|---|---|---|
+| --- | --- | --- |
 | `entities_*` | 14 | list_entities, turn_on, turn_off, toggle, assign_to_area |
 | `services_*` | 15 | call_service, send_notification, set_light_color, set_climate_mode |
 | `automations_*` | 13 | list_automations, trigger_automation, run_script, activate_scene |
@@ -135,19 +168,23 @@ Paste into `~/.codeium/windsurf/mcp_config.json`:
 | `dashboards_*` | 6 | get_dashboard_config, add_card_to_view, add_view_to_dashboard |
 | `files_*` | 6 | read_config_file, write_config_file, validate_yaml_content |
 | `git_*` | 11 | git_commit_all, git_rollback_file, git_log, safe_write_with_checkpoint |
-| `ws_*` | 7 | ws_listen_state_changes, ws_listen_events, ws_subscribe_trigger |
+| `ws_*` | 7 | listen_state_changes, listen_events, subscribe_trigger |
+
+---
 
 ## Git versioning
 
-Nexus keeps a git history of your HA config directory. Before every risky change, use `git_safe_write_with_checkpoint` — it commits the current state first, then applies the change. If something breaks, roll back instantly.
+Nexus keeps a git history of your HA config directory. Before every risky change, use `git_safe_write_with_checkpoint` — it commits the current state first, then applies the change. Roll back instantly if something breaks.
 
 ```python
-git_init_config()                          # run once to initialize
-safe_write_with_checkpoint("automations.yaml", new_content)
-git_rollback_file("automations.yaml")      # undo single file
-git_rollback_to_commit("abc1234")          # full rollback
-git_log(limit=10)                          # see history
+git_init_config()                                    # run once
+git_safe_write_with_checkpoint("automations.yaml", new_content)
+git_rollback_file("automations.yaml")                # undo single file
+git_rollback_to_commit("abc1234")                    # full rollback
+git_log(limit=10)                                    # see history
 ```
+
+---
 
 ## Environment variables
 
@@ -157,5 +194,5 @@ git_log(limit=10)                          # see history
 | `HA_TOKEN` | Standalone only | — | Long-lived access token |
 | `SUPERVISOR_TOKEN` | Add-on only | auto-injected | Set automatically by HA |
 | `HA_CONFIG_PATH` | For git tools | `/config` | Path to HA config directory |
-| `NEXUS_API_KEY` | No | auto-generated | Pin to a specific key |
-| `NEXUS_PORT` | No | `7123` | Setup UI and server port |
+| `NEXUS_API_KEY` | No | auto-generated | Pin to a specific API key |
+| `NEXUS_PORT` | No | `7123` | HTTP server port |
