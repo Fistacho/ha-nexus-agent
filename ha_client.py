@@ -1,4 +1,6 @@
 import os
+import asyncio
+import json
 import httpx
 from typing import Any
 from dotenv import load_dotenv
@@ -26,6 +28,42 @@ def _headers() -> dict:
 
 def _client() -> httpx.Client:
     return httpx.Client(base_url=_HA_URL, headers=_headers(), timeout=30)
+
+
+def _ws_url() -> str:
+    return _HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+
+
+async def _ws_call_async(msg_type: str, **kwargs) -> Any:
+    import websockets
+    token = _HA_TOKEN
+    async with websockets.connect(_ws_url()) as ws:
+        greeting = json.loads(await ws.recv())
+        assert greeting["type"] == "auth_required"
+        await ws.send(json.dumps({"type": "auth", "access_token": token}))
+        auth_ok = json.loads(await ws.recv())
+        if auth_ok["type"] != "auth_ok":
+            raise RuntimeError(f"WS auth failed: {auth_ok}")
+        payload = {"id": 1, "type": msg_type, **kwargs}
+        await ws.send(json.dumps(payload))
+        while True:
+            data = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            if data.get("id") == 1 and data.get("type") == "result":
+                if not data.get("success"):
+                    raise RuntimeError(f"WS error: {data.get('error')}")
+                return data["result"]
+
+
+def _ws_call(msg_type: str, **kwargs) -> Any:
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, _ws_call_async(msg_type, **kwargs)).result()
+        return loop.run_until_complete(_ws_call_async(msg_type, **kwargs))
+    except RuntimeError:
+        return asyncio.run(_ws_call_async(msg_type, **kwargs))
 
 
 # --- States ---
@@ -125,73 +163,49 @@ def render_template(template: str) -> str:
         return r.text
 
 
-# --- Config entries (integrations) ---
+# --- Config entries (integrations — WebSocket only) ---
 
-def get_config_entries() -> list[dict]:
-    with _client() as c:
-        r = c.get("/api/config/config_entries/entry")
-        r.raise_for_status()
-        return r.json()
+def get_config_entries(domain: str | None = None) -> list[dict]:
+    kwargs = {}
+    if domain:
+        kwargs["domain"] = domain
+    return _ws_call("config_entries/get", **kwargs)
 
 
-# --- Entity registry ---
+# --- Entity registry (WebSocket only) ---
 
 def get_entity_registry() -> list[dict]:
-    with _client() as c:
-        r = c.get("/api/config/entity_registry/list")
-        r.raise_for_status()
-        return r.json()
+    return _ws_call("config/entity_registry/list")
 
 
 def update_entity_registry(entity_id: str, **kwargs) -> dict:
-    with _client() as c:
-        r = c.post(
-            "/api/config/entity_registry/update",
-            json={"entity_id": entity_id, **kwargs},
-        )
-        r.raise_for_status()
-        return r.json()
+    return _ws_call("config/entity_registry/update", entity_id=entity_id, **kwargs)
 
 
-# --- Device registry ---
+# --- Device registry (WebSocket only) ---
 
 def get_device_registry() -> list[dict]:
-    with _client() as c:
-        r = c.get("/api/config/device_registry/list")
-        r.raise_for_status()
-        return r.json()
+    return _ws_call("config/device_registry/list")
 
 
-# --- Area registry ---
+# --- Area registry (WebSocket only) ---
 
 def get_area_registry() -> list[dict]:
-    with _client() as c:
-        r = c.get("/api/config/area_registry/list")
-        r.raise_for_status()
-        return r.json()
+    return _ws_call("config/area_registry/list")
 
 
 def create_area(name: str) -> dict:
-    with _client() as c:
-        r = c.post("/api/config/area_registry/create", json={"name": name})
-        r.raise_for_status()
-        return r.json()
+    return _ws_call("config/area_registry/create", name=name)
 
 
 def delete_area(area_id: str) -> dict:
-    with _client() as c:
-        r = c.post("/api/config/area_registry/delete", json={"area_id": area_id})
-        r.raise_for_status()
-        return r.json()
+    return _ws_call("config/area_registry/delete", area_id=area_id)
 
 
-# --- Floor registry ---
+# --- Floor registry (WebSocket only) ---
 
 def get_floor_registry() -> list[dict]:
-    with _client() as c:
-        r = c.get("/api/config/floor_registry/list")
-        r.raise_for_status()
-        return r.json()
+    return _ws_call("config/floor_registry/list")
 
 
 # --- Check API ---
