@@ -7,39 +7,32 @@ mcp = FastMCP("dashboards")
 @mcp.tool()
 def list_dashboards() -> list[dict]:
     """List all Lovelace dashboards."""
-    with ha._client() as c:
-        r = c.get("/api/lovelace/dashboards")
-        r.raise_for_status()
-        return r.json()
+    return ha._ws_call("lovelace/dashboards/list")
 
 
 @mcp.tool()
-def get_dashboard_config(url_path: str = "lovelace") -> dict:
-    """Get raw Lovelace dashboard config (views, cards). url_path: 'lovelace' for default."""
-    with ha._client() as c:
-        endpoint = "/api/lovelace/config" if url_path == "lovelace" else f"/api/lovelace/config/{url_path}"
-        r = c.get(endpoint)
-        r.raise_for_status()
-        return r.json()
+def get_dashboard_config(url_path: str | None = None) -> dict:
+    """Get raw Lovelace dashboard config (views, cards). Omit url_path for the default dashboard."""
+    kwargs = {}
+    if url_path and url_path != "lovelace":
+        kwargs["url_path"] = url_path
+    return ha._ws_call("lovelace/config", **kwargs)
 
 
 @mcp.tool()
-def save_dashboard_config(config: dict, url_path: str = "lovelace") -> dict:
+def save_dashboard_config(config: dict, url_path: str | None = None) -> dict:
     """Save Lovelace dashboard config. Overwrites existing config. Use get_dashboard_config first, then modify and save."""
-    with ha._client() as c:
-        endpoint = "/api/lovelace/config" if url_path == "lovelace" else f"/api/lovelace/config/{url_path}"
-        r = c.post(endpoint, json=config)
-        r.raise_for_status()
-        return {"status": "saved", "url_path": url_path}
+    kwargs = {"config": config}
+    if url_path and url_path != "lovelace":
+        kwargs["url_path"] = url_path
+    ha._ws_call("lovelace/config/save", **kwargs)
+    return {"status": "saved", "url_path": url_path or "lovelace"}
 
 
 @mcp.tool()
 def get_dashboard_resources() -> list[dict]:
     """Get Lovelace resources (custom cards, CSS)."""
-    with ha._client() as c:
-        r = c.get("/api/lovelace/resources")
-        r.raise_for_status()
-        return r.json()
+    return ha._ws_call("lovelace/resources")
 
 
 @mcp.tool()

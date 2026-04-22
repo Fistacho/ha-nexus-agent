@@ -8,7 +8,7 @@ mcp = FastMCP("system")
 def check_config() -> dict:
     """Validate Home Assistant configuration before restart."""
     with ha._client() as c:
-        r = c.get("/api/config/core/check_config")
+        r = c.post("/api/config/core/check_config")
         r.raise_for_status()
         return r.json()
 
