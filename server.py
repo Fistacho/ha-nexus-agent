@@ -41,7 +41,8 @@ def _build_app():
 
     class TokenAuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
-            if request.url.path.startswith("/mcp"):
+            # Only guard the SSE entry point — /mcp/messages/ is session-authenticated by FastMCP
+            if request.url.path == "/mcp/sse":
                 token = (
                     request.query_params.get("token")
                     or request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
@@ -57,7 +58,7 @@ def _build_app():
     app.get("/health")(health)
     app.post("/regenerate")(regenerate)
 
-    mcp_app = mcp.http_app(path="/mcp")
+    mcp_app = mcp.http_app(path="/mcp", transport="sse")
     app.mount("/", mcp_app)
 
     return app
