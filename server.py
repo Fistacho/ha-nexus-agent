@@ -1,4 +1,4 @@
-import threading
+import os
 from fastmcp import FastMCP
 from dotenv import load_dotenv
 
@@ -31,19 +31,44 @@ mcp.mount(git_mcp, namespace="git")
 mcp.mount(ws_mcp, namespace="ws")
 
 
+def _build_app():
+    """Combine MCP + setup UI into one ASGI app for HTTP mode."""
+    from fastapi import FastAPI
+    from fastapi.responses import HTMLResponse
+    from setup_ui import setup_page, health
+    from auth import API_KEY
+
+    app = FastAPI(title="Nexus", docs_url=None, redoc_url=None)
+
+    # Setup UI routes
+    app.get("/", response_class=HTMLResponse)(setup_page)
+    app.get("/health")(health)
+
+    # MCP endpoint at /mcp
+    mcp_app = mcp.http_app(path="/mcp")
+    app.mount("/mcp", mcp_app)
+
+    return app
+
+
 def main():
     from auth import API_KEY
-    import os
     port = int(os.getenv("NEXUS_PORT", "7123"))
-    print(f"Nexus MCP server starting…")
-    print(f"Setup UI → http://localhost:{port}")
-    print(f"API key  → {API_KEY}")
 
-    from setup_ui import start_ui
-    ui_thread = threading.Thread(target=start_ui, daemon=True)
-    ui_thread.start()
-
-    mcp.run()
+    # HTTP mode: add-on or explicit NEXUS_HTTP=1
+    if os.getenv("SUPERVISOR_TOKEN") or os.getenv("NEXUS_HTTP"):
+        import uvicorn
+        print(f"Nexus starting (HTTP) on port {port}")
+        print(f"Setup UI  → http://localhost:{port}")
+        print(f"MCP       → http://localhost:{port}/mcp")
+        print(f"API key   → {API_KEY}")
+        app = _build_app()
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    else:
+        # stdio mode for Claude Desktop / local MCP client
+        print(f"Nexus starting (stdio)")
+        print(f"API key → {API_KEY}")
+        mcp.run()
 
 
 if __name__ == "__main__":

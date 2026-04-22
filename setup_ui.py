@@ -2,12 +2,9 @@
 Setup web UI — shows connection instructions for Claude Desktop / Cursor / VS Code.
 Accessible at http://localhost:7123 after starting Nexus.
 """
-from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import os
 from auth import API_KEY, get_ha_token
-
-app = FastAPI(title="Nexus Setup", docs_url=None, redoc_url=None)
 
 _PORT = int(os.getenv("NEXUS_PORT", "7123"))
 
@@ -79,11 +76,5 @@ api_key = {api_key}"""
 </html>""")
 
 
-@app.get("/health")
 async def health():
     return {"status": "ok", "ha_url": _ha_url(), "tools": 100}
-
-
-def start_ui():
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=_PORT, log_level="warning")
