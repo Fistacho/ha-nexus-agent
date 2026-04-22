@@ -21,7 +21,7 @@ async def setup_page(request: Request):
     sse_url = f"http://{hostname}:{_PORT}/mcp/sse?token={API_KEY}"
 
     configs = {
-        "claude-code":    f"claude mcp add nexus --transport sse {sse_url}",
+        "claude-code":    f'claude mcp add nexus --transport sse "{sse_url}" --scope user',
         "codex":          f"codex mcp add nexus --url {mcp_url}",
         "gemini":         f"gemini mcp add nexus --url {mcp_url}",
         "claude-desktop": '{{\n  "mcpServers": {{\n    "nexus": {{\n      "command": "python",\n      "args": ["server.py"],\n      "cwd": "{cwd}",\n      "env": {{\n        "HA_URL": "{ha_url}",\n        "NEXUS_API_KEY": "{api_key}"\n      }}\n    }}\n  }}\n}}'.format(cwd=cwd, ha_url=ha_url, api_key=api_key),
