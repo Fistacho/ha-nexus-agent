@@ -11,9 +11,10 @@ def _ha_url() -> str:
 
 
 async def setup_page(request: Request):
-    host = request.headers.get("host", os.getenv("HA_IP", f"homeassistant.local:{_PORT}"))
+    host_header = request.headers.get("host", f"homeassistant.local:{_PORT}")
+    hostname = host_header.split(":")[0]
     ha_url = _ha_url()
-    mcp_url = f"http://{host}/mcp?token={API_KEY}"
+    mcp_url = f"http://{hostname}:{_PORT}/mcp?token={API_KEY}"
     api_key = API_KEY
     cwd = os.getcwd().replace("\\", "/")
 
