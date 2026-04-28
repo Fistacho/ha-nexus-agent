@@ -107,3 +107,103 @@ def list_entity_registry(domain: str | None = None) -> list[dict]:
     if domain:
         entries = [e for e in entries if e.get("entity_id", "").startswith(f"{domain}.")]
     return entries
+
+
+# --- Bulk control ---
+
+@mcp.tool()
+def bulk_control(entity_ids: list[str], action: str) -> dict:
+    """Bulk turn_on/turn_off/toggle a list of entities.
+
+    Groups entities by domain and issues one service call per domain
+    (e.g. all `light.*` get a single `light.turn_on`).
+    `action` must be one of: "turn_on", "turn_off", "toggle".
+    Returns dict mapping domain -> count of entities affected.
+    """
+    if action not in ("turn_on", "turn_off", "toggle"):
+        raise ValueError(f"action must be turn_on, turn_off or toggle (got: {action})")
+
+    by_domain: dict[str, list[str]] = {}
+    for eid in entity_ids:
+        if "." not in eid:
+            continue
+        dom = eid.split(".", 1)[0]
+        by_domain.setdefault(dom, []).append(eid)
+
+    result: dict[str, int] = {}
+    for dom, eids in by_domain.items():
+        ha.call_service(dom, action, {"entity_id": eids})
+        result[dom] = len(eids)
+    return result
+
+
+@mcp.tool()
+def bulk_set_state(updates: list[dict]) -> list[dict]:
+    """Bulk-write states using HA's set_state API.
+
+    Each item must contain `entity_id` and `state`, plus optional `attributes` dict.
+    Returns a list of per-update result dicts (`{entity_id, ok, error?}`).
+    Note: this writes to /api/states which only sets a virtual state — for real
+    device control use bulk_control instead.
+    """
+    out: list[dict] = []
+    for u in updates:
+        eid = u.get("entity_id")
+        state = u.get("state")
+        attrs = u.get("attributes")
+        if not eid or state is None:
+            out.append({"entity_id": eid, "ok": False, "error": "missing entity_id or state"})
+            continue
+        try:
+            ha.set_state(eid, str(state), attrs)
+            out.append({"entity_id": eid, "ok": True})
+        except Exception as e:
+            out.append({"entity_id": eid, "ok": False, "error": str(e)})
+    return out
+
+
+# --- Voice / assistant exposure ---
+
+_ASSISTANTS = ("conversation", "cloud.alexa", "cloud.google_assistant")
+
+
+@mcp.tool()
+def set_entity_exposure(entity_id: str, assistant: str, should_expose: bool) -> dict:
+    """Expose or hide an entity to a voice assistant.
+
+    `assistant` must be one of: "conversation", "cloud.alexa", "cloud.google_assistant".
+    Uses WS `homeassistant/expose_entity`.
+    """
+    if assistant not in _ASSISTANTS:
+        raise ValueError(f"assistant must be one of {_ASSISTANTS}")
+    result = ha._ws_call(
+        "homeassistant/expose_entity",
+        assistants=[assistant],
+        entity_ids=[entity_id],
+        should_expose=bool(should_expose),
+    )
+    return {
+        "entity_id": entity_id,
+        "assistant": assistant,
+        "should_expose": bool(should_expose),
+        "result": result,
+    }
+
+
+@mcp.tool()
+def get_entity_exposure(entity_id: str) -> dict:
+    """Get exposure flags for an entity across all voice assistants."""
+    result = ha._ws_call("homeassistant/expose/get", entity_id=entity_id)
+    return {"entity_id": entity_id, "exposure": result}
+
+
+@mcp.tool()
+def list_exposed_entities(assistant: str) -> dict:
+    """List all entities exposed to a given voice assistant.
+
+    `assistant` must be one of: "conversation", "cloud.alexa", "cloud.google_assistant".
+    """
+    if assistant not in _ASSISTANTS:
+        raise ValueError(f"assistant must be one of {_ASSISTANTS}")
+    result = ha._ws_call("homeassistant/expose/list", assistant=assistant)
+    return {"assistant": assistant, "exposed": result}

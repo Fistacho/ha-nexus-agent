@@ -15,6 +15,9 @@ from tools.dashboards import mcp as dashboards_mcp
 from tools.files import mcp as files_mcp
 from tools.git_ops import mcp as git_mcp
 from tools.websocket import mcp as ws_mcp
+from tools.calendar import mcp as calendar_mcp
+from tools.todo import mcp as todo_mcp
+from tools.devices import mcp as devices_mcp
 
 mcp = FastMCP("nexus")
 
@@ -29,6 +32,9 @@ mcp.mount(dashboards_mcp, namespace="dashboards")
 mcp.mount(files_mcp, namespace="files")
 mcp.mount(git_mcp, namespace="git")
 mcp.mount(ws_mcp, namespace="ws")
+mcp.mount(calendar_mcp, namespace="calendar")
+mcp.mount(todo_mcp, namespace="todo")
+mcp.mount(devices_mcp, namespace="devices")
 
 
 def _build_app():
