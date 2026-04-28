@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets / runtime config
+.env
+.env.local
+*.token
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor swap / backup
+*.swp
+*.swo
+*.bak
+*.tmp
+*~
+
+# Claude harness state
+.claude/
+
+# Local logs
+*.log
