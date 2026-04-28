@@ -19,6 +19,8 @@ from tools.blueprints import mcp as blueprints_mcp
 from tools.calendar import mcp as calendar_mcp
 from tools.todo import mcp as todo_mcp
 from tools.devices import mcp as devices_mcp
+from tools.supervisor import mcp as supervisor_mcp
+from tools.hacs import mcp as hacs_mcp
 
 mcp = FastMCP("nexus")
 
@@ -37,6 +39,8 @@ mcp.mount(blueprints_mcp, namespace="blueprints")
 mcp.mount(calendar_mcp, namespace="calendar")
 mcp.mount(todo_mcp, namespace="todo")
 mcp.mount(devices_mcp, namespace="devices")
+mcp.mount(supervisor_mcp, namespace="supervisor")
+mcp.mount(hacs_mcp, namespace="hacs")
 
 
 def _build_app():
