@@ -238,3 +238,75 @@ def get_statistics_metadata(statistic_ids: list[str] | None = None) -> list[dict
         r = c.post("/api/recorder/statistics_metadata", json=payload)
         r.raise_for_status()
         return r.json()
+
+
+# --- Automation config CRUD (REST) ---
+
+def get_automation_config(automation_id: str) -> dict | None:
+    """Fetch a single automation YAML config as a dict. Returns None if not found."""
+    with _client() as c:
+        r = c.get(f"/api/config/automation/config/{automation_id}")
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.json()
+
+
+def set_automation_config(automation_id: str, config: dict) -> dict:
+    """Create or overwrite an automation. `config` is the YAML-as-dict payload."""
+    with _client() as c:
+        r = c.post(f"/api/config/automation/config/{automation_id}", json=config)
+        r.raise_for_status()
+        try:
+            return r.json()
+        except Exception:
+            return {"status": "ok"}
+
+
+def delete_automation_config(automation_id: str) -> dict:
+    """Delete an automation config by ID. Returns {'status': 'not_found'} if it does not exist."""
+    with _client() as c:
+        r = c.delete(f"/api/config/automation/config/{automation_id}")
+        if r.status_code == 404:
+            return {"status": "not_found"}
+        r.raise_for_status()
+        try:
+            return r.json()
+        except Exception:
+            return {"status": "ok"}
+
+
+# --- Script config CRUD (REST) ---
+
+def get_script_config(script_id: str) -> dict | None:
+    """Fetch a single script YAML config as a dict. Returns None if not found."""
+    with _client() as c:
+        r = c.get(f"/api/config/script/config/{script_id}")
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.json()
+
+
+def set_script_config(script_id: str, config: dict) -> dict:
+    """Create or overwrite a script. `config` is the YAML-as-dict payload."""
+    with _client() as c:
+        r = c.post(f"/api/config/script/config/{script_id}", json=config)
+        r.raise_for_status()
+        try:
+            return r.json()
+        except Exception:
+            return {"status": "ok"}
+
+
+def delete_script_config(script_id: str) -> dict:
+    """Delete a script config by ID. Returns {'status': 'not_found'} if it does not exist."""
+    with _client() as c:
+        r = c.delete(f"/api/config/script/config/{script_id}")
+        if r.status_code == 404:
+            return {"status": "not_found"}
+        r.raise_for_status()
+        try:
+            return r.json()
+        except Exception:
+            return {"status": "ok"}

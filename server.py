@@ -15,6 +15,7 @@ from tools.dashboards import mcp as dashboards_mcp
 from tools.files import mcp as files_mcp
 from tools.git_ops import mcp as git_mcp
 from tools.websocket import mcp as ws_mcp
+from tools.blueprints import mcp as blueprints_mcp
 
 mcp = FastMCP("nexus")
 
@@ -29,6 +30,7 @@ mcp.mount(dashboards_mcp, namespace="dashboards")
 mcp.mount(files_mcp, namespace="files")
 mcp.mount(git_mcp, namespace="git")
 mcp.mount(ws_mcp, namespace="ws")
+mcp.mount(blueprints_mcp, namespace="blueprints")
 
 
 def _build_app():
