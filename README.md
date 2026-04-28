@@ -1,6 +1,6 @@
 # ha-nexus-agent
 
-MCP server for Home Assistant — gives AI assistants full control over your smart home through **100 tools** covering entities, automations, scripts, dashboards, helpers, areas, history, system management, YAML config files, git-based versioning and real-time WebSocket events.
+MCP server for Home Assistant — gives AI assistants full control over your smart home through **164 tools across 17 domains**: entities (with bulk control + voice expose), automations & scripts (full CRUD + traces), blueprints, dashboards, helpers, areas, devices registry, calendar, todo lists, history, system management, YAML config files, git-based versioning, real-time WebSocket events, **add-on management via Supervisor**, and **HACS integration**.
 
 Works with **Claude Code CLI**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
@@ -144,7 +144,7 @@ Paste into `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/App
 
 ## Features
 
-- **100 MCP tools** across 11 categories
+- **164 MCP tools** across 17 categories
 - **Real-time WebSocket** — subscribe to state changes, events and triggers live
 - **Git versioning** — every config change auto-committed with instant rollback
 - **YAML validation** before writing any config file
@@ -158,17 +158,23 @@ Paste into `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/App
 
 | Category | Count | Examples |
 | --- | --- | --- |
-| `entities_*` | 14 | list_entities, turn_on, turn_off, toggle, assign_to_area |
-| `services_*` | 15 | call_service, send_notification, set_light_color, set_climate_mode |
-| `automations_*` | 13 | list_automations, trigger_automation, run_script, activate_scene |
+| `entities_*` | 17 | list_entities, turn_on/off/toggle, **bulk_control**, **set/get_entity_exposure** (voice assistants) |
+| `services_*` | 19 | call_service, send_notification, set_light_color, **camera_snapshot**, **camera_record**, **persistent_notification** create/dismiss |
+| `automations_*` | 21 | list/trigger/enable/disable, **get/set/delete_automation_config** (full YAML CRUD), **list/get_automation_traces** (debug), same for scripts, scenes |
+| `blueprints_*` | 4 | list, **import** from URL, delete, **substitute** (instantiate with inputs) |
 | `areas_*` | 8 | list_areas, create_area, get_area_states, control_area |
-| `helpers_*` | 12 | set_input_boolean, set_input_number, start_timer, increment_counter |
+| `devices_*` | 4 | list_devices, update_device (rename / move to area / disable), remove_device, list_devices_in_area |
+| `calendar_*` | 4 | list_calendars, list_events, create_event, delete_event |
+| `todo_*` | 5 | list_todo_lists, list_items, add_item, update_item, remove_item |
+| `helpers_*` | 11 | set_input_boolean, set_input_number, start_timer, increment_counter |
 | `history_*` | 5 | get_state_history, get_logbook, get_error_log |
 | `system_*` | 9 | check_config, create_backup, restart_ha, list_integrations |
 | `dashboards_*` | 6 | get_dashboard_config, add_card_to_view, add_view_to_dashboard |
 | `files_*` | 6 | read_config_file, write_config_file, validate_yaml_content |
 | `git_*` | 11 | git_commit_all, git_rollback_file, git_log, safe_write_with_checkpoint |
 | `ws_*` | 7 | listen_state_changes, listen_events, subscribe_trigger |
+| `supervisor_*` | 20 | list/install/start/stop/restart/update/uninstall add-ons, addon_logs, addon_options, **backups** (list/create/restore/delete), **core/host** info + restart |
+| `hacs_*` | 7 | list/install/uninstall/update HACS repositories, add custom repository, list critical updates |
 
 ---
 
