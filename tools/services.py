@@ -101,3 +101,73 @@ def send_notification(message: str, title: str | None = None, target: str | None
         data["title"] = title
     domain, svc = ("notify", service) if "." not in service else service.split(".", 1)
     return ha.call_service(domain, svc, data)
+
+
+# --- Camera ---
+
+@mcp.tool()
+def camera_snapshot(entity_id: str, filename: str) -> dict:
+    """Take a still snapshot from a camera entity.
+
+    `filename` is a path inside the HA config dir, typically under
+    `/config/www/snapshots/...` so it can be served by HA. The directory
+    must exist and be allow-listed via `allowlist_external_dirs`.
+    """
+    result = ha.call_service(
+        "camera", "snapshot",
+        {"entity_id": entity_id, "filename": filename},
+    )
+    return {"entity_id": entity_id, "filename": filename, "result": result}
+
+
+@mcp.tool()
+def camera_record(entity_id: str, filename: str, duration: int = 10) -> dict:
+    """Record a short clip from a camera entity to `filename` for `duration` seconds.
+
+    `filename` is a path inside the HA config dir (e.g. `/config/www/snapshots/clip.mp4`).
+    """
+    result = ha.call_service(
+        "camera", "record",
+        {"entity_id": entity_id, "filename": filename, "duration": duration},
+    )
+    return {
+        "entity_id": entity_id,
+        "filename": filename,
+        "duration": duration,
+        "result": result,
+    }
+
+
+# --- Persistent notifications ---
+
+@mcp.tool()
+def notify_persistent_create(message: str, title: str | None = None, notification_id: str | None = None) -> dict:
+    """Create or replace a persistent notification in the HA UI.
+
+    Provide `notification_id` to allow the notification to be dismissed/updated
+    later via `notify_persistent_dismiss`.
+    """
+    data: dict = {"message": message}
+    if title:
+        data["title"] = title
+    if notification_id:
+        data["notification_id"] = notification_id
+    result = ha.call_service("persistent_notification", "create", data)
+    return {"notification_id": notification_id, "result": result}
+
+
+@mcp.tool()
+def notify_persistent_dismiss(notification_id: str) -> dict:
+    """Dismiss a persistent notification by its `notification_id`."""
+    result = ha.call_service(
+        "persistent_notification", "dismiss",
+        {"notification_id": notification_id},
+    )
+    return {"notification_id": notification_id, "result": result}
+
+
+@mcp.tool()
+def notify_persistent_dismiss_all() -> dict:
+    """Dismiss all persistent notifications."""
+    result = ha.call_service("persistent_notification", "dismiss_all")
+    return {"result": result}
