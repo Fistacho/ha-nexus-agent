@@ -37,7 +37,9 @@ def _ws_url() -> str:
 async def _ws_call_async(msg_type: str, **kwargs) -> Any:
     import websockets
     token = _HA_TOKEN
-    async with websockets.connect(_ws_url()) as ws:
+    # max_size=None disables the 1 MB frame cap — HACS repository lists,
+    # large registries and full traces routinely exceed that.
+    async with websockets.connect(_ws_url(), max_size=None) as ws:
         greeting = json.loads(await ws.recv())
         assert greeting["type"] == "auth_required"
         await ws.send(json.dumps({"type": "auth", "access_token": token}))
