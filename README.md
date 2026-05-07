@@ -1,6 +1,6 @@
 # ha-nexus-agent
 
-MCP server for Home Assistant — gives AI assistants full control over your smart home through **202 tools across 21 domains**: entities (with bulk control + voice expose), automations & scripts (full CRUD + traces), blueprints, dashboards, helpers, areas, devices registry, calendar, todo lists, history, system management, YAML config files, git-based versioning, real-time WebSocket events, **Energy Dashboard preferences**, **Zones (geofencing)**, **Labels & Categories**, **fuzzy Search & Discovery**, **add-on management via Supervisor**, and **HACS integration**.
+MCP server for Home Assistant — gives AI assistants full control over your smart home through **227 tools across 24 domains**: entities (with bulk control + voice expose), automations & scripts (full CRUD + traces), blueprints, dashboards, helpers, areas, devices registry, calendar, todo lists, history, system management, YAML config files, git-based versioning, real-time WebSocket events, **Energy Dashboard preferences**, **Zones (geofencing)**, **Labels & Categories**, **fuzzy Search & Discovery**, **add-on management via Supervisor**, **HACS integration**, **integration setup via config_flow**, **Assist voice pipelines (STT/TTS/wake-word)**, and **Lovelace themes**.
 
 Works with **Claude Code CLI**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
@@ -144,7 +144,7 @@ Paste into `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/App
 
 ## Features
 
-- **202 MCP tools** across 21 categories
+- **227 MCP tools** across 24 categories
 - **Real-time WebSocket** — subscribe to state changes, events and triggers live
 - **Git versioning** — every config change auto-committed with instant rollback
 - **YAML validation** before writing any config file
@@ -175,6 +175,9 @@ Paste into `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/App
 | `ws_*` | 7 | listen_state_changes, listen_events, subscribe_trigger |
 | `supervisor_*` | 20 | list/install/start/stop/restart/update/uninstall add-ons, addon_logs, addon_options, **backups** (list/create/restore/delete), **core/host** info + restart |
 | `hacs_*` | 7 | list/install/uninstall/update HACS repositories, add custom repository, list critical updates |
+| `integrations_*` | 12 | **start_config_flow** (install integration like in UI), submit/abort flow steps, options flow CRUD, remove/disable/enable entries |
+| `voice_*` | 9 | list/get/create/update/delete Assist pipelines, set_preferred_pipeline, list STT/TTS/wake-word engines |
+| `themes_*` | 8 | list_themes, set_active_theme, create/update/delete theme files, reload_themes |
 
 ---
 

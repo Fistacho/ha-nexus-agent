@@ -25,6 +25,9 @@ from tools.energy import mcp as energy_mcp
 from tools.zones import mcp as zones_mcp
 from tools.labels import mcp as labels_mcp
 from tools.search import mcp as search_mcp
+from tools.integrations import mcp as integrations_mcp
+from tools.voice import mcp as voice_mcp
+from tools.themes import mcp as themes_mcp
 
 mcp = FastMCP("nexus")
 
@@ -49,6 +52,9 @@ mcp.mount(energy_mcp, namespace="energy")
 mcp.mount(zones_mcp, namespace="zones")
 mcp.mount(labels_mcp, namespace="labels")
 mcp.mount(search_mcp, namespace="search")
+mcp.mount(integrations_mcp, namespace="integrations")
+mcp.mount(voice_mcp, namespace="voice")
+mcp.mount(themes_mcp, namespace="themes")
 
 
 def _build_app():
