@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **244 tools across 25 domains** — entities, automations, scripts, dashboards, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **Card Builder** (visual drag-and-drop cards), git versioning, and more.
+**Give AI assistants full control over your smart home.** **248 tools across 26 domains** — entities (with bulk voice exposure), automations & scripts (CRUD + traces + last-failed shortcuts), dashboards, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **Card Builder** (visual drag-and-drop cards), **aggregated snapshot** (one-call context), HA-aware YAML validation (`!include`, `!secret`), git versioning, and more.
 
 Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
@@ -160,7 +160,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Tools
 
-244 tools across 25 categories:
+248 tools across 26 categories:
 
 | Category | Count | Highlights |
 | --- | --- | --- |
@@ -189,6 +189,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | `voice_*` | 9 | Assist pipelines CRUD, STT/TTS/wake-word engines |
 | `themes_*` | 8 | list/create/update/delete Lovelace themes |
 | `card_builder_*` | 17 | Card Builder cards CRUD, style presets, CSS properties, media manager, renderer config |
+| `snapshot_*` | 2 | Aggregated one-call context — states + areas + devices + entities + integrations, with filters |
 
 ---
 

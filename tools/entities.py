@@ -207,3 +207,35 @@ def list_exposed_entities(assistant: str) -> dict:
         raise ValueError(f"assistant must be one of {_ASSISTANTS}")
     result = ha._ws_call("homeassistant/expose/list", assistant=assistant)
     return {"assistant": assistant, "exposed": result}
+
+
+@mcp.tool()
+def bulk_set_entity_exposure(
+    entity_ids: list[str],
+    should_expose: bool,
+    assistants: list[str] | None = None,
+) -> dict:
+    """Expose/hide many entities across one or more voice assistants in one call.
+
+    `assistants` defaults to all three: conversation, cloud.alexa,
+    cloud.google_assistant. Pass a subset to target specific ones.
+    Uses WS `homeassistant/expose_entity` which natively accepts lists.
+    """
+    targets = list(assistants) if assistants else list(_ASSISTANTS)
+    invalid = [a for a in targets if a not in _ASSISTANTS]
+    if invalid:
+        raise ValueError(f"invalid assistants: {invalid}; allowed: {_ASSISTANTS}")
+    if not entity_ids:
+        return {"count": 0, "assistants": targets, "result": None}
+    result = ha._ws_call(
+        "homeassistant/expose_entity",
+        assistants=targets,
+        entity_ids=list(entity_ids),
+        should_expose=bool(should_expose),
+    )
+    return {
+        "count": len(entity_ids),
+        "assistants": targets,
+        "should_expose": bool(should_expose),
+        "result": result,
+    }

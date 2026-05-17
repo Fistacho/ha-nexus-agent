@@ -8,6 +8,44 @@ load_dotenv()
 
 mcp = FastMCP("files")
 
+
+class _HALoader(yaml.SafeLoader):
+    """SafeLoader that tolerates Home Assistant's custom YAML tags.
+
+    HA configs routinely contain `!include`, `!include_dir_merge_named`,
+    `!secret`, `!env_var`, etc. The stock SafeLoader rejects them, so any
+    validation of a real HA file fails. We can't resolve them (we don't have
+    file/secret access from here), but for syntax checking it's enough to keep
+    them as opaque tagged values.
+    """
+
+
+def _ha_tag_passthrough(loader: yaml.Loader, tag_suffix: str, node: yaml.Node):
+    if isinstance(node, yaml.ScalarNode):
+        return {"__ha_tag__": tag_suffix, "value": loader.construct_scalar(node)}
+    if isinstance(node, yaml.SequenceNode):
+        return {"__ha_tag__": tag_suffix, "value": loader.construct_sequence(node, deep=True)}
+    if isinstance(node, yaml.MappingNode):
+        return {"__ha_tag__": tag_suffix, "value": loader.construct_mapping(node, deep=True)}
+    return None
+
+
+for _tag in (
+    "!include",
+    "!include_dir_list",
+    "!include_dir_merge_list",
+    "!include_dir_named",
+    "!include_dir_merge_named",
+    "!secret",
+    "!env_var",
+    "!input",
+):
+    _HALoader.add_constructor(_tag, lambda loader, node, t=_tag: _ha_tag_passthrough(loader, t, node))
+
+
+def _ha_yaml_load(content: str):
+    return yaml.load(content, Loader=_HALoader)
+
 _CONFIG_PATH = Path(os.getenv("HA_CONFIG_PATH", "/config"))
 
 _ALLOWED_EXTENSIONS = {".yaml", ".yml", ".json", ".txt"}
@@ -45,7 +83,7 @@ def write_config_file(relative_path: str, content: str, validate_yaml: bool = Tr
 
     if validate_yaml and path.suffix in {".yaml", ".yml"}:
         try:
-            yaml.safe_load(content)
+            _ha_yaml_load(content)
         except yaml.YAMLError as e:
             return {"success": False, "error": f"YAML validation failed: {e}"}
 
@@ -71,9 +109,13 @@ def list_config_files(subdirectory: str = "") -> list[str]:
 
 @mcp.tool()
 def validate_yaml_content(content: str) -> dict:
-    """Validate YAML content without saving. Returns parsed result or error."""
+    """Validate YAML content without saving. Returns parsed result or error.
+
+    Tolerates Home Assistant custom tags (`!include`, `!secret`, `!env_var`, …)
+    so real HA config files validate cleanly.
+    """
     try:
-        parsed = yaml.safe_load(content)
+        parsed = _ha_yaml_load(content)
         return {"valid": True, "type": type(parsed).__name__}
     except yaml.YAMLError as e:
         return {"valid": False, "error": str(e)}
@@ -101,7 +143,7 @@ def append_to_config_file(relative_path: str, content: str, validate_yaml: bool 
 
     if validate_yaml and path.suffix in {".yaml", ".yml"}:
         try:
-            yaml.safe_load(combined)
+            _ha_yaml_load(combined)
         except yaml.YAMLError as e:
             return {"success": False, "error": f"YAML validation failed after append: {e}"}
 

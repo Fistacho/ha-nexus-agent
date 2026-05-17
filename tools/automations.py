@@ -202,3 +202,41 @@ def get_script_trace(script_id: str, run_id: str) -> dict:
     """Get a full script trace (steps, timing, action results) for a specific run."""
     sid = _strip_prefix(script_id, "script")
     return ha._ws_call("trace/get", domain="script", item_id=sid, run_id=run_id)
+
+
+def _resolve_run_id(traces: list[dict], failed_only: bool) -> str | None:
+    candidates = traces or []
+    if failed_only:
+        candidates = [t for t in candidates if t.get("state") == "stopped" and t.get("script_execution") in ("error", "failed", "aborted")]
+        if not candidates:
+            candidates = [t for t in (traces or []) if t.get("script_execution") and t.get("script_execution") != "finished"]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda t: t.get("timestamp", {}).get("start", ""), reverse=True)
+    return candidates[0].get("run_id")
+
+
+@mcp.tool()
+def get_last_automation_trace(automation_id: str, failed_only: bool = False) -> dict:
+    """Shortcut: fetch the most recent trace for an automation in one call.
+
+    Use `failed_only=True` to grab the latest run that didn't finish cleanly —
+    handy for debugging "why didn't this fire?".
+    """
+    aid = _strip_prefix(automation_id, "automation")
+    traces = ha._ws_call("trace/list", domain="automation", item_id=aid) or []
+    run_id = _resolve_run_id(traces, failed_only)
+    if not run_id:
+        return {"error": "no_traces" if not failed_only else "no_failed_traces", "automation_id": aid}
+    return ha._ws_call("trace/get", domain="automation", item_id=aid, run_id=run_id)
+
+
+@mcp.tool()
+def get_last_script_trace(script_id: str, failed_only: bool = False) -> dict:
+    """Shortcut: fetch the most recent (or most recent failed) trace for a script."""
+    sid = _strip_prefix(script_id, "script")
+    traces = ha._ws_call("trace/list", domain="script", item_id=sid) or []
+    run_id = _resolve_run_id(traces, failed_only)
+    if not run_id:
+        return {"error": "no_traces" if not failed_only else "no_failed_traces", "script_id": sid}
+    return ha._ws_call("trace/get", domain="script", item_id=sid, run_id=run_id)

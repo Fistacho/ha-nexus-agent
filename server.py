@@ -29,6 +29,7 @@ from tools.integrations import mcp as integrations_mcp
 from tools.voice import mcp as voice_mcp
 from tools.themes import mcp as themes_mcp
 from tools.card_builder import mcp as card_builder_mcp
+from tools.snapshot import mcp as snapshot_mcp
 
 mcp = FastMCP("nexus")
 
@@ -57,6 +58,7 @@ mcp.mount(integrations_mcp, namespace="integrations")
 mcp.mount(voice_mcp, namespace="voice")
 mcp.mount(themes_mcp, namespace="themes")
 mcp.mount(card_builder_mcp, namespace="card_builder")
+mcp.mount(snapshot_mcp, namespace="snapshot")
 
 
 def _build_app():
