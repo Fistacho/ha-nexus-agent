@@ -35,9 +35,211 @@ mcp = FastMCP("card_builder")
 
 
 # =========================================================================
-# Embedded knowledge: block schema (from upstream v1.x — sync if upstream
-# adds new block types). This is the source of truth for `list_block_types`,
-# `get_block_schema`, `build_from_recipe`, and `validate_config`.
+# Embedded knowledge — synced from upstream
+# https://github.com/studiobts/home-assistant-card-builder @ main
+# Run `check_schema_sync()` to verify the upstream package version matches.
+# =========================================================================
+
+UPSTREAM_REPO = "studiobts/home-assistant-card-builder"
+UPSTREAM_SCHEMA_SYNC = {
+    "documented_against": "1.x (main, 2026-05)",
+    "document_model_version": 3,
+    "source_files": [
+        "frontend/src/common/core/model/types.ts",
+        "frontend/src/common/types/style-preset.ts",
+        "frontend/src/common/core/style-resolver/style-units.ts",
+        "frontend/src/common/core/style-resolver/resolved-to-css.ts",
+        "frontend/src/common/blocks/components/**/*.ts",
+        "docs/panel-blocks.md",
+    ],
+}
+
+
+# Style categories with the full list of property names *Card Builder
+# recognises*. Property names are camelCase (NOT kebab-case) — anything
+# else is silently discarded by `resolved-to-css.ts`. Length units default
+# to "px" unless noted otherwise.
+STYLE_CATEGORIES: dict[str, dict[str, Any]] = {
+    "layout": {
+        "properties": ["display", "show", "positionX", "positionY", "zIndex"],
+    },
+    "size": {
+        "properties": ["width", "height", "minWidth", "maxWidth", "minHeight", "maxHeight"],
+        "length_units": ["px", "rem", "em", "%", "vh", "vw", "auto"],
+    },
+    "spacing": {
+        "properties": [
+            "margin", "padding",
+            "marginTop", "marginRight", "marginBottom", "marginLeft",
+            "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+        ],
+        "length_units": ["px", "rem", "em", "%"],
+        "notes": "margin/padding accept either a single value or {top, right, bottom, left} object.",
+    },
+    "typography": {
+        "properties": [
+            "fontFamily", "fontSize", "fontWeight", "fontStyle",
+            "lineHeight", "letterSpacing",
+            "textAlign", "textDecoration", "textTransform", "textShadow",
+            "whiteSpace", "color",
+        ],
+    },
+    "background": {
+        "properties": [
+            "backgroundColor", "backgroundImage", "backgroundSize",
+            "backgroundPosition", "backgroundRepeat", "backgroundBlendMode",
+            "boxShadow",
+        ],
+        "legacy_aliases": {"color": "backgroundColor", "image": "backgroundImage", "size": "backgroundSize", "repeat": "backgroundRepeat", "position": "backgroundPosition"},
+    },
+    "border": {
+        "properties": [
+            "borderWidth", "borderStyle", "borderColor", "borderRadius",
+            "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+            "borderTopLeftRadius", "borderTopRightRadius",
+            "borderBottomRightRadius", "borderBottomLeftRadius",
+        ],
+        "legacy_aliases": {"width": "borderWidth", "style": "borderStyle", "color": "borderColor", "radius": "borderRadius"},
+    },
+    "flex": {
+        "properties": [
+            "flexDirection", "justifyContent", "alignItems", "flexWrap",
+            "gap", "rowGap", "columnGap",
+            "flexGrow", "flexShrink", "flexBasis",
+        ],
+        "legacy_aliases": {"direction": "flexDirection", "justify": "justifyContent", "align": "alignItems", "wrap": "flexWrap"},
+        "notes": "display:flex is set by the component itself — don't add it manually.",
+    },
+    "effects": {
+        "properties": ["opacity", "boxShadow", "transform", "filter", "rotate"],
+    },
+    "svg": {
+        "properties": [
+            "stroke", "strokeWidth", "strokeLinecap", "strokeLinejoin",
+            "strokeDasharray", "strokeDashoffset", "strokeMiterlimit",
+            "strokeOpacity", "fill", "fillOpacity",
+        ],
+    },
+}
+
+
+# Style targets per block — sub-components you can style independently.
+# Source: docs/panel-blocks.md. "block" is the default (whole element);
+# blocks with sub-components add named targets. Active targets layer on top
+# of base ones (e.g. "optionActive" overrides "option" only for selected).
+STYLE_TARGETS: dict[str, list[str]] = {
+    "block-text": ["block"],
+    "block-icon": ["block", "icon", "preTemplate", "postTemplate"],
+    "block-image": ["block"],
+    "block-container": ["block"],
+    "block-columns": ["block"],
+    "block-grid": ["block"],
+    "block-drop-zone": ["block"],
+    "block-entity-field-state": ["block", "state", "unit"],
+    "block-entity-field-name": ["block"],
+    "block-entity-field-icon": ["block"],
+    "block-entity-field-attribute": ["block", "label", "value"],
+    "block-entity-field-image": ["block"],
+    "block-slider": [
+        "track", "trackInactive", "trackActive",
+        "thumb", "thumbLow", "thumbHigh",
+        "value", "tooltip",
+    ],
+    "block-button-toggle": [
+        "container", "option", "optionActive",
+        "icon", "iconActive", "label", "labelActive",
+    ],
+    "block-select-menu": [
+        "container", "dropdown",
+        "containerIcon", "containerLabel",
+        "dropdownIcon", "dropdownLabel",
+        "selectedIcon", "selectedLabel",
+    ],
+    "block-weather-background": ["block"],
+}
+
+
+# Ready-to-use style snippets — drop into a node's `styles` (block-level)
+# or `dz_styles` (layout's drop-zone). All shaped for the "desktop"
+# container. Compose multiple snippets with `build_styles`.
+STYLE_SNIPPETS: dict[str, dict[str, Any]] = {
+    "card_padded": {
+        "spacing": {"padding": {"value": 16, "unit": "px"}},
+        "border": {"borderRadius": {"value": 14, "unit": "px"}},
+        "background": {"backgroundColor": {"value": "var(--ha-card-background, var(--card-background-color))"}},
+    },
+    "card_compact": {
+        "spacing": {"padding": {"value": 10, "unit": "px"}},
+        "border": {"borderRadius": {"value": 10, "unit": "px"}},
+        "background": {"backgroundColor": {"value": "var(--ha-card-background, var(--card-background-color))"}},
+    },
+    "vertical_stack": {
+        "flex": {
+            "flexDirection": {"value": "column"},
+            "gap": {"value": 12, "unit": "px"},
+        },
+    },
+    "vertical_stack_tight": {
+        "flex": {
+            "flexDirection": {"value": "column"},
+            "gap": {"value": 4, "unit": "px"},
+        },
+    },
+    "horizontal_row": {
+        "flex": {
+            "flexDirection": {"value": "row"},
+            "alignItems": {"value": "center"},
+            "gap": {"value": 12, "unit": "px"},
+        },
+    },
+    "centered_tile": {
+        "flex": {
+            "flexDirection": {"value": "column"},
+            "alignItems": {"value": "center"},
+            "justifyContent": {"value": "center"},
+            "gap": {"value": 6, "unit": "px"},
+        },
+    },
+    "header_row": {
+        # icon on the left, name+state column on the right
+        "flex": {
+            "flexDirection": {"value": "row"},
+            "alignItems": {"value": "center"},
+            "gap": {"value": 12, "unit": "px"},
+        },
+    },
+    "fill_remaining": {
+        "flex": {"flexGrow": {"value": "1"}},
+    },
+    "text_primary": {
+        "typography": {
+            "fontWeight": {"value": "600"},
+            "fontSize": {"value": 14, "unit": "px"},
+        },
+    },
+    "text_secondary": {
+        "typography": {
+            "fontSize": {"value": 12, "unit": "px"},
+            "color": {"value": "var(--secondary-text-color)"},
+        },
+    },
+    "text_heading": {
+        "typography": {
+            "fontWeight": {"value": "600"},
+            "fontSize": {"value": 18, "unit": "px"},
+        },
+    },
+    "text_huge": {
+        "typography": {
+            "fontWeight": {"value": "700"},
+            "fontSize": {"value": 28, "unit": "px"},
+        },
+    },
+}
+
+
+# =========================================================================
+# Block schema (from upstream v1.x — sync if upstream adds new block types).
 # =========================================================================
 
 BLOCK_TYPES: dict[str, dict[str, Any]] = {
@@ -565,11 +767,144 @@ def list_block_types(category: str | None = None, include_internal: bool = False
 
 @mcp.tool()
 def get_block_schema(block_type: str) -> dict:
-    """Full schema for one block type: props with types/defaults/enum values, notes, supported domains."""
+    """Full schema for one block type: props with types/defaults/enum values, notes, supported domains, style targets."""
     info = BLOCK_TYPES.get(block_type)
     if not info:
         return {"error": "unknown_block_type", "block_type": block_type, "known": list(BLOCK_TYPES.keys())}
-    return {"type": block_type, **info}
+    return {
+        "type": block_type,
+        **info,
+        "style_targets": STYLE_TARGETS.get(block_type, ["block"]),
+    }
+
+
+# =========================================================================
+# Style introspection
+# =========================================================================
+
+@mcp.tool()
+def list_style_categories() -> list[dict]:
+    """List CSS style categories with their property names and unit conventions.
+
+    Property names are camelCase (e.g. ``flexDirection``, ``backgroundColor``).
+    Anything else gets discarded by Card Builder's CSS resolver.
+    """
+    return [
+        {
+            "category": cat,
+            "properties": info["properties"],
+            "length_units": info.get("length_units"),
+            "legacy_aliases": info.get("legacy_aliases"),
+            "notes": info.get("notes"),
+        }
+        for cat, info in STYLE_CATEGORIES.items()
+    ]
+
+
+@mcp.tool()
+def list_style_targets(block_type: str) -> dict:
+    """Style targets available for a block — sub-components you can style independently.
+
+    Example: ``block-entity-field-state`` has ``state`` and ``unit`` targets so you
+    can colour the number and the unit differently.
+    """
+    if block_type not in BLOCK_TYPES:
+        return {"error": "unknown_block_type", "block_type": block_type}
+    targets = STYLE_TARGETS.get(block_type, ["block"])
+    return {"block_type": block_type, "targets": targets}
+
+
+@mcp.tool()
+def list_style_snippets() -> list[dict]:
+    """List built-in style snippets — drop them straight into a node's ``styles`` or ``dz_styles``.
+
+    Compose multiple snippets with ``build_styles(["card_padded", "vertical_stack"])``.
+    """
+    return [
+        {"name": name, "categories": list(snippet.keys())}
+        for name, snippet in STYLE_SNIPPETS.items()
+    ]
+
+
+@mcp.tool()
+def get_style_snippet(name: str, target: str = "block", container: str = "desktop") -> dict:
+    """Fetch one snippet wrapped in the full target/container envelope.
+
+    Returns ``{<target>: {containers: {<container>: <snippet>}}}`` — ready to assign
+    to a block's ``styles`` directly.
+    """
+    snippet = STYLE_SNIPPETS.get(name)
+    if not snippet:
+        return {"error": "unknown_snippet", "name": name, "known": list(STYLE_SNIPPETS.keys())}
+    return {target: {"containers": {container: snippet}}}
+
+
+@mcp.tool()
+def build_styles(
+    snippet_names: list[str],
+    target: str = "block",
+    container: str = "desktop",
+    extra: dict | None = None,
+) -> dict:
+    """Compose a styles object from one or more snippets plus optional extra overrides.
+
+    ``extra`` is shaped like the inner ContainerStyleData (``{category: {prop: {value, unit}}}``).
+    Later snippets override earlier ones at the property level.
+
+    Example::
+
+        build_styles(["card_padded", "vertical_stack"])
+        -> {"block": {"containers": {"desktop": {"spacing": {...}, "border": {...}, "background": {...}, "flex": {...}}}}}
+    """
+    merged: dict[str, Any] = {}
+    for name in snippet_names:
+        snippet = STYLE_SNIPPETS.get(name)
+        if not snippet:
+            return {"error": "unknown_snippet", "name": name, "known": list(STYLE_SNIPPETS.keys())}
+        for cat, props in snippet.items():
+            merged.setdefault(cat, {}).update(props)
+    if extra:
+        for cat, props in extra.items():
+            merged.setdefault(cat, {}).update(props)
+    return {target: {"containers": {container: merged}}}
+
+
+# =========================================================================
+# Schema sync
+# =========================================================================
+
+@mcp.tool()
+def check_schema_sync() -> dict:
+    """Compare the embedded schema with upstream Card Builder's HEAD manifest.
+
+    Hits ``raw.githubusercontent.com`` for ``custom_components/card_builder/manifest.json``
+    and reports whether the embedded schema still matches the upstream version.
+    Use this when a recipe stops working — the upstream may have shipped a
+    breaking schema change.
+    """
+    import json
+    import urllib.request
+
+    url = f"https://raw.githubusercontent.com/{UPSTREAM_REPO}/main/custom_components/card_builder/manifest.json"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as r:
+            upstream = json.load(r)
+    except Exception as err:
+        return {"status": "fetch_failed", "error": str(err), "embedded": UPSTREAM_SCHEMA_SYNC}
+
+    upstream_version = upstream.get("version", "?")
+    return {
+        "status": "ok",
+        "upstream_version": upstream_version,
+        "upstream_repo": UPSTREAM_REPO,
+        "embedded_doc_version": UPSTREAM_SCHEMA_SYNC["document_model_version"],
+        "embedded_documented_against": UPSTREAM_SCHEMA_SYNC["documented_against"],
+        "advice": (
+            "If upstream_version drifted significantly from the embedded "
+            "'documented_against' tag, refresh BLOCK_TYPES / STYLE_CATEGORIES / "
+            "STYLE_TARGETS / STYLE_SNIPPETS in tools/card_builder.py."
+        ),
+    }
 
 
 # =========================================================================
@@ -713,11 +1048,18 @@ container; pass it via `dz_styles` on the layout node:
 
 ## Styles shape
 
-Block `styles` is keyed by **target** (default `"block"`) then **container**
-(use `"desktop"` for the responsive default — Card Builder also supports
-`"tablet"`, `"mobile"`). Categories are `spacing`, `background`, `border`,
-`flex`, `typography`, `size`, `layout`, `effects`. Each property value is a
-`StylePropertyValue`: `{"value": ..., "unit"?: "px|%|rem|..."}`. Example:
+Block `styles` is keyed by **target** (default `"block"`, plus per-block
+sub-component targets — see `list_style_targets(type)`) then **container**
+(use `"desktop"` for the responsive default; Card Builder also supports
+`"tablet"` and `"mobile"`). Categories: `layout`, `size`, `spacing`,
+`typography`, `background`, `border`, `flex`, `effects`, `svg` — full
+property lists via `list_style_categories()`.
+
+**Property names are camelCase**: `flexDirection`, `alignItems`, `borderRadius`,
+`backgroundColor`, `fontSize`, `paddingTop`. kebab-case (`flex-direction`,
+`background-color`) is silently discarded.
+
+Each property value is a `StylePropertyValue`: `{"value": ..., "unit"?: "px|%|rem|..."}`.
 
 ```
 "styles": {
@@ -725,14 +1067,32 @@ Block `styles` is keyed by **target** (default `"block"`) then **container**
     "containers": {
       "desktop": {
         "spacing":    {"padding": {"value": 16, "unit": "px"}},
-        "border":     {"border-radius": {"value": 14, "unit": "px"}},
-        "background": {"background-color": {"value": "var(--ha-card-background)"}},
-        "typography": {"font-weight": {"value": "600"}, "font-size": {"value": 14, "unit": "px"}}
+        "border":     {"borderRadius": {"value": 14, "unit": "px"}},
+        "background": {"backgroundColor": {"value": "var(--ha-card-background)"}},
+        "flex":       {"flexDirection": {"value": "column"}, "gap": {"value": 12, "unit": "px"}},
+        "typography": {"fontWeight": {"value": "600"}, "fontSize": {"value": 14, "unit": "px"}}
       }
     }
   }
 }
 ```
+
+## Style snippets (shortcut)
+
+Don't hand-write the envelope every time — use `build_styles([names])`:
+
+```
+build_styles(["card_padded", "vertical_stack"])
+# → ready-to-use styles for a vertical-flex card with padding + radius + bg
+```
+
+`list_style_snippets()` returns every available preset. Common picks:
+- `card_padded` / `card_compact` — padding + border-radius + bg
+- `vertical_stack` / `vertical_stack_tight` — flex column with gap
+- `horizontal_row` / `header_row` — flex row with center alignment
+- `centered_tile` — tile centered column
+- `fill_remaining` — flex-grow:1 (for filler children)
+- `text_primary` / `text_secondary` / `text_heading` / `text_huge` — typography preset
 
 ## Validation
 
