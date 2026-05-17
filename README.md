@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **270 tools across 27 domains** — entities (with bulk voice exposure), automations & scripts (CRUD + traces + last-failed shortcuts), dashboards, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **self-documenting Card Builder** (visual drag-and-drop cards, recipe builder with embedded block schema + style categories + style targets + style snippets + upstream sync check), **aggregated snapshot** (one-call context), **BM25 tool search** (find the right tool without memorising 270 names), HA-aware YAML validation (`!include`, `!secret`), git versioning, and more.
+**Give AI assistants full control over your smart home.** **274 tools across 27 domains** — entities (with bulk voice exposure), automations & scripts (CRUD + traces + last-failed shortcuts), dashboards, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **self-documenting Card Builder** (visual drag-and-drop cards, recipe builder with embedded block schema + style categories + style targets + style snippets + upstream sync check), **aggregated snapshot** (one-call context), **BM25 tool search** (find the right tool without memorising 270 names), HA-aware YAML validation (`!include`, `!secret`), git versioning, and more.
 
 Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
@@ -160,7 +160,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Tools
 
-270 tools across 27 categories:
+274 tools across 27 categories:
 
 | Category | Count | Highlights |
 | --- | --- | --- |
@@ -188,7 +188,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | `integrations_*` | 12 | **config_flow** (install like in UI), options flow CRUD, enable/disable |
 | `voice_*` | 9 | Assist pipelines CRUD, STT/TTS/wake-word engines |
 | `themes_*` | 8 | list/create/update/delete Lovelace themes |
-| `card_builder_*` | 28 | Cards CRUD, style presets, CSS properties, media, renderer config, **embedded block schema** (`list_block_types`, `get_block_schema`), **embedded styles knowledge** (`list_style_categories`, `list_style_targets`, `list_style_snippets`, `get_style_snippet`, `build_styles`), **recipe guide**, **`build_from_recipe`** high-level builder (auto-wraps props), **`validate_config`** structural check, **`check_schema_sync`** upstream drift detection |
+| `card_builder_*` | 32 | Cards CRUD, style presets, CSS properties, media, renderer config, **embedded block schema** (`list_block_types`, `get_block_schema`, `list_button_toggle_features`), **embedded styles knowledge** (`list_style_categories`, `list_style_targets`, `list_style_snippets`, `get_style_snippet`, `build_styles`), **10 turnkey templates** (`list_card_templates`, `get_card_template`, `make_template_card` — tile_simple, tile_action, climate_full, cover_panel, light_dimmer, sensor_hero, media_panel, weather_pretty, gauge_radial, stat_compare), **recipe guide**, **`build_from_recipe`** high-level builder (auto-wraps props), **`validate_config`** structural check, **`check_schema_sync`** upstream drift detection |
 | `snapshot_*` | 2 | Aggregated one-call context — states + areas + devices + entities + integrations, with filters |
 | `discover_*` | 4 | **BM25 tool search** — query the 259-tool catalogue, list namespaces, fetch full docstrings |
 

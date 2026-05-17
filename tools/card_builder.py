@@ -1201,6 +1201,24 @@ build_styles(["card_padded", "vertical_stack"])
 
 `validate_config(config)` checks the structure (block types, parent/child
 links, required entities) before you send it to `create_card`.
+
+## Turnkey templates (the fast path)
+
+For common HA entities, skip the recipe step entirely and use the built-in
+template library:
+
+```
+list_card_templates()                       # discover the 10 presets
+get_card_template("climate_full")          # preview the config (no save)
+make_template_card("climate_full",
+                  name="AC Salon",
+                  slot="climate")           # creates the card in storage
+```
+
+Available templates: tile_simple, tile_action, climate_full, cover_panel,
+light_dimmer, sensor_hero, media_panel, weather_pretty, gauge_radial,
+stat_compare. Each ships polished spacing, typography (camelCase!), HA CSS
+custom property colours, and the right control props.
 """
 
 
@@ -1477,3 +1495,407 @@ def validate_config(config: dict) -> dict:
                 errors.append(f"block {bid!r} ({btype}) requires an entity but no ancestor provides one (slot / fixed)")
 
     return {"ok": not errors, "errors": errors, "warnings": warnings, "block_count": len(blocks), "slot_count": len(slots)}
+
+
+# =========================================================================
+# Card recipes — turnkey templates that produce a polished card config in
+# one call. Each recipe returns a *recipe shorthand* that you feed straight
+# into `build_from_recipe`. Use `make_template_card` to skip both steps and
+# create the card in storage directly.
+#
+# Recipes lean on HA's CSS custom properties for colours so they look
+# correct in both light and dark themes.
+# =========================================================================
+
+_COLOR = {
+    "card_bg": "var(--ha-card-background, var(--card-background-color))",
+    "fg_primary": "var(--primary-text-color)",
+    "fg_secondary": "var(--secondary-text-color)",
+    "accent": "var(--accent-color, var(--primary-color))",
+    "success": "var(--success-color, #4caf50)",
+    "warning": "var(--warning-color, #ff9800)",
+    "error": "var(--error-color, #f44336)",
+    "info": "var(--info-color, #2196f3)",
+    "divider": "var(--divider-color)",
+}
+
+
+def _bs(category_data: dict) -> dict:
+    """Wrap a ContainerStyleData payload in the full target/container envelope."""
+    return {"block": {"containers": {"desktop": category_data}}}
+
+
+def _recipe_tile_simple(slot: str = "entity") -> dict:
+    """Vertical-centered tile: icon + name + state."""
+    return {
+        "slots": {slot: {"name": "Entity", "description": "Entity displayed on this tile"}},
+        "root_slot": slot,
+        "root_styles": _bs({
+            "spacing": {"padding": {"value": 16, "unit": "px"}},
+            "border": {"borderRadius": {"value": 14, "unit": "px"}},
+            "background": {"backgroundColor": {"value": _COLOR["card_bg"]}},
+        }),
+        "root_dz_styles": _bs({
+            "flex": {
+                "flexDirection": {"value": "column"},
+                "alignItems": {"value": "center"},
+                "justifyContent": {"value": "center"},
+                "gap": {"value": 6, "unit": "px"},
+            },
+        }),
+        "blocks": [
+            {"type": "block-entity-field-icon", "props": {"iconSize": 40, "colorMode": "state-based"}},
+            {
+                "type": "block-entity-field-name",
+                "props": {"maxLength": 22, "useEllipsis": True},
+                "styles": _bs({"typography": {"fontWeight": {"value": "600"}, "fontSize": {"value": 14, "unit": "px"}}}),
+            },
+            {
+                "type": "block-entity-field-state",
+                "props": {"showUnit": True},
+                "styles": _bs({"typography": {"fontSize": {"value": 12, "unit": "px"}, "color": {"value": _COLOR["fg_secondary"]}}}),
+            },
+        ],
+    }
+
+
+def _recipe_tile_action(slot: str = "entity") -> dict:
+    """Tile with a `tap` action slot (typically wired to a toggle/service)."""
+    recipe = _recipe_tile_simple(slot)
+    recipe["action_slots"] = {
+        "tap": {"id": "tap", "name": "Tap", "description": "Run on single tap", "trigger": "tap", "action": {"action": "toggle"}},
+    }
+    return recipe
+
+
+def _recipe_climate_full(slot: str = "climate") -> dict:
+    """AC card: header (icon + name/state) + HVAC toggle + target-temp slider."""
+    return {
+        "slots": {slot: {"name": "Climate", "description": "Climate entity to control", "domains": ["climate"]}},
+        "root_slot": slot,
+        "root_styles": _bs({
+            "spacing": {"padding": {"value": 16, "unit": "px"}},
+            "border": {"borderRadius": {"value": 14, "unit": "px"}},
+            "background": {"backgroundColor": {"value": _COLOR["card_bg"]}},
+        }),
+        "root_dz_styles": _bs({"flex": {"flexDirection": {"value": "column"}, "gap": {"value": 12, "unit": "px"}}}),
+        "blocks": [
+            {
+                "type": "block-container",
+                "dz_styles": _bs({"flex": {"flexDirection": {"value": "row"}, "alignItems": {"value": "center"}, "gap": {"value": 12, "unit": "px"}}}),
+                "children": [
+                    {"type": "block-entity-field-icon", "props": {"iconSize": 44, "colorMode": "state-based"}},
+                    {
+                        "type": "block-container",
+                        "styles": _bs({"flex": {"flexGrow": {"value": "1"}, "flexDirection": {"value": "column"}}}),
+                        "dz_styles": _bs({"flex": {"flexDirection": {"value": "column"}, "gap": {"value": 2, "unit": "px"}}}),
+                        "children": [
+                            {"type": "block-entity-field-name", "styles": _bs({"typography": {"fontWeight": {"value": "600"}, "fontSize": {"value": 15, "unit": "px"}}})},
+                            {
+                                "type": "block-entity-field-state",
+                                "props": {"showUnit": True},
+                                "styles": _bs({"typography": {"fontSize": {"value": 12, "unit": "px"}, "color": {"value": _COLOR["fg_secondary"]}}}),
+                            },
+                        ],
+                    },
+                ],
+            },
+            {
+                "type": "block-button-toggle",
+                "props": {"feature": "auto", "orientation": "horizontal", "showIcon": True, "showLabel": False},
+            },
+            {
+                "type": "block-slider",
+                "props": {
+                    "orientation": "horizontal",
+                    "shape": "rounded",
+                    "showThumb": True,
+                    "showValue": True,
+                    "valuePositionHorizontal": "inline",
+                    "inlinePositionHorizontal": "right",
+                },
+            },
+        ],
+    }
+
+
+def _recipe_cover_panel(slot: str = "cover") -> dict:
+    """Cover card: header + open/close toggle + position slider."""
+    recipe = _recipe_climate_full(slot)
+    recipe["slots"] = {slot: {"name": "Cover", "description": "Cover/blind entity", "domains": ["cover"]}}
+    recipe["root_slot"] = slot
+    # Replace climate-specific control props with cover ones.
+    blocks = recipe["blocks"]
+    for b in blocks:
+        if b["type"] == "block-button-toggle":
+            b["props"] = {"feature": "auto", "orientation": "horizontal", "showIcon": True, "showLabel": False}
+        elif b["type"] == "block-slider":
+            b["props"]["coverControl"] = "auto"
+    return recipe
+
+
+def _recipe_light_dimmer(slot: str = "light") -> dict:
+    """Light card: large icon, name, brightness slider + on/off toggle."""
+    return {
+        "slots": {slot: {"name": "Light", "description": "Light entity", "domains": ["light"]}},
+        "root_slot": slot,
+        "root_styles": _bs({
+            "spacing": {"padding": {"value": 16, "unit": "px"}},
+            "border": {"borderRadius": {"value": 14, "unit": "px"}},
+            "background": {"backgroundColor": {"value": _COLOR["card_bg"]}},
+        }),
+        "root_dz_styles": _bs({"flex": {"flexDirection": {"value": "column"}, "gap": {"value": 12, "unit": "px"}}}),
+        "blocks": [
+            {
+                "type": "block-container",
+                "dz_styles": _bs({"flex": {"flexDirection": {"value": "row"}, "alignItems": {"value": "center"}, "gap": {"value": 12, "unit": "px"}}}),
+                "children": [
+                    {"type": "block-entity-field-icon", "props": {"iconSize": 48, "colorMode": "state-based"}},
+                    {
+                        "type": "block-container",
+                        "styles": _bs({"flex": {"flexGrow": {"value": "1"}, "flexDirection": {"value": "column"}}}),
+                        "dz_styles": _bs({"flex": {"flexDirection": {"value": "column"}, "gap": {"value": 2, "unit": "px"}}}),
+                        "children": [
+                            {"type": "block-entity-field-name", "styles": _bs({"typography": {"fontWeight": {"value": "600"}, "fontSize": {"value": 15, "unit": "px"}}})},
+                            {"type": "block-entity-field-state", "props": {"showUnit": True}, "styles": _bs({"typography": {"fontSize": {"value": 12, "unit": "px"}, "color": {"value": _COLOR["fg_secondary"]}}})},
+                        ],
+                    },
+                ],
+            },
+            {
+                "type": "block-button-toggle",
+                "props": {"feature": "light_power", "orientation": "horizontal", "showIcon": True, "showLabel": False},
+            },
+            {
+                "type": "block-slider",
+                "props": {
+                    "orientation": "horizontal",
+                    "shape": "rounded",
+                    "showThumb": True,
+                    "showValue": True,
+                    "displayMode": "percent",
+                    "valuePositionHorizontal": "inline",
+                    "inlinePositionHorizontal": "right",
+                },
+            },
+        ],
+    }
+
+
+def _recipe_sensor_hero(slot: str = "entity", unit: str | None = None) -> dict:
+    """Sensor hero: uppercase label on top, huge value below."""
+    state_props: dict = {"showUnit": True, "format": "numeric", "precision": 0}
+    if unit:
+        state_props["customUnit"] = unit
+    return {
+        "slots": {slot: {"name": "Entity", "description": "Sensor to display as a hero stat"}},
+        "root_slot": slot,
+        "root_styles": _bs({
+            "spacing": {"padding": {"value": 20, "unit": "px"}},
+            "border": {"borderRadius": {"value": 14, "unit": "px"}},
+            "background": {"backgroundColor": {"value": _COLOR["card_bg"]}},
+        }),
+        "root_dz_styles": _bs({
+            "flex": {"flexDirection": {"value": "column"}, "alignItems": {"value": "center"}, "justifyContent": {"value": "center"}, "gap": {"value": 4, "unit": "px"}},
+        }),
+        "blocks": [
+            {
+                "type": "block-entity-field-name",
+                "styles": _bs({"typography": {
+                    "fontSize": {"value": 12, "unit": "px"},
+                    "color": {"value": _COLOR["fg_secondary"]},
+                    "textTransform": {"value": "uppercase"},
+                    "letterSpacing": {"value": 1, "unit": "px"},
+                }}),
+            },
+            {
+                "type": "block-entity-field-state",
+                "props": state_props,
+                "styles": _bs({"typography": {"fontWeight": {"value": "700"}, "fontSize": {"value": 32, "unit": "px"}}}),
+            },
+        ],
+    }
+
+
+def _recipe_media_panel(slot: str = "media") -> dict:
+    """Media player card: album art, title/state, play controls + volume slider."""
+    return {
+        "slots": {slot: {"name": "Media", "description": "Media player entity", "domains": ["media_player"]}},
+        "root_slot": slot,
+        "root_styles": _bs({
+            "spacing": {"padding": {"value": 14, "unit": "px"}},
+            "border": {"borderRadius": {"value": 14, "unit": "px"}},
+            "background": {"backgroundColor": {"value": _COLOR["card_bg"]}},
+        }),
+        "root_dz_styles": _bs({"flex": {"flexDirection": {"value": "column"}, "gap": {"value": 10, "unit": "px"}}}),
+        "blocks": [
+            {
+                "type": "block-container",
+                "dz_styles": _bs({"flex": {"flexDirection": {"value": "row"}, "alignItems": {"value": "center"}, "gap": {"value": 12, "unit": "px"}}}),
+                "children": [
+                    {
+                        "type": "block-entity-field-image",
+                        "props": {"fallbackIcon": "mdi:music-circle"},
+                        "styles": _bs({"size": {"width": {"value": 64, "unit": "px"}, "height": {"value": 64, "unit": "px"}}, "border": {"borderRadius": {"value": 10, "unit": "px"}}}),
+                    },
+                    {
+                        "type": "block-container",
+                        "styles": _bs({"flex": {"flexGrow": {"value": "1"}, "flexDirection": {"value": "column"}}}),
+                        "dz_styles": _bs({"flex": {"flexDirection": {"value": "column"}, "gap": {"value": 2, "unit": "px"}}}),
+                        "children": [
+                            {"type": "block-entity-field-name", "styles": _bs({"typography": {"fontWeight": {"value": "600"}, "fontSize": {"value": 15, "unit": "px"}}})},
+                            {"type": "block-entity-field-state", "styles": _bs({"typography": {"fontSize": {"value": 12, "unit": "px"}, "color": {"value": _COLOR["fg_secondary"]}}})},
+                        ],
+                    },
+                ],
+            },
+            {
+                "type": "block-slider",
+                "props": {
+                    "orientation": "horizontal",
+                    "shape": "rounded",
+                    "showThumb": True,
+                    "showValue": True,
+                    "displayMode": "percent",
+                    "valuePositionHorizontal": "inline",
+                    "inlinePositionHorizontal": "right",
+                },
+            },
+        ],
+    }
+
+
+def _recipe_weather_pretty(slot: str = "weather") -> dict:
+    """Weather card: animated SVG background + huge condition + temperature."""
+    return {
+        "slots": {slot: {"name": "Weather", "description": "Weather entity", "domains": ["weather"]}},
+        "root_slot": slot,
+        "root_styles": _bs({
+            "spacing": {"padding": {"value": 18, "unit": "px"}},
+            "border": {"borderRadius": {"value": 14, "unit": "px"}},
+            "size": {"height": {"value": 180, "unit": "px"}},
+            "layout": {"positionX": {"value": 0}, "positionY": {"value": 0}},
+        }),
+        "root_dz_styles": _bs({"flex": {"flexDirection": {"value": "column"}, "justifyContent": {"value": "space-between"}, "gap": {"value": 6, "unit": "px"}}}),
+        "blocks": [
+            {
+                "type": "block-weather-background",
+                "props": {"svgSource": "default", "defaultBackground": "background-1", "enableAnimations": True},
+                "styles": _bs({
+                    "layout": {"zIndex": {"value": -1}},
+                    "size": {"width": {"value": 100, "unit": "%"}, "height": {"value": 100, "unit": "%"}},
+                }),
+            },
+            {
+                "type": "block-entity-field-state",
+                "styles": _bs({"typography": {"fontWeight": {"value": "600"}, "fontSize": {"value": 18, "unit": "px"}, "textTransform": {"value": "capitalize"}, "color": {"value": "#ffffff"}}}),
+            },
+            {
+                "type": "block-entity-field-attribute",
+                "props": {"attributeName": "temperature", "showLabel": False, "format": "numeric", "precision": 1, "suffix": "°"},
+                "styles": _bs({"typography": {"fontWeight": {"value": "700"}, "fontSize": {"value": 44, "unit": "px"}, "color": {"value": "#ffffff"}}}),
+            },
+        ],
+    }
+
+
+def _recipe_gauge_radial(slot: str = "entity") -> dict:
+    """Radial-ish gauge: huge centered value plus an entity name label.
+
+    Card Builder has no native gauge block — this approximates with a hero
+    layout on a tinted background. For a true radial SVG, design one in the
+    Card Builder UI and reuse its config.
+    """
+    recipe = _recipe_sensor_hero(slot, unit="%")
+    recipe["root_styles"] = _bs({
+        "spacing": {"padding": {"value": 24, "unit": "px"}},
+        "border": {"borderRadius": {"value": 999, "unit": "px"}},
+        "background": {"backgroundColor": {"value": _COLOR["card_bg"]}},
+        "size": {"minHeight": {"value": 160, "unit": "px"}},
+    })
+    return recipe
+
+
+def _recipe_stat_compare(slot: str = "entity", label: str = "Today") -> dict:
+    """Energy/counter card: small uppercase label + big number."""
+    recipe = _recipe_sensor_hero(slot)
+    recipe["blocks"][0]["props"] = {"customName": label}
+    # Hint the state block to format with kWh by default (override via Card Builder UI if needed).
+    for b in recipe["blocks"]:
+        if b["type"] == "block-entity-field-state":
+            b["props"] = {"showUnit": True, "format": "numeric", "precision": 2}
+    return recipe
+
+
+CARD_RECIPES: dict[str, dict] = {
+    "tile_simple": {"fn": _recipe_tile_simple, "label": "Tile (simple)", "domains": [], "description": "Vertical-centered tile: icon + name + state. For any entity."},
+    "tile_action": {"fn": _recipe_tile_action, "label": "Tile (with tap → toggle)", "domains": ["switch", "light", "input_boolean", "automation", "fan"], "description": "Same as tile_simple plus a 'tap' action slot pre-wired to toggle."},
+    "climate_full": {"fn": _recipe_climate_full, "label": "Climate (full controls)", "domains": ["climate"], "description": "Header (icon + name/state) + HVAC mode toggle + target-temp slider."},
+    "cover_panel": {"fn": _recipe_cover_panel, "label": "Cover panel", "domains": ["cover"], "description": "Header + open/close toggle + position slider."},
+    "light_dimmer": {"fn": _recipe_light_dimmer, "label": "Light dimmer", "domains": ["light"], "description": "Header + power toggle + brightness slider (displayed as percent)."},
+    "sensor_hero": {"fn": _recipe_sensor_hero, "label": "Sensor hero", "domains": ["sensor"], "description": "Uppercase label + huge bold value. Great for level / battery / yield sensors."},
+    "media_panel": {"fn": _recipe_media_panel, "label": "Media player panel", "domains": ["media_player"], "description": "Album art (with mdi:music-circle fallback) + title/state + volume slider."},
+    "weather_pretty": {"fn": _recipe_weather_pretty, "label": "Weather (animated)", "domains": ["weather"], "description": "Animated SVG weather background + condition + temperature."},
+    "gauge_radial": {"fn": _recipe_gauge_radial, "label": "Gauge (faux radial)", "domains": ["sensor"], "description": "Pill-shaped hero — approximates a radial gauge. Build a true SVG gauge in the Card Builder UI for richer visuals."},
+    "stat_compare": {"fn": _recipe_stat_compare, "label": "Stat (label + big number)", "domains": ["sensor"], "description": "Period-labelled stat: 'TODAY' uppercase + huge 2-decimal number. Pair multiple in a section for compare-at-a-glance grids."},
+}
+
+
+@mcp.tool()
+def list_card_templates(domain: str | None = None) -> list[dict]:
+    """List built-in card recipe templates.
+
+    Each entry: ``{name, label, description, domains}``. Pass ``domain`` to
+    filter to templates that target a specific HA entity domain.
+    """
+    out: list[dict] = []
+    for name, info in CARD_RECIPES.items():
+        if domain and info["domains"] and domain not in info["domains"]:
+            continue
+        out.append({"name": name, "label": info["label"], "description": info["description"], "domains": info["domains"]})
+    return out
+
+
+@mcp.tool()
+def get_card_template(name: str, slot: str | None = None) -> dict:
+    """Get the resolved DocumentData for a template (without creating a card).
+
+    Returns the full config — feed it into `create_card` yourself, or use
+    `make_template_card` to skip the boilerplate.
+    """
+    entry = CARD_RECIPES.get(name)
+    if not entry:
+        return {"error": "unknown_template", "name": name, "known": list(CARD_RECIPES.keys())}
+    recipe = entry["fn"](slot) if slot else entry["fn"]()
+    return build_from_recipe(recipe)
+
+
+@mcp.tool()
+def make_template_card(
+    template: str,
+    name: str,
+    description: str = "",
+    slot: str | None = None,
+    tags: list[str] | None = None,
+    categories: list[str] | None = None,
+) -> dict:
+    """One-shot: pick a template, name it, get back a saved card_id.
+
+    Use the returned ``id`` with ``renderer_card_config(card_id, slot_entities={<slot>: ...})``
+    to drop the card on a dashboard. ``slot`` overrides the default slot
+    name in the recipe (e.g. ``"main"`` instead of ``"entity"``).
+    """
+    entry = CARD_RECIPES.get(template)
+    if not entry:
+        return {"error": "unknown_template", "template": template, "known": list(CARD_RECIPES.keys())}
+    recipe = entry["fn"](slot) if slot else entry["fn"]()
+    config = build_from_recipe(recipe)
+    final_tags = list(tags) if tags else ["nexus-template", template]
+    final_categories = list(categories) if categories else [entry["domains"][0] if entry["domains"] else "tile"]
+    return create_card(
+        name=name,
+        config=config,
+        description=description or entry["description"],
+        tags=final_tags,
+        categories=final_categories,
+    )
