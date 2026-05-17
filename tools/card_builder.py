@@ -123,6 +123,44 @@ STYLE_CATEGORIES: dict[str, dict[str, Any]] = {
 }
 
 
+# Button-toggle / Select-menu feature IDs, namespaced by domain. Pass one of
+# these as the `feature` prop on block-button-toggle / block-select-menu — or
+# leave the default "auto" to let Card Builder pick the first available.
+# Source: frontend/src/common/blocks/components/controls/base-option-selector.ts
+FEATURE_DEFINITIONS: dict[str, list[dict[str, str]]] = {
+    "climate": [
+        {"id": "climate_hvac_mode", "label": "HVAC Mode"},
+        {"id": "climate_fan_mode", "label": "Fan Mode"},
+        {"id": "climate_swing_mode", "label": "Swing Mode"},
+        {"id": "climate_preset_mode", "label": "Preset Mode"},
+    ],
+    "fan": [
+        {"id": "fan_power", "label": "Power"},
+        {"id": "fan_preset_mode", "label": "Preset Mode"},
+        {"id": "fan_speed", "label": "Speed"},
+    ],
+    "light": [
+        {"id": "light_power", "label": "Power"},
+        {"id": "light_effect", "label": "Effect"},
+    ],
+    "media_player": [
+        {"id": "media_player_source", "label": "Source"},
+        {"id": "media_player_sound_mode", "label": "Sound Mode"},
+    ],
+    "humidifier": [{"id": "humidifier_mode", "label": "Mode"}],
+    "water_heater": [{"id": "water_heater_operation_mode", "label": "Operation Mode"}],
+    "cover": [{"id": "cover_state", "label": "Open/Close"}],
+    "lock": [{"id": "lock_state", "label": "Lock/Unlock"}],
+    "vacuum": [{"id": "vacuum_fan_speed", "label": "Fan Speed"}],
+    "switch": [{"id": "switch_power", "label": "Power"}],
+    "input_boolean": [{"id": "input_boolean_state", "label": "State"}],
+    "siren": [{"id": "siren_state", "label": "State"}],
+    "automation": [{"id": "automation_enabled", "label": "Enabled"}],
+    "select": [{"id": "select_option", "label": "Option"}],
+    "input_select": [{"id": "input_select_option", "label": "Option"}],
+}
+
+
 # Style targets per block — sub-components you can style independently.
 # Source: docs/panel-blocks.md. "block" is the default (whole element);
 # blocks with sub-components add named targets. Active targets layer on top
@@ -403,22 +441,38 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
             "shape": {"type": "enum", "values": ["rounded", "square"], "default": "rounded"},
             "showThumb": {"type": "bool", "default": True},
             "showValue": {"type": "bool", "default": True},
-            "valuePosition": {"type": "enum", "values": ["inline", "tooltip", "inside", "top", "bottom"], "default": "inline"},
-            "inlinePosition": {"type": "enum", "values": ["left", "right"], "default": "right"},
-            "insidePosition": {"type": "enum", "values": ["left", "center", "right", "top", "middle", "bottom"], "default": "center"},
+            "valuePositionHorizontal": {"type": "enum", "values": ["inline", "tooltip", "inside"], "default": "inline"},
+            "inlinePositionHorizontal": {"type": "enum", "values": ["left", "right"], "default": "right"},
+            "insidePositionHorizontal": {"type": "enum", "values": ["left", "center", "right"], "default": "center"},
+            "valuePositionVertical": {"type": "enum", "values": ["top", "bottom", "inside", "tooltip"], "default": "top"},
+            "insidePositionVertical": {"type": "enum", "values": ["top", "middle", "bottom"], "default": "middle"},
             "invert": {"type": "bool", "default": False},
-            "activation": {"type": "enum", "values": ["press", "hold"], "default": "press"},
+            "activationMode": {"type": "enum", "values": ["press", "hold"], "default": "press"},
+            "holdTapEnabled": {"type": "bool", "default": False},
+            "holdTapAction": {"type": "enum", "values": ["more-info", "toggle"], "default": "more-info"},
             "mode": {"type": "enum", "values": ["auto", "single", "range"], "default": "auto"},
             "coverControl": {"type": "enum", "values": ["auto", "position", "tilt"], "default": "auto", "applies_when_domain": "cover"},
             "valueSource": {"type": "enum", "values": ["state", "attribute"], "default": "state"},
             "valueAttribute": {"type": "string", "default": ""},
             "displayMode": {"type": "enum", "values": ["auto", "raw", "percent", "custom"], "default": "auto"},
-            "commitMode": {"type": "enum", "values": ["release", "throttled", "debounced"], "default": "release"},
-            "commitThrottle": {"type": "int", "default": 200, "unit": "ms"},
-            "commitDebounce": {"type": "int", "default": 200, "unit": "ms"},
+            "displayMin": {"type": "int", "default": 0},
+            "displayMax": {"type": "int", "default": 100},
+            "commitMode": {"type": "enum", "values": ["onRelease", "throttled", "debounced"], "default": "onRelease"},
+            "commitThrottleMs": {"type": "int", "default": 200, "unit": "ms"},
+            "commitDebounceMs": {"type": "int", "default": 300, "unit": "ms"},
             "disableMode": {"type": "enum", "values": ["auto", "custom", "never"], "default": "auto"},
+            "disabled": {"type": "bool", "default": False},
+            "rangeMinGap": {"type": "int", "default": 0},
+            "useMinOverride": {"type": "bool", "default": False},
+            "minOverride": {"type": "int", "default": 0},
+            "useMaxOverride": {"type": "bool", "default": False},
+            "maxOverride": {"type": "int", "default": 100},
+            "useStepOverride": {"type": "bool", "default": False},
+            "stepOverride": {"type": "int", "default": 1},
+            "usePrecisionOverride": {"type": "bool", "default": False},
         },
         "supported_domains": ["light", "fan", "cover", "media_player", "climate", "humidifier", "water_heater", "input_number", "number", "valve"],
+        "notes": "Value-position props are split by orientation: valuePositionHorizontal vs valuePositionVertical. commitMode value 'onRelease' (NOT 'release').",
     },
     "block-button-toggle": {
         "category": "controls",
@@ -426,11 +480,11 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
         "accepts_children": False,
         "requires_entity": True,
         "props": {
-            "feature": {"type": "string", "default": "auto", "notes": "auto | hvac_mode | fan_mode | swing_mode | preset_mode | power | effect | source | sound_mode | mode | operation_mode | open_close | lock | fan_speed | state | option"},
+            "feature": {"type": "string", "default": "auto", "notes": "Domain-namespaced ID (e.g. climate_hvac_mode, cover_state, light_power). Use 'auto' to let Card Builder pick the first available. See list_button_toggle_features(domain)."},
             "orientation": {"type": "enum", "values": ["horizontal", "vertical"], "default": "horizontal"},
             "showIcon": {"type": "bool", "default": True},
             "showLabel": {"type": "bool", "default": True},
-            "iconLabelLayout": {"type": "enum", "values": ["horizontal", "vertical"], "default": "horizontal"},
+            "contentLayout": {"type": "enum", "values": ["horizontal", "vertical"], "default": "horizontal", "notes": "Was iconLabelLayout in the panel docs."},
             "contentOrder": {"type": "enum", "values": ["icon-first", "label-first"], "default": "icon-first"},
             "verticalAlign": {"type": "enum", "values": ["left", "center", "right"], "default": "center"},
         },
@@ -442,13 +496,13 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
         "accepts_children": False,
         "requires_entity": True,
         "props": {
-            "feature": {"type": "string", "default": "auto"},
-            "showContainerIcon": {"type": "bool", "default": True},
-            "showContainerLabel": {"type": "bool", "default": True},
-            "showDropdownIcon": {"type": "bool", "default": True},
-            "showDropdownLabel": {"type": "bool", "default": True},
+            "feature": {"type": "string", "default": "auto", "notes": "Domain-namespaced ID — same convention as block-button-toggle. See list_button_toggle_features(domain)."},
+            "containerShowIcon": {"type": "bool", "default": True},
+            "containerShowLabel": {"type": "bool", "default": True},
+            "dropdownShowIcon": {"type": "bool", "default": True},
+            "dropdownShowLabel": {"type": "bool", "default": True},
             "contentOrder": {"type": "enum", "values": ["icon-first", "label-first"], "default": "icon-first"},
-            "dropdownPlacement": {"type": "enum", "values": ["below", "above"], "default": "below"},
+            "dropdownPlacement": {"type": "enum", "values": ["down", "up"], "default": "down"},
         },
         "supported_domains": ["climate", "fan", "light", "media_player", "humidifier", "water_heater", "cover", "lock", "vacuum", "switch", "input_boolean", "siren", "automation", "select", "input_select"],
     },
@@ -783,6 +837,28 @@ def get_block_schema(block_type: str) -> dict:
 # =========================================================================
 
 @mcp.tool()
+def list_button_toggle_features(domain: str | None = None) -> list[dict]:
+    """List the `feature` IDs accepted by block-button-toggle / block-select-menu.
+
+    Feature IDs are **namespaced by domain** — e.g. `climate_hvac_mode` for an
+    AC, `cover_state` for a blind, `light_power` for a bulb. Pass `domain` to
+    filter; omit to see everything.
+
+    `feature: "auto"` (the block default) lets Card Builder pick the first
+    available feature for the entity at runtime — usually what you want for
+    reusable templates.
+    """
+    if domain:
+        defs = FEATURE_DEFINITIONS.get(domain) or []
+        return [{"domain": domain, **f} for f in defs]
+    out: list[dict] = []
+    for d, feats in FEATURE_DEFINITIONS.items():
+        for f in feats:
+            out.append({"domain": d, **f})
+    return out
+
+
+@mcp.tool()
 def list_style_categories() -> list[dict]:
     """List CSS style categories with their property names and unit conventions.
 
@@ -1076,6 +1152,33 @@ Each property value is a `StylePropertyValue`: `{"value": ..., "unit"?: "px|%|re
   }
 }
 ```
+
+## Button-toggle / select-menu features
+
+`block-button-toggle` and `block-select-menu` pick what to control via the
+`feature` prop. **Feature IDs are namespaced by domain** — e.g.
+`climate_hvac_mode`, `cover_state`, `light_power`. Default `auto` lets
+Card Builder pick the first available feature for the entity at runtime
+(safest choice for reusable templates).
+
+Discover IDs via `list_button_toggle_features(domain)`. Example for an AC:
+
+```
+{"type": "block-button-toggle", "props": {"feature": "auto"}}
+# or explicitly:
+{"type": "block-button-toggle", "props": {"feature": "climate_hvac_mode"}}
+```
+
+## Slider prop names — Horizontal / Vertical suffix
+
+`block-slider` value placement props are split per orientation:
+`valuePositionHorizontal` / `valuePositionVertical`,
+`inlinePositionHorizontal`, `insidePositionHorizontal` / Vertical. Other
+props use camelCase too: `activationMode`, `holdTapEnabled`,
+`holdTapAction`, `commitMode` (values: `onRelease` | `throttled` |
+`debounced`), `commitThrottleMs`, `commitDebounceMs`. The legacy unsuffixed
+names (`valuePosition`, `inlinePosition`, `activation`, …) are silently
+ignored — verify with `get_block_schema("block-slider")`.
 
 ## Style snippets (shortcut)
 
