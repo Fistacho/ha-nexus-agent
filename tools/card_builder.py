@@ -1344,6 +1344,96 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
+# Props that hold complex objects (NOT TraitPropertyValue) and must NOT be
+# wrapped in {value: ...}. Confirmed via marketplace card inspection.
+_RAW_PROPS = {
+    "block-grid": {"gridConfig"},
+    # Grid cells carry raw geometry metadata (no value-wrapper), confirmed via
+    # marketplace card inspection.
+    "block-drop-zone": {"row", "column", "gridArea", "zoneIndex"},
+}
+
+
+def _make_absolute_position_styles(x: int, y: int, anchor: str = "top-left", unit: str = "px") -> dict:
+    """Build the styles envelope for an absolute-positioned block.
+
+    Marketplace pattern: `styles.block.containers.desktop.layout.positionX/Y`
+    plus a `_internal.position_config` mirror used by the Card Builder UI
+    for anchor/origin semantics.
+    """
+    return {
+        "block": {
+            "containers": {
+                "desktop": {
+                    "layout": {
+                        "positionX": {"value": x},
+                        "positionY": {"value": y},
+                    },
+                    "_internal": {
+                        "position_config": {
+                            "value": {
+                                "x": x,
+                                "y": y,
+                                "anchor": anchor,
+                                "unitSystem": unit,
+                                "originPoint": anchor,
+                            }
+                        }
+                    },
+                }
+            }
+        }
+    }
+
+
+def _make_size_styles(
+    *,
+    width: int | None = None,
+    height: int | None = None,
+    max_width: int | None = None,
+    max_height: int | None = None,
+    unit: str = "px",
+) -> dict:
+    """Build a styles envelope with only the size category set."""
+    size: dict[str, Any] = {}
+    if width is not None:
+        size["width"] = {"value": width, "unit": unit}
+    if height is not None:
+        size["height"] = {"value": height, "unit": unit}
+    if max_width is not None:
+        size["maxWidth"] = {"value": max_width, "unit": unit}
+    if max_height is not None:
+        size["maxHeight"] = {"value": max_height, "unit": unit}
+    if not size:
+        return {}
+    return {"block": {"containers": {"desktop": {"size": size}}}}
+
+
+def _merge_styles(*style_blobs: dict | None) -> dict:
+    """Deep-merge multiple style envelopes at the property level.
+
+    Each input is shaped like `{target: {containers: {container: {category: {prop: value}}}}}`.
+    Later inputs override earlier ones at the property granularity.
+    """
+    out: dict[str, Any] = {}
+    for blob in style_blobs:
+        if not blob:
+            continue
+        for target, target_data in blob.items():
+            out.setdefault(target, {})
+            containers = (target_data or {}).get("containers") or {}
+            out[target].setdefault("containers", {})
+            for cont, cont_data in containers.items():
+                out[target]["containers"].setdefault(cont, {})
+                for cat, cat_data in (cont_data or {}).items():
+                    if isinstance(cat_data, dict):
+                        out[target]["containers"][cont].setdefault(cat, {})
+                        out[target]["containers"][cont][cat].update(cat_data)
+                    else:
+                        out[target]["containers"][cont][cat] = cat_data
+    return out
+
+
 def _make_canvas_root(
     children_ids: list[str],
     entity_config: dict | None,
@@ -1386,7 +1476,7 @@ def _make_canvas_root(
     return block
 
 
-def _wrap_props(props: dict | None) -> dict:
+def _wrap_props(props: dict | None, block_type: str | None = None) -> dict:
     """Auto-wrap raw scalar prop values in `{"value": ...}` (TraitPropertyValue shape).
 
     Card Builder's `getPropertyValue` discards anything that isn't an object
@@ -1394,12 +1484,20 @@ def _wrap_props(props: dict | None) -> dict:
     back to the block's default. This helper makes the recipe shorthand
     `"props": {"iconSize": 40}` work the same as the verbose
     `"props": {"iconSize": {"value": 40}}`.
+
+    A few props on specific blocks are *raw objects* (NOT TraitPropertyValue)
+    and must pass through unchanged — for example `block-grid.gridConfig`
+    holds the nested {rows, columns, gap, …} shape directly. They're
+    tracked in `_RAW_PROPS` (cross-referenced against marketplace cards).
     """
     if not props:
         return {}
+    raw_keys = _RAW_PROPS.get(block_type, set()) if block_type else set()
     wrapped: dict[str, Any] = {}
     for k, v in props.items():
-        if isinstance(v, dict) and ("value" in v or "binding" in v):
+        if k in raw_keys:
+            wrapped[k] = v
+        elif isinstance(v, dict) and ("value" in v or "binding" in v):
             wrapped[k] = v
         else:
             wrapped[k] = {"value": v}
@@ -1426,7 +1524,7 @@ def _make_block(
         "order": order,
         "zIndex": 0,
         "parentManaged": parent_managed,
-        "props": _wrap_props(props),
+        "props": _wrap_props(props, block_type=block_type),
     }
     if entity_config is not None:
         block["entityConfig"] = entity_config
@@ -1607,7 +1705,11 @@ def validate_config(config: dict) -> dict:
             continue
         info = BLOCK_TYPES[btype]
         # Props must use TraitPropertyValue wrapper — raw scalars get silently ignored.
+        # Exception: keys listed in _RAW_PROPS for that block type are intentionally raw.
+        raw_keys = _RAW_PROPS.get(btype, set())
         for pname, pval in (block.get("props") or {}).items():
+            if pname in raw_keys:
+                continue
             if not isinstance(pval, dict) or not ("value" in pval or "binding" in pval):
                 warnings.append(
                     f"block {bid!r}: prop {pname!r} = {pval!r} is not wrapped as "
@@ -1983,7 +2085,283 @@ def _recipe_stat_compare(slot: str = "entity", label: str = "Today") -> dict:
     return recipe
 
 
+# =========================================================================
+# COMPACT MARKETPLACE-STYLE RECIPES — block-grid + absolute positioning
+#
+# These bypass `build_from_recipe` because the marketplace pattern uses
+# canvas → block-grid(2×2) → grid-cell drop-zones with `layout: "absolute"`
+# children + pixel-perfect positionX/positionY. This is the only layout
+# that survives Card Builder's renderer for non-trivial cards (confirmed
+# by inspecting Light Dimmer Power Sensor from the marketplace).
+# =========================================================================
+
+def _make_compact_card_config(
+    *,
+    slot_id: str,
+    slot_name: str = "Entity",
+    slot_domains: list[str] | None = None,
+    icon: str | None = None,
+    icon_size: int = 24,
+    has_slider: bool = True,
+    slider_props: dict | None = None,
+    secondary_slot_id: str | None = None,
+    secondary_slot_name: str = "Secondary",
+    secondary_slot_domains: list[str] | None = None,
+    action_id: str = "main_action",
+    action_type: str = "toggle",
+    max_height: int = 150,
+) -> dict:
+    """Produce a marketplace-style 2×2-grid compact card config.
+
+    Layout (mirrors Light Dimmer Power Sensor):
+    - Grid: rows=2, columns=2, columnSizes=[1fr, 6fr]
+    - Cell (0,0): icon
+    - Cell (0,1): entity-state + entity-name (absolute positioned)
+    - Cell (1,0): slider (if has_slider)
+    - Cell (1,1): hidden (display:none)
+    Canvas has `maxHeight: 150px` for compact dashboard tile look.
+    """
+    # Canvas-level action slot (tap toggle)
+    action_slot = {
+        "id": action_id,
+        "action": {"action": action_type},
+        "trigger": "tap",
+    }
+    secondary_action_id = f"{secondary_slot_id}_more_info" if secondary_slot_id else None
+    name_action_id = "entity_name_more_info"
+    actions_slots = {action_id: action_slot, name_action_id: {"id": name_action_id, "action": {"action": "more-info"}, "trigger": "tap"}}
+    if secondary_action_id:
+        actions_slots[secondary_action_id] = {"id": secondary_action_id, "action": {"action": "more-info"}, "trigger": "tap"}
+
+    entity_slots = {slot_id: {"id": slot_id, "name": slot_id, "domains": slot_domains or []}}
+    if secondary_slot_id:
+        entity_slots[secondary_slot_id] = {"id": secondary_slot_id, "name": secondary_slot_id, "domains": secondary_slot_domains or []}
+
+    # Generate block IDs
+    grid_id = _new_id()
+    cell00_id = _new_id()
+    cell01_id = _new_id()
+    cell10_id = _new_id()
+    cell11_id = _new_id()
+    icon_id = _new_id()
+    name_id = _new_id()
+    state_id = _new_id()
+    slider_id = _new_id() if has_slider else None
+
+    blocks: dict[str, dict] = {}
+
+    # Root canvas (id is "root" to match marketplace)
+    blocks["root"] = {
+        "id": "root",
+        "type": "canvas",
+        "label": "Card",
+        "order": 0,
+        "props": {
+            "overflow_show": {"value": True},
+            "overflow_allow_blocks_outside": {"value": True},
+        },
+        "layout": "flow",
+        "styles": _make_size_styles(max_height=max_height),
+        "zIndex": 0,
+        "actions": {"targets": {"block": [action_id]}},
+        "children": [grid_id],
+        "isHidden": False,
+        "parentId": None,
+        "canBeDeleted": False,
+        "entityConfig": {"mode": "slot", "slotId": slot_id},
+        "parentManaged": False,
+        "requireEntity": False,
+        "canBeDuplicated": False,
+        "canChangeLayoutMode": False,
+    }
+
+    # The 2×2 grid
+    blocks[grid_id] = {
+        "id": grid_id,
+        "type": "block-grid",
+        "order": 0,
+        "props": {
+            "gridConfig": {
+                "gap": {"row": 0, "column": 0},
+                "rows": 2,
+                "areas": [],
+                "columns": 2,
+                "rowSizes": [{"unit": "fr", "value": 1}, {"unit": "fr", "value": 1}],
+                "columnSizes": [{"unit": "fr", "value": 1}, {"unit": "fr", "value": 6}],
+            },
+        },
+        "layout": "flow",
+        "zIndex": 8,
+        "children": [cell00_id, cell01_id, cell10_id, cell11_id],
+        "parentId": "root",
+        "entityConfig": {"mode": "inherited"},
+        "parentManaged": False,
+    }
+
+    # Grid cells (auto drop-zones)
+    blocks[cell00_id] = {
+        "id": cell00_id, "type": "block-drop-zone", "label": "Grid Area 1", "order": 0,
+        "props": {"row": 0, "column": 0, "gridArea": "1 / 1 / span 1 / span 1", "zoneIndex": 0},
+        "layout": "flow",
+        "styles": {"block": {"containers": {"desktop": {"flex": {"alignItems": {"value": "flex-start"}, "justifyContent": {"value": "flex-start"}}}}}},
+        "zIndex": 9, "children": [icon_id], "parentId": grid_id, "canBeDeleted": False,
+        "entityConfig": {"mode": "inherited"}, "parentManaged": False,
+        "canBeDuplicated": False, "canChangeLayoutMode": False,
+    }
+    blocks[cell01_id] = {
+        "id": cell01_id, "type": "block-drop-zone", "label": "Grid Area 2", "order": 0,
+        "props": {"row": 0, "column": 1, "gridArea": "1 / 2 / span 1 / span 1", "zoneIndex": 1},
+        "layout": "flow",
+        "styles": {"block": {"containers": {"desktop": {"flex": {"alignItems": {"value": "flex-start"}, "flexDirection": {"value": "row"}, "justifyContent": {"value": "flex-start"}}}}}},
+        "zIndex": 10, "children": [state_id, name_id], "parentId": grid_id, "canBeDeleted": False,
+        "entityConfig": {"mode": "inherited"}, "parentManaged": False,
+        "canBeDuplicated": False, "canChangeLayoutMode": False,
+    }
+    blocks[cell10_id] = {
+        "id": cell10_id, "type": "block-drop-zone", "label": "Grid Area 3", "order": 0,
+        "props": {"row": 1, "column": 0, "gridArea": "2 / 1 / span 1 / span 1", "zoneIndex": 2},
+        "layout": "flow",
+        "styles": {"block": {"containers": {"desktop": {"flex": {"flexDirection": {"value": "row"}, "justifyContent": {"value": "flex-start"}}, "layout": {"display": {"value": "block" if has_slider else "none"}}}}}},
+        "zIndex": 11, "children": [slider_id] if has_slider else [], "parentId": grid_id, "canBeDeleted": False,
+        "entityConfig": {"mode": "inherited"}, "parentManaged": False,
+        "canBeDuplicated": False, "canChangeLayoutMode": False,
+    }
+    blocks[cell11_id] = {
+        "id": cell11_id, "type": "block-drop-zone", "label": "Grid Area 4", "order": 0,
+        "props": {"row": 1, "column": 1, "gridArea": "2 / 2 / span 1 / span 1", "zoneIndex": 3},
+        "layout": "flow",
+        "styles": {"block": {"containers": {"desktop": {"layout": {"display": {"value": "none"}}}}}},
+        "zIndex": 12, "children": [], "parentId": grid_id, "canBeDeleted": False,
+        "entityConfig": {"mode": "inherited"}, "parentManaged": False,
+        "canBeDuplicated": False, "canChangeLayoutMode": False,
+    }
+
+    # Icon (cell 0,0)
+    icon_props: dict[str, Any] = {"iconSize": {"value": icon_size}, "iconSource": {"value": "list"}, "preTemplate": {"value": None}, "iconTemplate": {"value": None}, "postTemplate": {"value": None}}
+    if icon:
+        icon_props["icon"] = {"value": icon}
+    blocks[icon_id] = {
+        "id": icon_id, "type": "block-icon", "order": 0,
+        "props": icon_props,
+        "layout": "flow", "zIndex": 1,
+        "actions": {"targets": {"block": [action_id]}},
+        "children": [], "parentId": cell00_id,
+        "entityConfig": {"mode": "inherited"}, "parentManaged": False,
+    }
+
+    # State (cell 0,1, absolute) — uses secondary slot if provided, else inherited
+    state_entity = {"mode": "slot", "slotId": secondary_slot_id} if secondary_slot_id else {"mode": "inherited"}
+    state_actions = {"targets": {"block": [secondary_action_id]}} if secondary_action_id else {}
+    state_block: dict[str, Any] = {
+        "id": state_id, "type": "block-entity-field-state", "order": 0,
+        "props": {"format": {"value": "text"}, "showUnit": {"value": True}, "precision": {"value": 1}, "customUnit": {"value": None}, "dateFormat": {"value": "full"}, "formatTemplate": {"value": None}},
+        "layout": "absolute",
+        "styles": _merge_styles(
+            _make_absolute_position_styles(9, 16),
+        ),
+        "zIndex": 12,
+        "children": [], "parentId": cell01_id,
+        "entityConfig": state_entity, "parentManaged": False, "requireEntity": True,
+    }
+    if state_actions:
+        state_block["actions"] = state_actions
+    blocks[state_id] = state_block
+
+    # Name (cell 0,1, absolute, more-info action)
+    blocks[name_id] = {
+        "id": name_id, "type": "block-entity-field-name", "order": 1,
+        "props": {"case": {"value": "none"}, "ellipsis": {"value": True}, "maxLength": {"value": 0}, "customName": {"value": None}},
+        "layout": "absolute",
+        "styles": _make_absolute_position_styles(9, -9),
+        "zIndex": 6,
+        "actions": {"targets": {"block": [name_action_id]}},
+        "children": [], "parentId": cell01_id,
+        "entityConfig": {"mode": "inherited"}, "parentManaged": False, "requireEntity": True,
+    }
+
+    # Slider (cell 1,0)
+    if has_slider:
+        s_props_base = {
+            "mode": "auto", "shape": "rounded", "invert": False, "disabled": False,
+            "showThumb": True, "showValue": True, "commitMode": "onRelease",
+            "displayMax": 100, "displayMin": 0, "disableMode": "auto", "displayMode": "auto",
+            "maxOverride": 100, "minOverride": 0, "orientation": "horizontal", "rangeMinGap": 0,
+            "valueSource": "state", "coverControl": "auto", "stepOverride": 1,
+            "holdTapAction": "more-info", "activationMode": "press", "holdTapEnabled": False,
+            "useMaxOverride": False, "useMinOverride": False, "valueAttribute": None,
+            "useStepOverride": False, "commitDebounceMs": 300, "commitThrottleMs": 200,
+            "precisionOverride": 0, "usePrecisionOverride": False,
+            "valuePositionVertical": "top", "insidePositionVertical": "middle",
+            "valuePositionHorizontal": "inline", "inlinePositionHorizontal": "right",
+            "insidePositionHorizontal": "center",
+        }
+        if slider_props:
+            s_props_base.update(slider_props)
+        blocks[slider_id] = {
+            "id": slider_id, "type": "block-slider", "order": 0,
+            "props": _wrap_props(s_props_base, block_type="block-slider"),
+            "layout": "flow",
+            "styles": _merge_styles(
+                _make_size_styles(width=170, height=30, max_width=200),
+                _make_absolute_position_styles(11, 17),
+                {"block": {"containers": {"desktop": {"flex": {"alignItems": {"value": "flex-start"}, "flexDirection": {"value": "row"}, "justifyContent": {"value": "flex-start"}}}}}},
+            ),
+            "zIndex": 2,
+            "children": [], "parentId": cell10_id,
+            "entityConfig": {"mode": "inherited"}, "parentManaged": False, "requireEntity": True,
+        }
+
+    return {
+        "version": 3,
+        "rootId": "root",
+        "slots": {"entities": entity_slots, "actions": actions_slots},
+        "blocks": blocks,
+    }
+
+
+def _recipe_compact_light(slot: str = "main") -> dict:
+    return _make_compact_card_config(
+        slot_id=slot, slot_name="Light", slot_domains=["light"],
+        icon="mdi:lightbulb", has_slider=True,
+        slider_props={"displayMode": "percent"},
+        action_id="toggle_light", action_type="toggle",
+    )
+
+
+def _recipe_compact_climate(slot: str = "main") -> dict:
+    # No HVAC button-toggle — upstream Card Builder × ESPHome incompatibility
+    # makes it render empty. Tap on the card opens more-info instead.
+    return _make_compact_card_config(
+        slot_id=slot, slot_name="Climate", slot_domains=["climate"],
+        icon="mdi:air-conditioner", has_slider=True,
+        action_id="toggle_climate", action_type="toggle",
+    )
+
+
+def _recipe_compact_cover(slot: str = "main") -> dict:
+    return _make_compact_card_config(
+        slot_id=slot, slot_name="Cover", slot_domains=["cover"],
+        icon="mdi:window-shutter", has_slider=True,
+        slider_props={"coverControl": "auto"},
+        action_id="toggle_cover", action_type="toggle",
+    )
+
+
+def _recipe_compact_tile(slot: str = "main") -> dict:
+    return _make_compact_card_config(
+        slot_id=slot, slot_name="Entity",
+        icon="mdi:checkbox-blank-circle", has_slider=False,
+        action_id="tap", action_type="toggle",
+    )
+
+
 CARD_RECIPES: dict[str, dict] = {
+    # Compact marketplace-style (block-grid + absolute, fixed 150px height)
+    "compact_tile": {"fn": _recipe_compact_tile, "label": "Compact tile (marketplace style)", "domains": [], "description": "Marketplace 2×2-grid layout: icon left, name+state absolute-positioned right. No slider. 150px tall."},
+    "compact_light": {"fn": _recipe_compact_light, "label": "Compact light dimmer (marketplace style)", "domains": ["light"], "description": "Marketplace 2×2-grid: icon + state/name + brightness slider (percent). Mirrors the Light Dimmer Power Sensor template structure."},
+    "compact_climate": {"fn": _recipe_compact_climate, "label": "Compact climate (marketplace style)", "domains": ["climate"], "description": "Marketplace 2×2-grid: icon + state/name + temp slider. Skip HVAC toggle on purpose — Card Builder × ESPHome integration filters out features for climate entities that lack SUPPORT_HVAC_MODE in supported_features."},
+    "compact_cover": {"fn": _recipe_compact_cover, "label": "Compact cover (marketplace style)", "domains": ["cover"], "description": "Marketplace 2×2-grid: icon + state/name + position slider with coverControl=auto."},
+    # Flow-layout (the old vertical-stack recipes — still useful for sensors)
     "tile_simple": {"fn": _recipe_tile_simple, "label": "Tile (simple)", "domains": [], "description": "Vertical-centered tile: icon + name + state. For any entity."},
     "tile_action": {"fn": _recipe_tile_action, "label": "Tile (with tap → toggle)", "domains": ["switch", "light", "input_boolean", "automation", "fan"], "description": "Same as tile_simple plus a 'tap' action slot pre-wired to toggle."},
     "climate_full": {"fn": _recipe_climate_full, "label": "Climate (full controls)", "domains": ["climate"], "description": "Header (icon + name/state) + HVAC mode toggle + target-temp slider."},
@@ -2022,8 +2400,12 @@ def get_card_template(name: str, slot: str | None = None) -> dict:
     entry = CARD_RECIPES.get(name)
     if not entry:
         return {"error": "unknown_template", "name": name, "known": list(CARD_RECIPES.keys())}
-    recipe = entry["fn"](slot) if slot else entry["fn"]()
-    return build_from_recipe(recipe)
+    output = entry["fn"](slot) if slot else entry["fn"]()
+    # Compact builders return a full DocumentData directly (with rootId/version);
+    # flow-layout recipes return a recipe shorthand that needs to be built.
+    if "rootId" in output and "version" in output:
+        return output
+    return build_from_recipe(output)
 
 
 @mcp.tool()
@@ -2044,8 +2426,8 @@ def make_template_card(
     entry = CARD_RECIPES.get(template)
     if not entry:
         return {"error": "unknown_template", "template": template, "known": list(CARD_RECIPES.keys())}
-    recipe = entry["fn"](slot) if slot else entry["fn"]()
-    config = build_from_recipe(recipe)
+    output = entry["fn"](slot) if slot else entry["fn"]()
+    config = output if ("rootId" in output and "version" in output) else build_from_recipe(output)
     final_tags = list(tags) if tags else ["nexus-template", template]
     final_categories = list(categories) if categories else [entry["domains"][0] if entry["domains"] else "tile"]
     return create_card(
