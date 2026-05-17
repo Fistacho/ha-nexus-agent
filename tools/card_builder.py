@@ -607,6 +607,26 @@ A Card Builder card is a `DocumentData` blob (`version: 3`) with a tree of block
 }
 ```
 
+## Block prop values MUST be wrapped
+
+Every prop value is a `TraitPropertyValue`: `{"value": <x>}` (or `{"binding": ...}`
+for dynamic bindings). Raw scalars are silently ignored and the block falls
+back to defaults. So:
+
+```
+"props": {"iconSize": {"value": 40}, "colorMode": {"value": "state-based"}}
+```
+
+NOT:
+
+```
+"props": {"iconSize": 40, "colorMode": "state-based"}   # ← ignored, defaults kick in
+```
+
+`build_from_recipe` auto-wraps raw scalars in `{"value": ...}` so you can
+write the shorter form in recipes — direct `create_card` / `update_card`
+callers must wrap by hand.
+
 ## Block types
 
 Discover them with `list_block_types()` / `get_block_schema(type)`.
@@ -664,8 +684,10 @@ Instead of writing the full DocumentData, pass a `recipe`:
 {
   "slots": {"climate": {"name": "Climate", "domains": ["climate"]}},
   "root_slot": "climate",
+  "root_styles":    {"block": {"containers": {"desktop": {"spacing": {"padding": {"value": 16, "unit": "px"}}, "border": {"border-radius": {"value": 14, "unit": "px"}}}}}},
+  "root_dz_styles": {"block": {"containers": {"desktop": {"flex":    {"flex-direction": {"value": "column"}, "gap": {"value": 12, "unit": "px"}}}}}},
   "blocks": [
-    {"type": "block-entity-field-icon", "props": {"iconSize": 36}},
+    {"type": "block-entity-field-icon",   "props": {"iconSize": 36}},
     {"type": "block-entity-field-name"},
     {"type": "block-entity-field-state"},
     {"type": "block-button-toggle", "props": {"feature": "hvac_mode"}},
@@ -674,13 +696,42 @@ Instead of writing the full DocumentData, pass a `recipe`:
 }
 ```
 
-Layout blocks can nest:
+Raw scalars in `props` get auto-wrapped (`40` → `{"value": 40}`).
+
+Layout blocks can nest — children of a layout block belong to its auto
+drop-zone. Stylowanie flex/spacing/typography idzie na drop-zone, NIE na
+container; pass it via `dz_styles` on the layout node:
 
 ```
-{"type": "block-container", "children": [
-  {"type": "block-entity-field-name"},
-  {"type": "block-entity-field-state"}
-]}
+{"type": "block-container",
+ "dz_styles": {"block": {"containers": {"desktop": {"flex": {"flex-direction": {"value": "row"}, "gap": {"value": 12, "unit": "px"}}}}}},
+ "children": [
+   {"type": "block-entity-field-icon"},
+   {"type": "block-entity-field-name"}
+ ]}
+```
+
+## Styles shape
+
+Block `styles` is keyed by **target** (default `"block"`) then **container**
+(use `"desktop"` for the responsive default — Card Builder also supports
+`"tablet"`, `"mobile"`). Categories are `spacing`, `background`, `border`,
+`flex`, `typography`, `size`, `layout`, `effects`. Each property value is a
+`StylePropertyValue`: `{"value": ..., "unit"?: "px|%|rem|..."}`. Example:
+
+```
+"styles": {
+  "block": {
+    "containers": {
+      "desktop": {
+        "spacing":    {"padding": {"value": 16, "unit": "px"}},
+        "border":     {"border-radius": {"value": 14, "unit": "px"}},
+        "background": {"background-color": {"value": "var(--ha-card-background)"}},
+        "typography": {"font-weight": {"value": "600"}, "font-size": {"value": 14, "unit": "px"}}
+      }
+    }
+  }
+}
 ```
 
 ## Validation
@@ -709,6 +760,26 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
+def _wrap_props(props: dict | None) -> dict:
+    """Auto-wrap raw scalar prop values in `{"value": ...}` (TraitPropertyValue shape).
+
+    Card Builder's `getPropertyValue` discards anything that isn't an object
+    with a `value` or `binding` key — raw `"iconSize": 40` silently falls
+    back to the block's default. This helper makes the recipe shorthand
+    `"props": {"iconSize": 40}` work the same as the verbose
+    `"props": {"iconSize": {"value": 40}}`.
+    """
+    if not props:
+        return {}
+    wrapped: dict[str, Any] = {}
+    for k, v in props.items():
+        if isinstance(v, dict) and ("value" in v or "binding" in v):
+            wrapped[k] = v
+        else:
+            wrapped[k] = {"value": v}
+    return wrapped
+
+
 def _make_block(
     block_type: str,
     parent_id: str | None,
@@ -718,6 +789,7 @@ def _make_block(
     props: dict | None = None,
     entity_config: dict | None = None,
     children: list[str] | None = None,
+    styles: dict | None = None,
 ) -> dict:
     block: dict[str, Any] = {
         "id": _new_id(),
@@ -728,10 +800,12 @@ def _make_block(
         "order": order,
         "zIndex": 0,
         "parentManaged": parent_managed,
-        "props": dict(props or {}),
+        "props": _wrap_props(props),
     }
     if entity_config is not None:
         block["entityConfig"] = entity_config
+    if styles is not None:
+        block["styles"] = styles
     return block
 
 
@@ -755,16 +829,20 @@ def _build_block_tree(
             order=order,
             props=node.get("props"),
             entity_config=node.get("entityConfig"),
+            styles=node.get("styles"),
         )
         blocks[block["id"]] = block
 
-        # Wrap layout blocks in their auto drop-zone
+        # Wrap layout blocks in their auto drop-zone (styles on the layout
+        # block typically belong on the drop-zone, since that's where flex /
+        # spacing / typography are applied to laid-out children).
         if info.get("accepts_children"):
             dz = _make_block(
                 "block-drop-zone",
                 parent_id=block["id"],
                 order=0,
                 parent_managed=True,
+                styles=node.get("drop_zone_styles") or node.get("dz_styles"),
             )
             blocks[dz["id"]] = dz
             block["children"] = [dz["id"]]
@@ -819,6 +897,7 @@ def build_from_recipe(recipe: dict) -> dict:
         parent_id=None,
         order=0,
         entity_config=root_entity_config,
+        styles=recipe.get("root_styles"),
     )
     blocks[root["id"]] = root
 
@@ -827,6 +906,7 @@ def build_from_recipe(recipe: dict) -> dict:
         parent_id=root["id"],
         order=0,
         parent_managed=True,
+        styles=recipe.get("root_dz_styles") or recipe.get("layout_styles"),
     )
     blocks[root_dz["id"]] = root_dz
     root["children"] = [root_dz["id"]]
@@ -889,6 +969,14 @@ def validate_config(config: dict) -> dict:
             errors.append(f"block {bid!r}: unknown type {btype!r}")
             continue
         info = BLOCK_TYPES[btype]
+        # Props must use TraitPropertyValue wrapper — raw scalars get silently ignored.
+        for pname, pval in (block.get("props") or {}).items():
+            if not isinstance(pval, dict) or not ("value" in pval or "binding" in pval):
+                warnings.append(
+                    f"block {bid!r}: prop {pname!r} = {pval!r} is not wrapped as "
+                    f"{{value: ...}} — Card Builder will discard it and fall back "
+                    f"to the block default. Use {{\"value\": {pval!r}}}."
+                )
         # Parent/child sanity
         parent = block.get("parentId")
         if parent is not None and parent not in blocks:
