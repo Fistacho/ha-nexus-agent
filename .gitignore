@@ -43,3 +43,5 @@ desktop.ini
 
 # Local logs
 *.log
+_dashboard_*.json
+_lukasz3_view.json
