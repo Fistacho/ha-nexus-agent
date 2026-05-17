@@ -42,15 +42,17 @@ mcp = FastMCP("card_builder")
 
 UPSTREAM_REPO = "studiobts/home-assistant-card-builder"
 UPSTREAM_SCHEMA_SYNC = {
-    "documented_against": "1.x (main, 2026-05)",
+    "documented_against": "2.3.0 (main, 2026-05)",
     "document_model_version": 3,
     "source_files": [
+        "frontend/src/common/blocks/loader.ts",
         "frontend/src/common/core/model/types.ts",
         "frontend/src/common/types/style-preset.ts",
         "frontend/src/common/core/style-resolver/style-units.ts",
         "frontend/src/common/core/style-resolver/resolved-to-css.ts",
         "frontend/src/common/blocks/components/**/*.ts",
         "docs/panel-blocks.md",
+        "docs/block-link.md",
     ],
 }
 
@@ -65,7 +67,7 @@ STYLE_CATEGORIES: dict[str, dict[str, Any]] = {
     },
     "size": {
         "properties": ["width", "height", "minWidth", "maxWidth", "minHeight", "maxHeight"],
-        "length_units": ["px", "rem", "em", "%", "vh", "vw", "auto"],
+        "length_units": ["px", "rem", "em", "%", "vh", "vw", "vmin", "vmax", "ch", "ex", "cm", "mm", "in", "pt", "pc", "auto", "none"],
     },
     "spacing": {
         "properties": [
@@ -73,7 +75,7 @@ STYLE_CATEGORIES: dict[str, dict[str, Any]] = {
             "marginTop", "marginRight", "marginBottom", "marginLeft",
             "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
         ],
-        "length_units": ["px", "rem", "em", "%"],
+        "length_units": ["px", "rem", "em", "%", "vh", "vw", "vmin", "vmax", "ch", "ex", "cm", "mm", "in", "pt", "pc"],
         "notes": "margin/padding accept either a single value or {top, right, bottom, left} object.",
     },
     "typography": {
@@ -193,7 +195,32 @@ STYLE_TARGETS: dict[str, list[str]] = {
         "dropdownIcon", "dropdownLabel",
         "selectedIcon", "selectedLabel",
     ],
+    "block-link": ["block", "path", "particle"],
     "block-weather-background": ["block"],
+    "block-hourly-forecast": [
+        "block", "container", "header", "title", "badge", "range",
+        "range-high", "range-low", "strip", "hour", "now", "time",
+        "time-meridiem", "icon", "temperature", "temperature-unit",
+        "thermalBar", "secondary", "secondary-icon", "secondary-unit",
+        "secondary-precipitation-probability",
+        "secondary-precipitation-probability-icon",
+        "secondary-precipitation-probability-unit",
+        "secondary-precipitation", "secondary-precipitation-icon",
+        "secondary-precipitation-unit", "secondary-wind-speed",
+        "secondary-wind-speed-icon", "secondary-wind-speed-unit",
+        "secondary-wind-bearing", "secondary-wind-bearing-icon",
+        "secondary-wind-bearing-unit", "secondary-humidity",
+        "secondary-humidity-icon", "secondary-humidity-unit",
+        "secondary-dew-point", "secondary-dew-point-icon",
+        "secondary-dew-point-unit", "secondary-cloud-coverage",
+        "secondary-cloud-coverage-icon", "secondary-cloud-coverage-unit",
+        "secondary-uv-index", "secondary-uv-index-icon",
+        "secondary-uv-index-unit", "secondary-pressure",
+        "secondary-pressure-icon", "secondary-pressure-unit",
+        "secondary-apparent-temperature",
+        "secondary-apparent-temperature-icon",
+        "secondary-apparent-temperature-unit", "placeholder",
+    ],
 }
 
 
@@ -277,7 +304,7 @@ STYLE_SNIPPETS: dict[str, dict[str, Any]] = {
 
 
 # =========================================================================
-# Block schema (from upstream v1.x — sync if upstream adds new block types).
+# Block schema (from upstream v2.3.0 — sync if upstream adds new block types).
 # =========================================================================
 
 BLOCK_TYPES: dict[str, dict[str, Any]] = {
@@ -310,6 +337,7 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
         "accepts_children": False,
         "requires_entity": False,
         "props": {
+            "iconSize": {"type": "int", "default": 24, "min": 1},
             "iconSource": {"type": "enum", "values": ["list", "template"], "default": "list"},
             "icon": {"type": "string", "default": "mdi:star-outline"},
             "iconTemplate": {"type": "string", "default": ""},
@@ -378,7 +406,13 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
         "label": "Drop Zone (virtual)",
         "accepts_children": True,
         "requires_entity": False,
-        "props": {},
+        "props": {
+            "zoneIndex": {"type": "int", "default": 0, "raw": True},
+            "columnIndex": {"type": "int", "raw": True},
+            "row": {"type": "int", "raw": True},
+            "column": {"type": "int", "raw": True},
+            "gridArea": {"type": "string", "raw": True},
+        },
         "internal": True,
         "notes": "Virtual block — auto-created by layout blocks. Never instantiate directly via the UI; build_from_recipe handles it.",
     },
@@ -391,9 +425,8 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
         "props": {
             "format": {"type": "enum", "values": ["text", "numeric", "integer", "datetime", "boolean", "template"], "default": "text"},
             "precision": {"type": "int", "default": 1, "min": 0, "max": 10},
-            "dateFormat": {"type": "enum", "values": ["full", "long", "medium", "short", "time", "datetime", "relative", "iso"], "default": "medium"},
+            "dateFormat": {"type": "enum", "values": ["full", "long", "medium", "short", "time", "datetime", "relative", "iso"], "default": "full"},
             "formatTemplate": {"type": "string", "default": ""},
-            "customState": {"type": "string", "default": ""},
             "showUnit": {"type": "bool", "default": True},
             "customUnit": {"type": "string", "default": ""},
         },
@@ -407,7 +440,7 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
             "customName": {"type": "string", "default": ""},
             "case": {"type": "enum", "values": ["none", "upper", "lower", "title", "kebab", "camel"], "default": "none"},
             "maxLength": {"type": "int", "default": 0, "min": 0},
-            "useEllipsis": {"type": "bool", "default": True},
+            "ellipsis": {"type": "bool", "default": True, "notes": "Renamed from legacy useEllipsis."},
         },
     },
     "block-entity-field-icon": {
@@ -417,10 +450,11 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
         "requires_entity": True,
         "props": {
             "iconSize": {"type": "int", "default": 24, "min": 12, "max": 128},
-            "colorMode": {"type": "enum", "values": ["fixed", "state-based", "availability-based"], "default": "state-based"},
+            "colorMode": {"type": "enum", "values": ["fixed", "state", "availability"], "default": "fixed", "legacy_values": {"state-based": "state", "availability-based": "availability"}},
             "color": {"type": "string", "default": ""},
+            "stateColors": {"type": "list", "default": [], "notes": "List of {state, color}; used when colorMode=state."},
             "availableColor": {"type": "string", "default": ""},
-            "unavailableColor": {"type": "string", "default": "gray"},
+            "unavailableColor": {"type": "string", "default": "#9e9e9e"},
         },
     },
     "block-entity-field-attribute": {
@@ -430,12 +464,12 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
         "requires_entity": True,
         "props": {
             "attributeName": {"type": "string", "default": ""},
-            "showLabel": {"type": "bool", "default": False},
+            "showLabel": {"type": "bool", "default": True},
             "customLabel": {"type": "string", "default": ""},
-            "labelPosition": {"type": "enum", "values": ["top", "left", "inline"], "default": "left"},
+            "labelPosition": {"type": "enum", "values": ["top", "left", "inline"], "default": "top"},
             "format": {"type": "enum", "values": ["text", "numeric", "integer", "datetime", "boolean", "template"], "default": "text"},
             "precision": {"type": "int", "default": 1},
-            "dateFormat": {"type": "string", "default": "medium"},
+            "dateFormat": {"type": "string", "default": "full"},
             "formatTemplate": {"type": "string", "default": ""},
             "prefix": {"type": "string", "default": ""},
             "suffix": {"type": "string", "default": ""},
@@ -491,6 +525,7 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
             "useStepOverride": {"type": "bool", "default": False},
             "stepOverride": {"type": "int", "default": 1},
             "usePrecisionOverride": {"type": "bool", "default": False},
+            "precisionOverride": {"type": "int", "default": 0},
         },
         "supported_domains": ["light", "fan", "cover", "media_player", "climate", "humidifier", "water_heater", "input_number", "number", "valve"],
         "notes": "Value-position props are split by orientation: valuePositionHorizontal vs valuePositionVertical. commitMode value 'onRelease' (NOT 'release').",
@@ -527,21 +562,97 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
         },
         "supported_domains": ["climate", "fan", "light", "media_player", "humidifier", "water_heater", "cover", "lock", "vacuum", "switch", "input_boolean", "siren", "automation", "select", "input_select"],
     },
-    # --- Advanced ---
-    "block-weather-background": {
+    # --- Advanced / Weather ---
+    "block-link": {
         "category": "advanced",
+        "label": "Link",
+        "accepts_children": False,
+        "requires_entity": True,
+        "props": {
+            "points": {"type": "list", "default": [], "raw": True, "notes": "Raw LinkPoint[]; do not wrap in {value: ...}."},
+            "segments": {"type": "list", "default": [], "raw": True, "notes": "Raw LinkSegment[]; do not wrap in {value: ...}."},
+            "renderStyle": {"type": "enum", "values": ["particle"], "default": "particle"},
+            "particleSize": {"type": "int", "default": 0, "min": 1, "max": 48, "notes": "0/empty uses the renderer default."},
+            "flowEnabled": {"type": "bool", "default": True},
+            "flowDirectionPositive": {"type": "enum", "values": ["forward", "reverse"], "default": "forward"},
+            "speedSource": {"type": "enum", "values": ["state", "attribute"], "default": "state"},
+            "speedAttribute": {"type": "string", "default": ""},
+            "valueMin": {"type": "number", "default": 0},
+            "valueMax": {"type": "number", "default": 0},
+            "speedMultiplier": {"type": "number", "default": 1},
+            "smoothingEnabled": {"type": "bool", "default": False},
+            "smoothingTension": {"type": "number", "default": 0.15},
+        },
+        "notes": "Special SVG link block introduced in Card Builder 2.0. It is normally created by the builder's Link mode, not by dragging from the block palette.",
+    },
+    "block-weather-background": {
+        "category": "weather",
         "label": "Weather Background",
         "accepts_children": False,
         "requires_entity": True,
         "props": {
             "svgSource": {"type": "enum", "values": ["default", "media"], "default": "default"},
-            "defaultBackground": {"type": "string", "default": "background-1"},
-            "customSvg": {"type": "string", "default": ""},
+            "defaultSvgBackground": {"type": "string", "default": "background-1", "notes": "Renamed from legacy defaultBackground."},
+            "mediaReference": {"type": "string", "default": "", "notes": "Renamed from legacy customSvg; use cb-media://local/card_builder/<filename>."},
             "showSvgWarnings": {"type": "bool", "default": True},
-            "enableAnimations": {"type": "bool", "default": True},
-            "updateInterval": {"type": "int", "default": 10, "min": 5, "max": 60, "unit": "minutes"},
+            "animationsEnabled": {"type": "bool", "default": True, "notes": "Renamed from legacy enableAnimations."},
+            "sunPositionUpdateMinutes": {"type": "int", "default": 10, "min": 5, "max": 60, "unit": "minutes", "notes": "Renamed from legacy updateInterval."},
         },
         "entity_domain": "weather",
+    },
+    "block-hourly-forecast": {
+        "category": "weather",
+        "label": "Hourly Forecast",
+        "accepts_children": False,
+        "requires_entity": True,
+        "props": {
+            "hours": {"type": "int", "default": 12, "min": 4, "max": 24},
+            "layout_direction": {"type": "enum", "values": ["horizontal", "vertical"], "default": "horizontal"},
+            "horizontal_column_mode": {"type": "enum", "values": ["auto", "fill", "custom"], "default": "auto"},
+            "auto_column_min_width": {"type": "int", "default": 90, "min": 1, "unit": "px"},
+            "auto_column_max_width": {"type": "string", "default": ""},
+            "custom_column_width": {"type": "string", "default": "52px"},
+            "show_now_indicator": {"type": "bool", "default": True},
+            "show_day_separator": {"type": "bool", "default": True},
+            "show_condition_icons": {"type": "bool", "default": True},
+            "show_temperature": {"type": "bool", "default": True},
+            "show_temperature_unit": {"type": "bool", "default": True},
+            "show_thermal_bars": {"type": "bool", "default": True},
+            "bar_height": {"type": "int", "default": 40, "min": 10, "max": 100, "unit": "px"},
+            "vertical_bar_width_mode": {"type": "enum", "values": ["fill", "custom"], "default": "fill"},
+            "vertical_bar_width": {"type": "int", "default": 120, "min": 24, "max": 260, "unit": "px"},
+            "show_rain_badge": {"type": "bool", "default": True},
+            "rain_threshold": {"type": "number", "default": 0},
+            "color_ramp": {"type": "enum", "values": ["none", "thermal", "blue", "amber", "teal", "custom"], "default": "thermal"},
+            "temperature_color_range_mode": {"type": "enum", "values": ["forecast", "custom"], "default": "forecast"},
+            "temperature_color_min": {"type": "number", "default": 0},
+            "temperature_color_max": {"type": "number", "default": 40},
+            "color_cold": {"type": "string", "default": "#60a5fa"},
+            "color_warm": {"type": "string", "default": "#f59e0b"},
+            "color_ramp_interpolation": {"type": "enum", "values": ["rgb", "hsl"], "default": "rgb"},
+            "color_ramp_reverse_hue": {"type": "bool", "default": False},
+            "humidity_color_ramp": {"type": "enum", "values": ["humidity", "custom"], "default": "humidity"},
+            "humidity_color_low": {"type": "string", "default": "#f59e0b"},
+            "humidity_color_high": {"type": "string", "default": "#2563eb"},
+            "cloud_coverage_color_ramp": {"type": "enum", "values": ["cloud", "custom"], "default": "cloud"},
+            "cloud_coverage_color_low": {"type": "string", "default": "#f8fafc"},
+            "cloud_coverage_color_high": {"type": "string", "default": "#64748b"},
+            "uv_index_color_ramp": {"type": "enum", "values": ["uv", "custom"], "default": "uv"},
+            "uv_index_color_low": {"type": "string", "default": "#22c55e"},
+            "uv_index_color_high": {"type": "string", "default": "#8b5cf6"},
+            "show_precipitation_probability": {"type": "bool", "default": True},
+            "show_precipitation": {"type": "bool", "default": False},
+            "show_wind_speed": {"type": "bool", "default": True},
+            "show_wind_bearing": {"type": "bool", "default": False},
+            "show_humidity": {"type": "bool", "default": False},
+            "show_dew_point": {"type": "bool", "default": False},
+            "show_cloud_coverage": {"type": "bool", "default": False},
+            "show_uv_index": {"type": "bool", "default": False},
+            "show_pressure": {"type": "bool", "default": False},
+            "show_apparent_temperature": {"type": "bool", "default": False},
+        },
+        "entity_domain": "weather",
+        "notes": "Introduced in Card Builder 2.3.0. Requires a weather entity that provides hourly forecasts.",
     },
 }
 
@@ -1041,35 +1152,63 @@ def build_styles(
 
 @mcp.tool()
 def check_schema_sync() -> dict:
-    """Compare the embedded schema with upstream Card Builder's HEAD manifest.
+    """Compare the embedded schema with upstream Card Builder's HEAD manifest and block loader.
 
     Hits ``raw.githubusercontent.com`` for ``custom_components/card_builder/manifest.json``
-    and reports whether the embedded schema still matches the upstream version.
+    and ``frontend/src/common/blocks/loader.ts`` and reports whether the
+    embedded schema still matches the upstream version and registered blocks.
     Use this when a recipe stops working — the upstream may have shipped a
     breaking schema change.
     """
     import json
+    import re
     import urllib.request
 
-    url = f"https://raw.githubusercontent.com/{UPSTREAM_REPO}/main/custom_components/card_builder/manifest.json"
+    base_url = f"https://raw.githubusercontent.com/{UPSTREAM_REPO}/main"
+    manifest_url = f"{base_url}/custom_components/card_builder/manifest.json"
+    loader_url = f"{base_url}/frontend/src/common/blocks/loader.ts"
     try:
-        with urllib.request.urlopen(url, timeout=10) as r:
+        with urllib.request.urlopen(manifest_url, timeout=10) as r:
             upstream = json.load(r)
     except Exception as err:
         return {"status": "fetch_failed", "error": str(err), "embedded": UPSTREAM_SCHEMA_SYNC}
 
+    loader_error = None
+    upstream_block_types: list[str] = []
+    try:
+        with urllib.request.urlopen(loader_url, timeout=10) as r:
+            loader_text = r.read().decode("utf-8", errors="replace")
+        upstream_block_types = sorted(set(re.findall(r"\{type:\s*['\"]([^'\"]+)['\"]", loader_text)))
+    except Exception as err:
+        loader_error = str(err)
+
     upstream_version = upstream.get("version", "?")
+    embedded_version = str(UPSTREAM_SCHEMA_SYNC["documented_against"]).split()[0]
+    embedded_block_types = sorted(k for k in BLOCK_TYPES if k != "canvas")
+    missing_block_types = [b for b in upstream_block_types if b not in BLOCK_TYPES]
+    extra_block_types = [b for b in embedded_block_types if upstream_block_types and b not in upstream_block_types]
+    version_matches = upstream_version == embedded_version
+    blocks_match = bool(upstream_block_types) and not missing_block_types
+
     return {
-        "status": "ok",
+        "status": "ok" if version_matches and blocks_match else "drift",
         "upstream_version": upstream_version,
         "upstream_repo": UPSTREAM_REPO,
+        "embedded_version": embedded_version,
         "embedded_doc_version": UPSTREAM_SCHEMA_SYNC["document_model_version"],
         "embedded_documented_against": UPSTREAM_SCHEMA_SYNC["documented_against"],
+        "version_matches": version_matches,
+        "upstream_block_count": len(upstream_block_types) if upstream_block_types else None,
+        "embedded_block_count": len(embedded_block_types),
+        "missing_block_types": missing_block_types,
+        "extra_embedded_block_types": extra_block_types,
+        "loader_fetch_error": loader_error,
         "advice": (
-            "If upstream_version drifted significantly from the embedded "
-            "'documented_against' tag, refresh BLOCK_TYPES / STYLE_CATEGORIES / "
-            "STYLE_TARGETS / STYLE_SNIPPETS in tools/card_builder.py."
+            "If status is 'drift', refresh BLOCK_TYPES / STYLE_CATEGORIES / "
+            "STYLE_TARGETS / STYLE_SNIPPETS in tools/card_builder.py from the "
+            "upstream source files listed in embedded_schema."
         ),
+        "embedded_schema": UPSTREAM_SCHEMA_SYNC,
     }
 
 
@@ -1128,13 +1267,13 @@ for dynamic bindings). Raw scalars are silently ignored and the block falls
 back to defaults. So:
 
 ```
-"props": {"iconSize": {"value": 40}, "colorMode": {"value": "state-based"}}
+"props": {"iconSize": {"value": 40}, "colorMode": {"value": "availability"}}
 ```
 
 NOT:
 
 ```
-"props": {"iconSize": 40, "colorMode": "state-based"}   # ← ignored, defaults kick in
+"props": {"iconSize": 40, "colorMode": "availability"}   # ignored if sent directly to create_card/update_card
 ```
 
 `build_from_recipe` auto-wraps raw scalars in `{"value": ...}` so you can
@@ -1145,12 +1284,13 @@ callers must wrap by hand.
 
 Discover them with `list_block_types()` / `get_block_schema(type)`.
 
-Five categories:
+Six categories:
 - **basic**: `block-text`, `block-icon`, `block-image`
 - **layout**: `block-container`, `block-columns`, `block-grid` (plus internal `block-drop-zone`)
 - **entities**: `block-entity-field-{state,name,icon,attribute,image}` — all require an entity
 - **controls**: `block-slider`, `block-button-toggle`, `block-select-menu` — auto-detect features per domain
-- **advanced**: `block-weather-background`, `block-hourly-forecast`, `block-link`
+- **weather**: `block-weather-background`, `block-hourly-forecast`
+- **advanced**: `block-link`
 
 ## Entity inheritance
 
@@ -1348,9 +1488,31 @@ def _new_id() -> str:
 # wrapped in {value: ...}. Confirmed via marketplace card inspection.
 _RAW_PROPS = {
     "block-grid": {"gridConfig"},
+    "block-link": {"points", "segments"},
     # Grid cells carry raw geometry metadata (no value-wrapper), confirmed via
     # marketplace card inspection.
-    "block-drop-zone": {"row", "column", "gridArea", "zoneIndex"},
+    "block-drop-zone": {"row", "column", "gridArea", "zoneIndex", "columnIndex"},
+}
+
+
+_PROP_RENAMES: dict[str, dict[str, str]] = {
+    "block-entity-field-name": {
+        "useEllipsis": "ellipsis",
+    },
+    "block-weather-background": {
+        "defaultBackground": "defaultSvgBackground",
+        "customSvg": "mediaReference",
+        "enableAnimations": "animationsEnabled",
+        "updateInterval": "sunPositionUpdateMinutes",
+    },
+}
+
+
+_PROP_VALUE_RENAMES: dict[tuple[str, str], dict[Any, Any]] = {
+    ("block-entity-field-icon", "colorMode"): {
+        "state-based": "state",
+        "availability-based": "availability",
+    },
 }
 
 
@@ -1493,8 +1655,16 @@ def _wrap_props(props: dict | None, block_type: str | None = None) -> dict:
     if not props:
         return {}
     raw_keys = _RAW_PROPS.get(block_type, set()) if block_type else set()
+    prop_renames = _PROP_RENAMES.get(block_type or "", {})
     wrapped: dict[str, Any] = {}
-    for k, v in props.items():
+    for original_key, v in props.items():
+        k = prop_renames.get(original_key, original_key)
+        value_renames = _PROP_VALUE_RENAMES.get((block_type or "", k), {})
+        if value_renames:
+            if isinstance(v, dict) and "value" in v:
+                v = {**v, "value": value_renames.get(v.get("value"), v.get("value"))}
+            else:
+                v = value_renames.get(v, v)
         if k in raw_keys:
             wrapped[k] = v
         elif isinstance(v, dict) and ("value" in v or "binding" in v):
@@ -1707,7 +1877,27 @@ def validate_config(config: dict) -> dict:
         # Props must use TraitPropertyValue wrapper — raw scalars get silently ignored.
         # Exception: keys listed in _RAW_PROPS for that block type are intentionally raw.
         raw_keys = _RAW_PROPS.get(btype, set())
+        known_props = set((info.get("props") or {}).keys())
+        prop_renames = _PROP_RENAMES.get(btype, {})
         for pname, pval in (block.get("props") or {}).items():
+            if pname in prop_renames:
+                warnings.append(
+                    f"block {bid!r}: prop {pname!r} was renamed to "
+                    f"{prop_renames[pname]!r} in Card Builder 2.x."
+                )
+            elif known_props and pname not in known_props and not str(pname).startswith("_"):
+                warnings.append(
+                    f"block {bid!r}: prop {pname!r} is not in the embedded "
+                    f"schema for {btype!r}; Card Builder may ignore it."
+                )
+            value_renames = _PROP_VALUE_RENAMES.get((btype, pname), {})
+            if value_renames:
+                raw_value = pval.get("value") if isinstance(pval, dict) else pval
+                if raw_value in value_renames:
+                    warnings.append(
+                        f"block {bid!r}: prop {pname!r} value {raw_value!r} "
+                        f"was renamed to {value_renames[raw_value]!r} in Card Builder 2.x."
+                    )
             if pname in raw_keys:
                 continue
             if not isinstance(pval, dict) or not ("value" in pval or "binding" in pval):
@@ -1802,10 +1992,10 @@ def _recipe_tile_simple(slot: str = "entity") -> dict:
             },
         }),
         "blocks": [
-            {"type": "block-entity-field-icon", "props": {"iconSize": 40, "colorMode": "state-based"}},
+            {"type": "block-entity-field-icon", "props": {"iconSize": 40, "colorMode": "availability"}},
             {
                 "type": "block-entity-field-name",
-                "props": {"maxLength": 22, "useEllipsis": True},
+                "props": {"maxLength": 22, "ellipsis": True},
                 "styles": _bs({"typography": {"fontWeight": {"value": "600"}, "fontSize": {"value": 14, "unit": "px"}}}),
             },
             {
@@ -1842,7 +2032,7 @@ def _recipe_climate_full(slot: str = "climate") -> dict:
                 "type": "block-container",
                 "dz_styles": _bs({"flex": {"flexDirection": {"value": "row"}, "alignItems": {"value": "center"}, "gap": {"value": 12, "unit": "px"}}}),
                 "children": [
-                    {"type": "block-entity-field-icon", "props": {"iconSize": 44, "colorMode": "state-based"}},
+                    {"type": "block-entity-field-icon", "props": {"iconSize": 44, "colorMode": "availability"}},
                     {
                         "type": "block-container",
                         "styles": _bs({"flex": {"flexGrow": {"value": "1"}, "flexDirection": {"value": "column"}}}),
@@ -1908,7 +2098,7 @@ def _recipe_light_dimmer(slot: str = "light") -> dict:
                 "type": "block-container",
                 "dz_styles": _bs({"flex": {"flexDirection": {"value": "row"}, "alignItems": {"value": "center"}, "gap": {"value": 12, "unit": "px"}}}),
                 "children": [
-                    {"type": "block-entity-field-icon", "props": {"iconSize": 48, "colorMode": "state-based"}},
+                    {"type": "block-entity-field-icon", "props": {"iconSize": 48, "colorMode": "availability"}},
                     {
                         "type": "block-container",
                         "styles": _bs({"flex": {"flexGrow": {"value": "1"}, "flexDirection": {"value": "column"}}}),
@@ -2038,7 +2228,7 @@ def _recipe_weather_pretty(slot: str = "weather") -> dict:
         "blocks": [
             {
                 "type": "block-weather-background",
-                "props": {"svgSource": "default", "defaultBackground": "background-1", "enableAnimations": True},
+                "props": {"svgSource": "default", "defaultSvgBackground": "background-1", "animationsEnabled": True},
                 "styles": _bs({
                     "layout": {"zIndex": {"value": -1}},
                     "size": {"width": {"value": 100, "unit": "%"}, "height": {"value": 100, "unit": "%"}},
