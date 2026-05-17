@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **274 tools across 27 domains** — entities (with bulk voice exposure), automations & scripts (CRUD + traces + last-failed shortcuts), dashboards, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **self-documenting Card Builder** (visual drag-and-drop cards, recipe builder with embedded block schema + style categories + style targets + style snippets + upstream sync check), **aggregated snapshot** (one-call context), **BM25 tool search** (find the right tool without memorising 270 names), HA-aware YAML validation (`!include`, `!secret`), git versioning, and more.
+**Give AI assistants full control over your smart home.** **276 tools across 27 domains** — entities (with bulk voice exposure), automations & scripts (CRUD + traces + last-failed shortcuts), dashboards, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **self-documenting Card Builder** (visual drag-and-drop cards, recipe builder with embedded block schema + style categories + style targets + style snippets + upstream sync check), **aggregated snapshot** (one-call context), **BM25 tool search** (find the right tool without memorising 270 names), HA-aware YAML validation (`!include`, `!secret`), git versioning, and more.
 
 Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
@@ -160,7 +160,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Tools
 
-274 tools across 27 categories:
+276 tools across 27 categories:
 
 | Category | Count | Highlights |
 | --- | --- | --- |

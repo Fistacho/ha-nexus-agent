@@ -281,6 +281,19 @@ STYLE_SNIPPETS: dict[str, dict[str, Any]] = {
 # =========================================================================
 
 BLOCK_TYPES: dict[str, dict[str, Any]] = {
+    # --- Root ---
+    "canvas": {
+        "category": "root",
+        "label": "Card",
+        "accepts_children": True,
+        "requires_entity": False,
+        "props": {
+            "overflow_show": {"type": "bool", "default": True},
+            "overflow_allow_blocks_outside": {"type": "bool", "default": True},
+        },
+        "special_fields": ["canBeDeleted", "canBeDuplicated", "canChangeLayoutMode", "requireEntity", "isHidden"],
+        "notes": "ROOT block type of every Card Builder card. Use as `rootId` in DocumentData. Canvas has children directly (no auto drop-zone wrapper, unlike block-container). Standard pattern: canvas → single block-container or block-grid → content. build_from_recipe auto-wraps your recipe blocks in a container under canvas.",
+    },
     # --- Basic ---
     "block-text": {
         "category": "basic",
@@ -311,12 +324,13 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
         "requires_entity": False,
         "props": {
             "imageSource": {"type": "enum", "values": ["none", "url", "media"], "default": "none"},
-            "imageUrl": {"type": "string", "default": "", "binding": True},
-            "media": {"type": "string", "default": "", "binding": True},
-            "imageFit": {"type": "enum", "values": ["none", "contain", "cover", "stretch", "scale-down", "original"], "default": "none"},
-            "imagePosition": {"type": "string", "default": "center"},
-            "customPosition": {"type": "string", "default": ""},
+            "imageUrl": {"type": "string", "default": None, "binding": True, "nullable": True},
+            "mediaReference": {"type": "string", "default": "", "binding": True, "notes": "Use cb-media://local/card_builder/<filename> from upload_media response."},
+            "objectFit": {"type": "enum", "values": ["initial", "none", "contain", "cover", "stretch", "scale-down", "original"], "default": "initial"},
+            "objectPositionMode": {"type": "string", "default": "center", "notes": "Anchor: center, top, bottom, left, right, top-left, top-right, bottom-left, bottom-right, custom."},
+            "objectPositionCustom": {"type": "string", "default": "center"},
         },
+        "notes": "Prop names confirmed from marketplace cards: mediaReference (NOT media), objectFit (NOT imageFit), objectPositionMode (NOT imagePosition), objectPositionCustom (NOT customPosition).",
     },
     # --- Layout ---
     "block-container": {
@@ -344,13 +358,20 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
         "accepts_children": True,
         "requires_entity": False,
         "props": {
-            "rows": {"type": "int", "default": 2},
-            "columns": {"type": "int", "default": 2},
-            "rowSizes": {"type": "list", "default": []},
-            "columnSizes": {"type": "list", "default": []},
-            "areas": {"type": "list", "default": []},
-            "gap": {"type": "object", "default": {"row": 0, "column": 0}},
+            "gridConfig": {
+                "type": "object",
+                "default": {
+                    "rows": 2,
+                    "columns": 2,
+                    "gap": {"row": 0, "column": 0},
+                    "areas": [],
+                    "rowSizes": [{"unit": "fr", "value": 1}, {"unit": "fr", "value": 1}],
+                    "columnSizes": [{"unit": "fr", "value": 1}, {"unit": "fr", "value": 1}],
+                },
+                "notes": "All grid config nested under one key. Each size entry: {unit: 'fr'|'px'|'%'|'auto', value: int}. Grid auto-creates one drop-zone per cell (rows × columns).",
+            },
         },
+        "notes": "All grid params live in nested `gridConfig` object — flat `rows`/`columns`/`gap` props at the top level are silently ignored (confirmed via marketplace card inspection).",
     },
     "block-drop-zone": {
         "category": "layout",
@@ -750,6 +771,75 @@ def upload_media_from_path(local_path: str, path: str = "", filename: str | None
 
 
 @mcp.tool()
+def upload_svg(svg_content: str, filename: str, path: str = "") -> dict:
+    """Upload an SVG drafted in-session straight to the Card Builder media library.
+
+    Intended for AI clients (Claude, Cursor, …) that *design the SVG inline*
+    to match the card being built. No preset styles — each background is
+    crafted for its specific use case. Pass the SVG XML as `svg_content`
+    (must start with `<svg` or `<?xml`).
+
+    Returns `{reference, path, url}` — the `reference` is the
+    `cb-media://local/card_builder/<filename>` URI you drop into a
+    block-image's `mediaReference` prop.
+    """
+    txt = (svg_content or "").lstrip()
+    if not (txt.startswith("<svg") or txt.startswith("<?xml")):
+        return {"error": "not_svg", "detail": "Content must start with '<svg' or '<?xml ...'"}
+    final_name = filename if filename.lower().endswith(".svg") else f"{filename}.svg"
+    b64 = base64.b64encode(svg_content.encode("utf-8")).decode("ascii")
+    return ha._ws_call(
+        "card_builder/media/upload",
+        path=path,
+        filename=final_name,
+        content=b64,
+    )
+
+
+@mcp.tool()
+def upload_image_from_url(url: str, filename: str | None = None, path: str = "") -> dict:
+    """Download an image from any HTTP(S) URL and upload it to the Card Builder media library.
+
+    Useful when a marketplace card references a background image that didn't
+    come along with the card download, or when you want to reuse an image
+    from a public CDN. Falls back to deriving filename from the URL path.
+    """
+    import urllib.request
+    from urllib.parse import urlparse
+
+    final_name = filename
+    if not final_name:
+        url_path = urlparse(url).path
+        final_name = url_path.rsplit("/", 1)[-1] or "image"
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Nexus/0.11"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            content = r.read()
+    except Exception as err:
+        return {"error": "download_failed", "url": url, "detail": str(err)}
+
+    if not final_name.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif")):
+        # Guess extension from content-type if filename has no extension.
+        ct = ""
+        try:
+            ct = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
+        except Exception:
+            ct = ""
+        ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/svg+xml": ".svg", "image/avif": ".avif"}
+        if ct in ext_map and not Path(final_name).suffix:
+            final_name = final_name + ext_map[ct]
+
+    b64 = base64.b64encode(content).decode("ascii")
+    return ha._ws_call(
+        "card_builder/media/upload",
+        path=path,
+        filename=final_name,
+        content=b64,
+    )
+
+
+@mcp.tool()
 def delete_media(path: str) -> dict:
     """Delete a file from the Card Builder media directory by its relative path."""
     try:
@@ -990,6 +1080,19 @@ def check_schema_sync() -> dict:
 _RECIPE_GUIDE_MD = """# Card Builder Recipe Guide
 
 A Card Builder card is a `DocumentData` blob (`version: 3`) with a tree of blocks.
+
+## Root block is `canvas` (NOT block-container)
+
+Every card's `rootId` points to a special **`canvas`** block — confirmed by
+inspecting upstream marketplace cards. Canvas carries the card-wide
+`entityConfig`, has props `overflow_show` and `overflow_allow_blocks_outside`,
+plus the protected flags `canBeDeleted: false`, `canBeDuplicated: false`,
+`canChangeLayoutMode: false`. Its children are DIRECT (no auto drop-zone) —
+typically one `block-grid` or `block-container` that wraps the actual content.
+
+`build_from_recipe` handles all of this for you: it produces a canvas root
+with a single wrapper container, and your recipe blocks live inside that
+container's drop-zone where flex/spacing styles take effect.
 
 ## Structure
 
@@ -1241,6 +1344,48 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
+def _make_canvas_root(
+    children_ids: list[str],
+    entity_config: dict | None,
+    styles: dict | None = None,
+    actions: dict | None = None,
+) -> dict:
+    """Build the root `canvas` block — required as the rootId of every card.
+
+    Canvas is special vs other layout blocks: it does NOT auto-create a
+    drop-zone wrapper. Children are direct (typically a single block-grid
+    or block-container). Canvas carries the card-wide entityConfig and
+    optional action assignments (`actions.targets.block`).
+    """
+    block: dict[str, Any] = {
+        "id": "root",
+        "type": "canvas",
+        "label": "Card",
+        "parentId": None,
+        "children": list(children_ids),
+        "layout": "flow",
+        "order": 0,
+        "zIndex": 0,
+        "parentManaged": False,
+        "canBeDeleted": False,
+        "canBeDuplicated": False,
+        "canChangeLayoutMode": False,
+        "isHidden": False,
+        "requireEntity": False,
+        "props": {
+            "overflow_show": {"value": True},
+            "overflow_allow_blocks_outside": {"value": True},
+        },
+    }
+    if entity_config is not None:
+        block["entityConfig"] = entity_config
+    if styles is not None:
+        block["styles"] = styles
+    if actions is not None:
+        block["actions"] = actions
+    return block
+
+
 def _wrap_props(props: dict | None) -> dict:
     """Auto-wrap raw scalar prop values in `{"value": ...}` (TraitPropertyValue shape).
 
@@ -1366,32 +1511,43 @@ def build_from_recipe(recipe: dict) -> dict:
 
     blocks: dict[str, dict] = {}
 
-    # Root container with optional entity config
+    # Resolve root entityConfig once — applied to canvas so every descendant inherits.
     root_entity_config = None
     if root_slot:
         root_entity_config = {"mode": "slot", "slotId": root_slot}
     elif root_entity:
         root_entity_config = {"mode": "fixed", "entityId": root_entity}
 
-    root = _make_block(
+    # Wrapper container (single canvas child) — holds card-wide spacing,
+    # background, border-radius. Its auto drop-zone is where the recipe
+    # blocks actually live, so flex/typography on dz_styles affect children.
+    wrapper = _make_block(
         "block-container",
-        parent_id=None,
+        parent_id="root",
         order=0,
-        entity_config=root_entity_config,
         styles=recipe.get("root_styles"),
     )
-    blocks[root["id"]] = root
+    blocks[wrapper["id"]] = wrapper
 
-    root_dz = _make_block(
+    wrapper_dz = _make_block(
         "block-drop-zone",
-        parent_id=root["id"],
+        parent_id=wrapper["id"],
         order=0,
         parent_managed=True,
         styles=recipe.get("root_dz_styles") or recipe.get("layout_styles"),
     )
-    blocks[root_dz["id"]] = root_dz
-    root["children"] = [root_dz["id"]]
-    root_dz["children"] = _build_block_tree(children, root_dz["id"], blocks)
+    blocks[wrapper_dz["id"]] = wrapper_dz
+    wrapper["children"] = [wrapper_dz["id"]]
+    wrapper_dz["children"] = _build_block_tree(children, wrapper_dz["id"], blocks)
+
+    # Canvas root — fixed id "root" matches what Card Builder UI produces.
+    canvas = _make_canvas_root(
+        children_ids=[wrapper["id"]],
+        entity_config=root_entity_config,
+        styles=recipe.get("canvas_styles"),
+        actions=recipe.get("canvas_actions"),
+    )
+    blocks[canvas["id"]] = canvas
 
     # Normalize slot definitions into full EntitySlot shape
     slots_full: dict[str, dict] = {}
@@ -1404,7 +1560,7 @@ def build_from_recipe(recipe: dict) -> dict:
 
     return {
         "version": 3,
-        "rootId": root["id"],
+        "rootId": canvas["id"],
         "slots": {"entities": slots_full, "actions": recipe.get("action_slots") or {}},
         "blocks": blocks,
     }
