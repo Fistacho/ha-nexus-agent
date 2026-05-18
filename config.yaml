@@ -1,7 +1,7 @@
 name: Nexus Agent
-version: "0.13.0"
+version: "0.14.0"
 slug: nexus_agent
-description: "MCP server for Home Assistant — gives AI assistants (Claude, Cursor, VS Code) full control over your smart home through 279 tools across 27 domains (incl. Card Builder 2.3.0 schema sync with block-link / block-hourly-forecast / legacy prop rename detection, AI-designed-in-session SVG upload, marketplace-style compact templates, BM25 tool search, aggregated snapshot, automation trace debug)"
+description: "MCP server for Home Assistant — gives AI assistants (Claude, Cursor, VS Code) full control over your smart home through 283 tools + 3 MCP prompts across 27 domains (incl. Card Builder UX layer with design principles / pattern catalogue / intent-based smart picker, Card Builder 2.3.0 schema sync, AI-designed-in-session SVG upload, marketplace-style compact templates, BM25 tool search)"
 url: https://github.com/Fistacho/ha-nexus-agent
 arch:
   - aarch64

@@ -1477,6 +1477,450 @@ def recipe_guide() -> str:
 
 
 # =========================================================================
+# UX layer — design principles, pattern catalog, and intent-based assistant.
+# Companion to `recipe_guide` (which covers HOW to build) — these tools
+# cover WHAT to build for the user experience to actually feel polished.
+# =========================================================================
+
+_DESIGN_PRINCIPLES_MD = """# Card Builder Design Principles
+
+Cards on a dashboard compete for attention. The difference between a
+"functional" card and a "premium" one is rarely the data shown — it's the
+visual hierarchy, state feedback, and the rhythm of spacing and typography.
+
+## 1. Hierarchy: pick ONE primary number
+
+Every card should answer one question at a glance. Make that answer huge:
+
+| Card type | Primary | Secondary | Tertiary |
+| --- | --- | --- | --- |
+| Climate | `current_temperature` (56-60px bold) | target temp (16px) | mode chips, min/max |
+| Sensor hero | the value (32px+ bold) | unit, label (12px uppercase) | trend, history |
+| Tile | icon (32-48px, state-colored) | name (14px 600) | state (12px secondary) |
+| Cover | icon (32px) | name + state | position slider |
+
+Anti-pattern: 24px grey circle icon next to 14px name on a flat dark
+background. Nothing draws the eye — the card is invisible.
+
+## 2. State feedback via color binding
+
+Use `binding: {mode: "map", map: {state1: color1, ...}}` on icons,
+backgrounds, and badges to make state visible without reading the text:
+
+```
+"icon": {
+  "value": "mdi:snowflake",
+  "binding": {"mode": "map", "map": {
+    "off": "mdi:power-off",
+    "cool": "mdi:snowflake",
+    "heat": "mdi:fire",
+    "auto": "mdi:autorenew"
+  }}
+}
+```
+
+Same pattern works on `color`, `backgroundColor`, `borderColor`,
+`opacity`. Default if state not mapped: provide one via `default:` key
+so unknown states don't render blank.
+
+## 3. Spacing rhythm: 4 / 8 / 12 / 16 / 24
+
+Don't pick arbitrary numbers. Stick to the 4px-multiple scale:
+
+- 4px — tight space between related items (label/value)
+- 8px — between sibling controls in a row
+- 12px — between sections inside a card
+- 16px — card padding
+- 24px — between cards on a dashboard
+
+## 4. Typography scale: 60 / 32 / 17 / 14 / 12 / 11 / 10
+
+| Size | Use | Weight | Notes |
+| --- | --- | --- | --- |
+| 60px | hero number on premium climate / energy hero | 700 | line-height: 1 |
+| 32px | sensor hero number | 700 | |
+| 17-18px | section heading | 600 | |
+| 14-15px | card name | 600 | |
+| 13px | secondary attribute / metric in footer | 500 | |
+| 12px | body text / state line | 400-500 | |
+| 11px | mode chip text | 700 | uppercase, letter-spacing: 1 |
+| 10px | label above value ("TARGET", "CURRENT") | 600 | uppercase, letter-spacing: 2 |
+
+## 5. Semantic colors — use HA CSS variables
+
+Avoid hardcoded `#xxxxxx` (breaks dark theme). Lean on HA's tokens:
+
+| Token | When |
+| --- | --- |
+| `var(--ha-card-background, var(--card-background-color))` | card bg |
+| `var(--primary-text-color)` | main text on plain bg |
+| `var(--secondary-text-color)` | small secondary text |
+| `var(--accent-color, var(--primary-color))` | brand accents |
+| `var(--success-color, #4caf50)` | on / open / success |
+| `var(--warning-color, #ff9800)` | heat / caution |
+| `var(--error-color, #f44336)` | offline / unavailable |
+| `var(--info-color, #2196f3)` | cool / info |
+
+When a card has its own dark gradient bg image, use white-with-alpha:
+`#ffffff`, `rgba(255,255,255,0.85)`, `rgba(255,255,255,0.55)`,
+`rgba(255,255,255,0.15)`. Build a 4-step scale.
+
+## 6. Layout: grid for 2D, flow for linear, absolute for sparingly
+
+- **block-grid + cells** → 2D layouts (header + content + controls + footer).
+  Each cell is a drop-zone with its own flex direction. Predictable.
+- **block-container + drop-zone (flow)** → linear vertical/horizontal
+  stacks. Tile-style cards. Simple.
+- **`layout: "absolute"` with positionX/positionY** → only for overlapping
+  decorative elements (background image, glow, small badge corner).
+  NEVER for primary content layout — positions break on different card
+  widths.
+
+Anti-pattern: nesting drop-zones with different flex directions and
+hoping the renderer respects them. Card Builder collapses nested
+mismatched flex into column. Use `block-grid` instead.
+
+## 7. State badges, chips, indicators
+
+A small uppercase badge (OFF / COOL / 23%) in the top-right of a card is
+worth more than a paragraph of explanation. Pattern:
+
+```
+"styles": {
+  "block": {"containers": {"desktop": {
+    "typography": {
+      "fontSize": {"value": 10}, "letterSpacing": {"value": 1.5},
+      "fontWeight": {"value": "700"}, "textTransform": {"value": "uppercase"}
+    },
+    "spacing": {"padding": {"value": {"top": 4, "right": 10, "bottom": 4, "left": 10}, "unit": "px"}},
+    "background": {"backgroundColor": {"binding": {"mode": "map", "map": {...}}}},
+    "border": {"borderRadius": {"value": 999, "unit": "px"}}
+  }}}
+}
+```
+
+`borderRadius: 999px` = pill shape regardless of content width.
+
+## 8. Background images: SVG gradients beat plain dark
+
+Plain `var(--ha-card-background)` is fine but boring. A subtle SVG
+gradient via `block-image` (absolute, 100×100%, zIndex below content)
+adds depth without competing with the data. Generate one with
+`upload_svg(...)` — Claude designs SVG inline matching the card domain
+(blue tones for water/sensor, warm for heat, neutral dark for entry/lock).
+
+## 9. Empty states / unavailable / unknown
+
+Don't leave gaps when an entity is `unavailable` or `unknown`. Either:
+- Bind to an "unavailable" icon (`mdi:circle-off-outline`) and grey colour.
+- Or use `display: none` on the slider/control via state-based binding so
+  broken UI doesn't show.
+
+## 10. Anti-patterns to avoid
+
+- **Tiny grey 24px icons** on flat dark cards (invisible).
+- **Hard-coded card width** assumptions (don't use `positionX: 400` for
+  "right side" — card width varies).
+- **block-button-toggle on ESPHome climate** — upstream `filterOptionsByServices`
+  drops options when SUPPORT_HVAC_MODE bit is missing. Use display-only
+  mode chips (block-text with state binding) instead.
+- **Setting `colorMode: "state-based"` on entity-field-icon** — the
+  Card Builder 2.x renderer expects `"state"` (rename, see schema).
+- **Nesting block-container > drop-zone > block-container > drop-zone
+  with different flex directions** — renderer collapses the inner one.
+  Use block-grid cells.
+- **Negative `positionX` with `top-right` anchor** — renderer ignores the
+  anchor and treats positionX as offset from LEFT. Result: content off-screen.
+"""
+
+
+@mcp.tool()
+def design_principles() -> str:
+    """Embedded UX design playbook for Card Builder cards.
+
+    Companion to `recipe_guide()` — that one covers HOW to build a card
+    (block tree, slots, props). This covers WHAT to build for the result
+    to feel polished: hierarchy, state feedback via binding, spacing
+    rhythm, typography scale, semantic colors, layout choice (grid vs
+    flow vs absolute), state badges, background images, empty states,
+    and the anti-patterns that produce flat-feeling cards.
+
+    Read this AFTER `recipe_guide()` when you're about to design a card
+    that needs to look polished rather than just functional.
+    """
+    return _DESIGN_PRINCIPLES_MD
+
+
+# Curated catalog of design patterns. Each entry returns a recipe-style
+# spec PLUS UX notes — so AI clients get *both* the config to use and
+# the reasoning behind it.
+DESIGN_PATTERNS: dict[str, dict[str, Any]] = {
+    "climate_premium": {
+        "intent_keywords": ["climate", "ac", "thermostat", "hvac", "air conditioner"],
+        "domains": ["climate"],
+        "label": "Climate Premium (Hero)",
+        "description": (
+            "Full-height (340px) climate card mirroring the Card Builder marketing card. "
+            "Header with state-bound icon and pill badge, big current_temperature in centre, "
+            "MIN/MAX markers, mode chips row (OFF/COOL/HEAT/AUTO highlighted by binding), "
+            "temp slider, and Fan/Current footer."
+        ),
+        "ux_notes": [
+            "Hero number = current_temperature, not the state. State is shown as a badge + icon colour.",
+            "Mode chips are DISPLAY-ONLY for ESPHome climate (filterOptionsByServices kills functional toggle).",
+            "Icon and badge bg use map-mode binding so card visually conveys state without reading text.",
+            "Gauge SVG background gives the card a 'designed' feel without competing with data.",
+        ],
+        "recommended_template": "L10 Climate Hero pattern (canvas 340px + grid 6 rows + block-image bg).",
+        "anti_patterns": [
+            "Don't add block-button-toggle for HVAC modes — empty for ESPHome AC.",
+            "Don't put HVAC mode in primary slot — use as binding key instead.",
+        ],
+    },
+    "sensor_hero": {
+        "intent_keywords": ["sensor", "level", "battery", "yield", "humidity", "value", "stat"],
+        "domains": ["sensor"],
+        "label": "Sensor Hero",
+        "description": (
+            "Compact card with uppercase letter-spaced LABEL on top and a huge bold "
+            "value below. Best for one-number-at-a-glance: water level, battery %, "
+            "daily solar yield, today's consumption."
+        ),
+        "ux_notes": [
+            "Label uppercase + letter-spacing 1-2px = badge feel, draws less attention than the number.",
+            "Format `numeric` with `precision: 0-2` — never show raw '77.0000076293945'.",
+            "Add a state-based bg gradient hint (red < 20%, amber < 50%, green ≥ 50%) for ranges.",
+        ],
+        "recommended_template": "sensor_hero recipe (CARD_RECIPES['sensor_hero']).",
+        "anti_patterns": [
+            "Don't show the entity name as the primary — value is the primary.",
+        ],
+    },
+    "tile_with_state_color": {
+        "intent_keywords": ["tile", "toggle", "switch", "lock", "binary"],
+        "domains": ["switch", "light", "lock", "input_boolean", "binary_sensor"],
+        "label": "Tile with state-coloured icon",
+        "description": (
+            "Marketplace 2×2 grid tile (canvas 150px). Icon left (40px, state-bound colour), "
+            "state + name absolute-positioned on the right. Slider hidden. Tap → toggle."
+        ),
+        "ux_notes": [
+            "Icon 40px (NOT 24) — primary visual anchor.",
+            "Bind icon colour: on/locked → amber, off/unlocked → grey, unavailable → dim grey.",
+            "State text uppercase, letter-spaced, secondary colour — it's a label not a value.",
+            "Card-level action: tap = toggle. Name target: tap = more-info.",
+        ],
+        "recommended_template": "compact_tile recipe (CARD_RECIPES['compact_tile']).",
+        "anti_patterns": [
+            "Don't use 24px greyscale icon — invisible on dark dashboard.",
+            "Don't centre-stack everything when you have a left column free.",
+        ],
+    },
+    "cover_panel": {
+        "intent_keywords": ["cover", "blind", "shutter", "garage", "gate", "roller"],
+        "domains": ["cover"],
+        "label": "Cover panel",
+        "description": (
+            "Marketplace 2×2 grid with icon, state, name, and a position slider in "
+            "the bottom-left cell. coverControl: auto handles position vs tilt detection."
+        ),
+        "ux_notes": [
+            "Slider works only if cover supports SET_POSITION (bit 4 of supported_features). "
+            "For Supla/Netatmo without it, the slider reads state (open=100, closed=0) and "
+            "tap-toggles open/close instead.",
+            "Show position % in the slider value label.",
+        ],
+        "recommended_template": "compact_cover recipe.",
+        "anti_patterns": [
+            "Don't show slider if entity supports neither SET_POSITION nor SET_TILT_POSITION.",
+        ],
+    },
+    "light_dimmer": {
+        "intent_keywords": ["light", "lamp", "bulb", "dimmer", "brightness"],
+        "domains": ["light"],
+        "label": "Light dimmer",
+        "description": (
+            "Marketplace 2×2 grid with brightness slider in percent mode + power toggle. "
+            "Icon bound to state (mdi:lightbulb-on / lightbulb-off) via map binding."
+        ),
+        "ux_notes": [
+            "displayMode: 'percent' so the slider shows 0-100 not 0-255.",
+            "Power toggle (feature: light_power) on tile-area or icon — works on most lights.",
+            "For RGB lights add a secondary slot 'power_sensor' or 'colour' to surface live wattage / colour temp.",
+        ],
+        "recommended_template": "compact_light recipe.",
+        "anti_patterns": [
+            "Don't fight Card Builder for colour-picker UI — open more-info dialog instead.",
+        ],
+    },
+    "multi_entity_flow": {
+        "intent_keywords": ["energy", "flow", "house", "solar", "grid", "battery"],
+        "domains": ["sensor"],
+        "label": "Multi-entity flow (energy / network)",
+        "description": (
+            "Inspired by 'House Energy Flow with Background' marketplace card. "
+            "9 slots, animated SVG link blocks between nodes, background image. "
+            "For dashboards that want to visualise a system of relationships, not "
+            "a single entity."
+        ),
+        "ux_notes": [
+            "Use block-link with renderStyle: particle + speed bound to entity state.",
+            "Background image (block-image, absolute fill) anchors the visual.",
+            "Bottom strip: block-columns with icon+value pairs per node.",
+            "This is heavy — only attempt when you have 5+ related entities and a clear topology.",
+        ],
+        "recommended_template": "Clone from marketplace card 'House Energy Flow with Background' and rebind slots.",
+        "anti_patterns": [
+            "Don't try to build this from scratch — start from the marketplace card config.",
+        ],
+    },
+}
+
+
+@mcp.tool()
+def list_design_patterns(domain: str | None = None) -> list[dict]:
+    """Curated UX design patterns. Each entry pairs a recipe recommendation with WHY.
+
+    Pass ``domain`` to filter to patterns relevant for a specific HA entity domain.
+    Each pattern gives an intent description, a recommended template, UX rationale,
+    and the anti-patterns it specifically avoids.
+    """
+    out: list[dict] = []
+    for name, info in DESIGN_PATTERNS.items():
+        if domain and info.get("domains") and domain not in info["domains"]:
+            continue
+        out.append({"name": name, **info})
+    return out
+
+
+@mcp.tool()
+def get_design_pattern(name: str) -> dict:
+    """Full design pattern entry — same fields as `list_design_patterns`."""
+    info = DESIGN_PATTERNS.get(name)
+    if not info:
+        return {"error": "unknown_pattern", "name": name, "known": list(DESIGN_PATTERNS.keys())}
+    return {"name": name, **info}
+
+
+@mcp.tool()
+def design_for_intent(intent: str, domain: str | None = None, entity_id: str | None = None) -> dict:
+    """Smart picker: given a free-text intent (and optional domain/entity_id),
+    recommend the best design pattern, the underlying template, and a checklist
+    of things the AI client should consider before generating the card.
+
+    Combines `DESIGN_PATTERNS` (the WHY), `CARD_RECIPES` (the HOW), and
+    `DESIGN_PRINCIPLES` (the rules) into one recommendation. The reply
+    is purposely small — pull richer text via `design_principles()` or
+    `get_design_pattern(name)` if needed.
+    """
+    intent_norm = (intent or "").lower()
+    if not domain and entity_id and "." in entity_id:
+        domain = entity_id.split(".", 1)[0]
+
+    # Score each pattern: domain match + keyword overlap.
+    scored: list[tuple[float, str, dict]] = []
+    for name, info in DESIGN_PATTERNS.items():
+        score = 0.0
+        if domain and info.get("domains") and domain in info["domains"]:
+            score += 5.0
+        for kw in info.get("intent_keywords") or []:
+            if kw in intent_norm:
+                score += 1.5
+        if score > 0:
+            scored.append((score, name, info))
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    if not scored:
+        return {
+            "intent": intent,
+            "domain": domain,
+            "entity_id": entity_id,
+            "recommendation": None,
+            "note": "No pattern matched. Fall back to `tile_simple` from CARD_RECIPES, then enrich based on `design_principles()`.",
+        }
+
+    top_score, top_name, top_info = scored[0]
+    return {
+        "intent": intent,
+        "domain": domain,
+        "entity_id": entity_id,
+        "recommendation": top_name,
+        "score": top_score,
+        "label": top_info.get("label"),
+        "description": top_info.get("description"),
+        "ux_notes": top_info.get("ux_notes"),
+        "recommended_template": top_info.get("recommended_template"),
+        "anti_patterns": top_info.get("anti_patterns"),
+        "next_steps": [
+            "Read full pattern: `get_design_pattern(name)`",
+            "Read design rules: `design_principles()`",
+            "Build with `make_template_card(template_name, ...)` or `build_from_recipe({...})`",
+            "Validate with `validate_config(config)` before saving",
+        ],
+        "alternatives": [{"name": n, "score": s, "label": i.get("label")} for s, n, i in scored[1:4]],
+    }
+
+
+# Native MCP prompts — clients that support prompts (Claude Code, Cursor)
+# can call these to set design context before generating cards.
+
+@mcp.prompt(name="design_dashboard")
+def _prompt_design_dashboard() -> str:
+    """Set context for designing a whole Home Assistant dashboard."""
+    return (
+        "You are designing a Home Assistant dashboard using the Card Builder MCP tools "
+        "in the `card_builder` namespace. Follow this flow:\n\n"
+        "1. Call `card_builder_design_principles()` — read the UX playbook.\n"
+        "2. Call `card_builder_list_design_patterns()` — see the curated catalogue.\n"
+        "3. Group the user's entities by domain. For each group:\n"
+        "   a. Call `card_builder_design_for_intent(intent, domain)` to pick a pattern.\n"
+        "   b. Use `card_builder_make_template_card(template, ...)` to instantiate.\n"
+        "4. Compose them in a view via `dashboards_add_view_to_dashboard(...)`.\n"
+        "5. Generate a background SVG with `card_builder_upload_svg(svg_content, filename)` "
+        "for any hero card that needs a designed bg.\n\n"
+        "ANTI-PATTERNS (do not):\n"
+        "- Use `block-button-toggle` for ESPHome climate (filterOptionsByServices kills options).\n"
+        "- Use nested drop-zones with different flex directions (renderer collapses inner).\n"
+        "- Use 24px greyscale icons on dark cards (invisible).\n"
+        "- Use absolute positioning for primary content layout — use block-grid cells.\n"
+    )
+
+
+@mcp.prompt(name="design_card")
+def _prompt_design_card(domain: str, intent: str = "") -> str:
+    """Set context for designing one Card Builder card for an entity domain."""
+    return (
+        f"You are designing a single Card Builder card for HA domain `{domain}`"
+        + (f", intent: {intent!r}" if intent else "")
+        + ".\n\n"
+        "Workflow:\n"
+        f"1. `card_builder_design_for_intent({intent!r}, {domain!r})` — get pattern recommendation.\n"
+        f"2. `card_builder_get_design_pattern(<recommended>)` — full pattern with UX notes.\n"
+        "3. `card_builder_design_principles()` if you need the broader rules.\n"
+        "4. `card_builder_list_block_types(category)` and `card_builder_get_block_schema(type)` "
+        "if you need to verify a block's prop names.\n"
+        "5. Build the config (via recipe or hand-crafted), `validate_config()`, then `create_card()`.\n\n"
+        "Hierarchy reminder: pick ONE primary value and make it big (60px for hero, 32px for "
+        "sensor). Everything else is secondary. Use state-based icon/colour bindings — never "
+        "render a dead grey circle.\n"
+    )
+
+
+@mcp.prompt(name="pick_template")
+def _prompt_pick_template(entity_id: str = "") -> str:
+    """Help an AI client choose the right pre-built template for an entity."""
+    return (
+        "Pick a Card Builder template for a HA entity. Steps:\n"
+        f"1. `card_builder_design_for_intent('', None, {entity_id!r})` — domain-driven pick.\n"
+        "2. `card_builder_list_card_templates(domain)` — see what's pre-built.\n"
+        "3. `card_builder_get_card_template(name)` — preview the config (no save).\n"
+        "4. `card_builder_make_template_card(template, name, slot='main')` — create.\n\n"
+        "If no built-in template fits, fall back to `compact_tile` (simple) and add "
+        "extra blocks via direct config edit + `update_card()`.\n"
+    )
+
+
+# =========================================================================
 # Recipe builder — turns a shorthand recipe into a full DocumentData
 # =========================================================================
 
