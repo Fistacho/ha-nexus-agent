@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **285 tools across 27 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), dashboards + screenshot + resource management, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
+**Give AI assistants full control over your smart home.** **292 tools across 27 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), dashboards + screenshot + resource management, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
 
 Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
@@ -193,13 +193,13 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Tools
 
-285 tools across 27 categories:
+292 tools across 27 categories:
 
 | Category | Tools | Highlights |
 | --- | --- | --- |
 | `entities_*` | 18 | list (paginated + field selection), turn on/off/toggle, **bulk_control**, voice expose, set_value |
 | `services_*` | 19 | call_service, notify, light color, camera snapshot/record, media controls |
-| `automations_*` | 29 | CRUD + full YAML, traces, scripts, scenes, **validate_best_practices** (static linter), **validate_automation_references** (live registry check), **list/set/remove groups**, confirm gates on delete |
+| `automations_*` | 28 | CRUD + full YAML, traces, scripts, scenes, **validate_best_practices** (static linter), **validate_automation_references** (live registry check), **list/set/remove groups**, confirm gates on delete |
 | `blueprints_*` | 4 | list, import from URL, delete, instantiate |
 | `areas_*` | 8 | list, create, get_states, **control_area** |
 | `devices_*` | 4 | list, update (rename/move/disable), remove |
@@ -229,7 +229,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Features
 
-- **285 MCP tools** across 27 categories — the most complete HA MCP server available
+- **292 MCP tools** across 27 categories — the most complete HA MCP server available
 - **Built-in tool search** — `discover_tool_search("query")` finds the right tool without flooding the AI's context
 - **Confirmation gates** — all destructive operations require `confirm=True`; without it they return the exact command to re-run
 - **Automation linter** — `automations_validate_best_practices` catches 7 common YAML mistakes before they cause issues
