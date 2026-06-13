@@ -6,9 +6,24 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **300 tools across 27 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), dashboards + screenshot + resource management, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
+**Give AI assistants full control over your smart home.** **285 tools across 27 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), dashboards + screenshot + resource management, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
 
 Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
+
+---
+
+## What can you ask?
+
+Once connected, just talk to your AI assistant:
+
+- *"Turn off all lights in the house"*
+- *"Create an automation: alert me when the front door opens after 10 PM"*
+- *"Why is my bedroom sensor showing unavailable?"*
+- *"Take a screenshot of my main dashboard"*
+- *"Show all pending Home Assistant updates"*
+- *"Install Mushroom Cards from HACS"*
+- *"Commit my config changes to git with a summary of what changed"*
+- *"Build me a Lovelace card for the living room with temperature and humidity"*
 
 ---
 
