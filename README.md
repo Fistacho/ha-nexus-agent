@@ -6,18 +6,27 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **285 tools across 27 domains** — entities, automations & scripts (CRUD + traces), dashboards + screenshot, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
+**Give AI assistants full control over your smart home.** **300 tools across 27 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), dashboards + screenshot + resource management, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
 
 Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
 ---
 
+## What's New in v0.16.0
+
+- **`system_get_updates`** — list pending HA updates (core, add-ons, HACS, custom components) with version info and release URLs
+- **`system_get_system_health`** — health check of all HA subsystems (recorder, network, cloud, etc.)
+- **`system_get_repairs`** — list active repair issues that require attention
+- **Entity groups CRUD** — `automations_list_groups`, `automations_set_group`, `automations_remove_group` — create/update/delete `group.*` entities via `group.set`
+- **Live automation reference validator** — `automations_validate_automation_references` cross-checks every `entity_id` and `service` in your YAML against the live HA registry; template values skipped automatically
+- **Lovelace resource management** — `dashboards_add_dashboard_resource`, `dashboards_remove_dashboard_resource`, `dashboards_update_dashboard_resource` — manage custom JS/CSS resources without touching YAML
+
 ## What's New in v0.15.0
 
-- **Pagination + field selection** — `list_entities` and `get_snapshot` now accept `limit`, `offset`, and `fields`/`state_fields` — return only what you need, page through large setups
-- **Confirmation gates** on all destructive operations — `restart_ha`, `stop_ha`, `git_rollback_*`, `delete_automation`, `delete_script`, `remove_integration` all require `confirm=True`; without it they return a safe prompt with the exact call to re-run
-- **Automation best-practice linter** — `automations_validate_best_practices` statically checks YAML for 7 common mistakes (bounce triggers, missing mode, no trigger IDs, deprecated `service:` key, and more)
-- **Dashboard screenshot** via Puppet engine — `dashboards_screenshot` renders any Lovelace view to PNG; delegates to the Puppet add-on (no browser inside Nexus image, works on all architectures)
+- **Pagination + field selection** — `list_entities` and `get_snapshot` now accept `limit`, `offset`, and `fields`/`state_fields`
+- **Confirmation gates** on all destructive operations — `restart_ha`, `stop_ha`, `git_rollback_*`, `delete_automation`, `delete_script`, `remove_integration` all require `confirm=True`
+- **Automation best-practice linter** — `automations_validate_best_practices` statically checks YAML for 7 common mistakes
+- **Dashboard screenshot** via Puppet engine — `dashboards_screenshot` renders any Lovelace view to PNG
 
 ---
 
@@ -175,7 +184,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | --- | --- | --- |
 | `entities_*` | 18 | list (paginated + field selection), turn on/off/toggle, **bulk_control**, voice expose, set_value |
 | `services_*` | 19 | call_service, notify, light color, camera snapshot/record, media controls |
-| `automations_*` | 24 | CRUD + full YAML, traces, scripts, scenes, **validate_best_practices** (linter), confirm gates on delete |
+| `automations_*` | 29 | CRUD + full YAML, traces, scripts, scenes, **validate_best_practices** (static linter), **validate_automation_references** (live registry check), **list/set/remove groups**, confirm gates on delete |
 | `blueprints_*` | 4 | list, import from URL, delete, instantiate |
 | `areas_*` | 8 | list, create, get_states, **control_area** |
 | `devices_*` | 4 | list, update (rename/move/disable), remove |
@@ -183,8 +192,8 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | `todo_*` | 5 | list, add/update/remove items |
 | `helpers_*` | 11 | input_boolean/number/text/select/datetime, timers, counters |
 | `history_*` | 5 | state history, logbook, error log, system info |
-| `system_*` | 9 | check_config, backup, **restart/stop** (confirm gate), list integrations |
-| `dashboards_*` | 7 | get/save config, add cards/views, **screenshot** (via Puppet engine) |
+| `system_*` | 12 | check_config, backup, **restart/stop** (confirm gate), **get_updates**, **get_system_health**, **get_repairs** |
+| `dashboards_*` | 10 | get/save config, add cards/views, **screenshot** (Puppet), **add/remove/update resources** (JS/CSS) |
 | `files_*` | 6 | read/write config files, YAML validation (`!include`, `!secret`) |
 | `git_*` | 11 | commit, **rollback** (confirm gate), log, **safe_write_with_checkpoint** |
 | `ws_*` | 7 | listen state changes, events, subscribe_trigger, render_template |
@@ -209,6 +218,10 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 - **Built-in tool search** — `discover_tool_search("query")` finds the right tool without flooding the AI's context
 - **Confirmation gates** — all destructive operations require `confirm=True`; without it they return the exact command to re-run
 - **Automation linter** — `automations_validate_best_practices` catches 7 common YAML mistakes before they cause issues
+- **Live reference validator** — `automations_validate_automation_references` cross-checks every entity_id and service call against the running HA instance
+- **Updates monitor** — `system_get_updates` lists all pending updates across core, add-ons and HACS
+- **Repair issues** — `system_get_repairs` surfaces active issues from HA's repair centre
+- **Lovelace resources** — add/remove/update custom JS modules and CSS without editing YAML
 - **Dashboard screenshot** — render any Lovelace view to PNG via the Puppet engine (see below)
 - **Real-time WebSocket** — subscribe to state changes, events and triggers live
 - **Git versioning** — every config change auto-committed, instant rollback, `safe_write_with_checkpoint`

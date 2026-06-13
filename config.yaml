@@ -1,7 +1,7 @@
 name: Nexus Agent
-version: "0.15.0"
+version: "0.16.0"
 slug: nexus_agent
-description: "MCP server for Home Assistant — gives AI assistants (Claude, Cursor, VS Code) full control over your smart home through 290 tools across 27 domains. New in 0.15: pagination + field selection for list_entities/get_snapshot, confirmation gates for all destructive operations, automation best-practice linter, Lovelace dashboard screenshot (playwright), Card Builder UX layer, BM25 tool search"
+description: "MCP server for Home Assistant — gives AI assistants (Claude, Cursor, VS Code) full control over your smart home through 300 tools across 27 domains. New in 0.16: get_updates, get_system_health, get_repairs, entity groups CRUD, live automation reference validator, Lovelace resource management (add/remove/update JS+CSS)"
 url: https://github.com/Fistacho/ha-nexus-agent
 arch:
   - aarch64

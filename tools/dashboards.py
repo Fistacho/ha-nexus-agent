@@ -68,6 +68,61 @@ def list_dashboards() -> list[dict]:
 
 
 @mcp.tool()
+def add_dashboard_resource(url: str, resource_type: str = "module") -> dict:
+    """Add a custom resource (JS module or CSS) to Lovelace.
+
+    Resources load on every dashboard page — use this to register custom cards,
+    themes, or scripts stored in /local/ or an external CDN.
+
+    Args:
+        url: Resource URL, e.g. '/local/my-card.js' or '/hacsfiles/mini-graph-card/mini-graph-card-bundle.js'.
+        resource_type: 'module' (default, ES module JS), 'js' (legacy script), or 'css'.
+    """
+    if resource_type not in ("module", "js", "css"):
+        return {"error": "resource_type must be 'module', 'js', or 'css'"}
+    result = ha._ws_call("lovelace/resources/create", res_type=resource_type, url=url)
+    return {"status": "added", "url": url, "resource_type": resource_type, "result": result}
+
+
+@mcp.tool()
+def remove_dashboard_resource(resource_id: int, confirm: bool = False) -> dict:
+    """Remove a Lovelace resource by its numeric ID. Set confirm=True to proceed.
+
+    Use get_dashboard_resources() to find the resource ID.
+    """
+    if not confirm:
+        return {
+            "error": "confirmation_required",
+            "message": f"This will remove Lovelace resource #{resource_id}. Call again with confirm=True.",
+            "action": f"remove_dashboard_resource(resource_id={resource_id}, confirm=True)",
+        }
+    result = ha._ws_call("lovelace/resources/delete", resource_id=resource_id)
+    return {"status": "removed", "resource_id": resource_id, "result": result}
+
+
+@mcp.tool()
+def update_dashboard_resource(resource_id: int, url: str, resource_type: str = "module") -> dict:
+    """Update the URL or type of an existing Lovelace resource.
+
+    Use get_dashboard_resources() to find the resource ID.
+
+    Args:
+        resource_id: Numeric ID of the resource to update.
+        url: New resource URL.
+        resource_type: 'module', 'js', or 'css'.
+    """
+    if resource_type not in ("module", "js", "css"):
+        return {"error": "resource_type must be 'module', 'js', or 'css'"}
+    result = ha._ws_call(
+        "lovelace/resources/update",
+        resource_id=resource_id,
+        res_type=resource_type,
+        url=url,
+    )
+    return {"status": "updated", "resource_id": resource_id, "url": url, "resource_type": resource_type, "result": result}
+
+
+@mcp.tool()
 def get_dashboard_config(url_path: str | None = None) -> dict:
     """Get Lovelace dashboard config. `url_path` can be a dashboard (e.g. 'map') or a view path
     inside the default dashboard (e.g. 'lukasz' from /lovelace/lukasz). Omit for the full default dashboard."""

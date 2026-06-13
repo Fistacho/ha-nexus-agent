@@ -427,3 +427,203 @@ def validate_best_practices(yaml_content: str) -> dict:
             else f"⚠️ {warnings} warning(s), ℹ️ {infos} info(s) across {len(automations)} automation(s)"
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Live reference validator
+# ---------------------------------------------------------------------------
+
+def _extract_entity_ids(obj: object, found: set) -> None:
+    """Recursively walk automation dict and collect literal entity_id values."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == "entity_id":
+                if isinstance(v, str) and "{{" not in v:
+                    found.add(v)
+                elif isinstance(v, list):
+                    for item in v:
+                        if isinstance(item, str) and "{{" not in item:
+                            found.add(item)
+            else:
+                _extract_entity_ids(v, found)
+    elif isinstance(obj, list):
+        for item in obj:
+            _extract_entity_ids(item, found)
+
+
+def _extract_services(obj: object, found: set) -> None:
+    """Recursively walk automation dict and collect literal service/action values."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in ("service", "action"):
+                if isinstance(v, str) and "{{" not in v and "." in v:
+                    found.add(v)
+            else:
+                _extract_services(v, found)
+    elif isinstance(obj, list):
+        for item in obj:
+            _extract_services(item, found)
+
+
+@mcp.tool()
+def validate_automation_references(yaml_content: str) -> dict:
+    """Cross-check entity IDs and services used in automation YAML against the live HA registry.
+
+    Unlike validate_best_practices (static), this tool calls Home Assistant to verify
+    that every referenced entity_id exists and every service is registered.
+    Template values ({{ ... }}) are skipped — they can't be resolved statically.
+
+    Returns: {
+        valid_yaml, entities_checked, services_checked,
+        missing_entities[], missing_services[], template_refs_skipped,
+        summary
+    }
+    """
+    import yaml as _yaml
+
+    try:
+        parsed = _yaml.safe_load(yaml_content)
+    except _yaml.YAMLError as e:
+        return {"valid_yaml": False, "error": f"YAML parse error: {e}"}
+
+    if parsed is None:
+        return {"valid_yaml": True, "summary": "✅ Nothing to check"}
+
+    if isinstance(parsed, dict):
+        automations = [parsed]
+    elif isinstance(parsed, list):
+        automations = parsed
+    else:
+        return {"valid_yaml": True, "error": "Expected a dict or list of automation dicts"}
+
+    # Extract all literal references
+    entity_refs: set = set()
+    service_refs: set = set()
+    for auto in automations:
+        _extract_entity_ids(auto, entity_refs)
+        _extract_services(auto, service_refs)
+
+    template_count = 0
+    for auto in automations:
+        import re
+        template_count += len(re.findall(r"\{\{", str(auto)))
+
+    # Fetch live data
+    try:
+        live_entity_ids = {s["entity_id"] for s in ha.get_states()}
+    except Exception:
+        live_entity_ids = set()
+
+    try:
+        live_services: set = set()
+        for entry in ha.list_services():
+            domain = entry.get("domain", "")
+            for svc in (entry.get("services") or {}).keys():
+                live_services.add(f"{domain}.{svc}")
+    except Exception:
+        live_services = set()
+
+    missing_entities = sorted(entity_refs - live_entity_ids)
+    missing_services = sorted(service_refs - live_services) if live_services else []
+
+    total_missing = len(missing_entities) + len(missing_services)
+    return {
+        "valid_yaml": True,
+        "automations_checked": len(automations),
+        "entities_checked": len(entity_refs),
+        "services_checked": len(service_refs),
+        "template_refs_skipped": template_count,
+        "missing_entities": missing_entities,
+        "missing_services": missing_services,
+        "summary": (
+            "✅ All references exist in Home Assistant"
+            if not total_missing
+            else f"❌ {len(missing_entities)} missing entity(s), {len(missing_services)} missing service(s)"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Entity group management (group.set / group.remove)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def list_groups() -> list[dict]:
+    """List all Home Assistant entity groups (group.* entities).
+
+    Returns groups with their members, icon, and current state.
+    """
+    states = ha.get_states()
+    return [
+        {
+            "entity_id": s["entity_id"],
+            "state": s["state"],
+            "friendly_name": s.get("attributes", {}).get("friendly_name"),
+            "entity_ids": s.get("attributes", {}).get("entity_id", []),
+            "icon": s.get("attributes", {}).get("icon"),
+            "all": s.get("attributes", {}).get("all", False),
+            "order": s.get("attributes", {}).get("order"),
+        }
+        for s in states
+        if s["entity_id"].startswith("group.")
+    ]
+
+
+@mcp.tool()
+def set_group(
+    group_id: str,
+    name: str | None = None,
+    entities: list[str] | None = None,
+    icon: str | None = None,
+    all_entities: bool = False,
+    add_entities: list[str] | None = None,
+    remove_entities: list[str] | None = None,
+) -> dict:
+    """Create or update a Home Assistant entity group.
+
+    Wraps the group.set service. Group is stored in groups.yaml and persists restarts.
+
+    Args:
+        group_id: Bare group id (e.g. 'living_room_lights') — no 'group.' prefix.
+        name: Friendly name (optional).
+        entities: Full list of entity_ids to include (replaces current members).
+        icon: MDI icon string (e.g. 'mdi:lightbulb-group').
+        all_entities: If True, group state = ON only when ALL members are on.
+        add_entities: Add these entity_ids to existing members.
+        remove_entities: Remove these entity_ids from existing members.
+    """
+    gid = _strip_prefix(group_id, "group")
+    data: dict = {"object_id": gid}
+    if name is not None:
+        data["name"] = name
+    if entities is not None:
+        data["entities"] = entities
+    if icon is not None:
+        data["icon"] = icon
+    if all_entities:
+        data["all"] = True
+    if add_entities:
+        data["add_entities"] = add_entities
+    if remove_entities:
+        data["remove_entities"] = remove_entities
+
+    ha.call_service("group", "set", data)
+    return {"status": "set", "group_id": f"group.{gid}"}
+
+
+@mcp.tool()
+def remove_group(group_id: str, confirm: bool = False) -> dict:
+    """Remove a Home Assistant entity group. Set confirm=True to proceed.
+
+    Args:
+        group_id: Bare group id or 'group.<id>'.
+    """
+    gid = _strip_prefix(group_id, "group")
+    if not confirm:
+        return {
+            "error": "confirmation_required",
+            "message": f"This will permanently remove group 'group.{gid}'. Call again with confirm=True.",
+            "action": f"remove_group(group_id='{group_id}', confirm=True)",
+        }
+    ha.call_service("group", "remove", {"object_id": gid})
+    return {"status": "removed", "group_id": f"group.{gid}"}
