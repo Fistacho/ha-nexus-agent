@@ -1,7 +1,64 @@
+import base64
+import os
+import httpx
 from fastmcp import FastMCP
 import ha_client as ha
 
 mcp = FastMCP("dashboards")
+
+# ---------------------------------------------------------------------------
+# Screenshot engine helpers (Puppet add-on — https://github.com/balloob/home-assistant-addons)
+# ---------------------------------------------------------------------------
+_PUPPET_PORT = 10000
+_PUPPET_SLUG_SUFFIXES = ("_puppet", "_ha_mcp_screenshot")
+
+
+def _resolve_screenshot_engine() -> str:
+    """Return the base URL of the Puppet screenshot engine or raise RuntimeError."""
+    explicit = os.environ.get("NEXUS_SCREENSHOT_ENGINE_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+
+    supervisor_token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if not supervisor_token:
+        raise RuntimeError(
+            "No screenshot engine configured. "
+            "Install the 'Puppet' add-on from https://github.com/balloob/home-assistant-addons "
+            "and set its access_token, OR set NEXUS_SCREENSHOT_ENGINE_URL to the engine URL."
+        )
+
+    headers = {"Authorization": f"Bearer {supervisor_token}"}
+    try:
+        with httpx.Client(base_url="http://supervisor", headers=headers, timeout=15) as sup:
+            resp = sup.get("/addons")
+            resp.raise_for_status()
+            addons = resp.json().get("data", {}).get("addons", [])
+
+        matches = [a for a in addons if str(a.get("slug", "")).endswith(_PUPPET_SLUG_SUFFIXES)]
+        if not matches:
+            raise RuntimeError(
+                "Puppet screenshot engine add-on not found. "
+                "Add balloob's repository in Settings → Add-ons → Add-on Store → Repositories, "
+                "then install 'Puppet' and configure its access_token."
+            )
+
+        with httpx.Client(base_url="http://supervisor", headers=headers, timeout=15) as sup:
+            for addon in matches:
+                slug = addon["slug"]
+                info = sup.get(f"/addons/{slug}/info").json().get("data", {})
+                if info.get("state") == "started":
+                    host = info.get("hostname") or info.get("ip_address")
+                    if host:
+                        return f"http://{host}:{_PUPPET_PORT}"
+
+        raise RuntimeError(
+            "Puppet add-on is installed but not started. "
+            "Go to Settings → Add-ons → Puppet, set access_token, and start it."
+        )
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"Could not discover screenshot engine via Supervisor: {e}")
 
 
 @mcp.tool()
@@ -78,79 +135,78 @@ def screenshot(
     url_path: str | None = None,
     width: int = 1280,
     height: int = 800,
-    wait_ms: int = 3000,
+    wait_ms: int = 2500,
+    full_page: bool = False,
+    zoom: float = 1.0,
 ) -> dict:
-    """Capture a PNG screenshot of a Lovelace dashboard view.
+    """Capture a PNG screenshot of a Lovelace dashboard view via the Puppet engine.
 
-    Returns base64-encoded PNG and metadata.
+    Requires the **Puppet** add-on (balloob's repo):
+      1. In HA: Settings → Add-ons → Add-on Store → ⋮ → Repositories
+         Add: https://github.com/balloob/home-assistant-addons
+      2. Install 'Puppet', set its 'access_token' option to a long-lived HA token, start it.
 
-    Requires playwright (optional dependency):
-      pip install playwright && playwright install chromium
-    Restart Nexus after installing.
+    On Docker/standalone: set NEXUS_SCREENSHOT_ENGINE_URL=http://<puppet-host>:10000
 
     Args:
-        url_path: Dashboard view path, e.g. 'caly-dom'. Omit for the default view.
+        url_path: Lovelace path, e.g. 'caly-dom' or 'lovelace/0'. Omit for default.
         width: Viewport width in pixels (default 1280).
         height: Viewport height in pixels (default 800).
-        wait_ms: Extra milliseconds to wait after page load for cards to render (default 3000).
+        wait_ms: Settle time in ms after load — increase for heavy chart cards (default 2500).
+        full_page: Capture full scrollable page instead of just the viewport.
+        zoom: Zoom factor (default 1.0).
     """
-    try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-    except ImportError:
-        return {
-            "error": "playwright_not_installed",
-            "install": "pip install playwright && playwright install chromium",
-            "note": "Restart Nexus after installing.",
-        }
+    path = url_path.strip("/") if url_path else "lovelace"
+    if not path.startswith("lovelace"):
+        path = f"lovelace/{path}"
 
-    import base64
-
-    ha_url = ha._HA_URL.rstrip("/")
-    token = ha._TOKEN
-    target = f"{ha_url}/lovelace/{url_path}" if url_path else f"{ha_url}/lovelace"
+    # Reject unsafe paths
+    forbidden = ("://", "//", "..", "@", "\\", "?", "#")
+    if any(bit in path for bit in forbidden):
+        return {"error": "invalid_path", "detail": f"Unsafe characters in path: '{url_path}'"}
 
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
-            )
-            ctx = browser.new_context(viewport={"width": width, "height": height})
-            page = ctx.new_page()
+        engine = _resolve_screenshot_engine()
+    except RuntimeError as e:
+        return {"error": "engine_not_available", "detail": str(e)}
 
-            # Load base URL first so we can set localStorage on the correct origin
-            page.goto(ha_url, wait_until="domcontentloaded", timeout=15_000)
+    effective_height = 4096 if full_page else height
+    params = {
+        "viewport": f"{width}x{effective_height}",
+        "zoom": str(zoom),
+        "wait": str(int(wait_ms)),
+        "format": "png",
+    }
+    engine_url = f"{engine}/{path}"
 
-            # Inject long-lived access token the same way the HA companion app does
-            page.evaluate(f"""() => {{
-                const t = JSON.stringify({{
-                    access_token: '{token}',
-                    token_type: 'Bearer',
-                    expires_in: 1800,
-                    hassUrl: '{ha_url}',
-                    clientId: 'https://home-assistant.io/android',
-                    expires: Date.now() + 1800000,
-                    refresh_token: ''
-                }});
-                window.localStorage.setItem('hassTokens', t);
-            }}""")
-
-            page.goto(target, wait_until="networkidle", timeout=20_000)
-            if wait_ms > 0:
-                page.wait_for_timeout(wait_ms)
-
-            png = page.screenshot(type="png", full_page=False)
-            browser.close()
-
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.get(engine_url, params=params)
+    except httpx.HTTPError as e:
         return {
-            "url": target,
-            "format": "png",
-            "width": width,
-            "height": height,
-            "image_base64": base64.b64encode(png).decode("ascii"),
-            "size_bytes": len(png),
+            "error": "engine_unreachable",
+            "detail": str(e),
+            "engine_url": engine_url,
+            "hint": "Verify Puppet add-on is started and access_token is set.",
         }
-    except PWTimeout as e:
-        return {"error": "timeout", "detail": str(e), "url": target}
-    except Exception as e:
-        return {"error": type(e).__name__, "detail": str(e), "url": target}
+
+    if resp.status_code >= 400:
+        return {
+            "error": f"engine_http_{resp.status_code}",
+            "detail": resp.text[:300],
+            "engine_url": engine_url,
+            "hint": "Check that the dashboard path exists and the Puppet access_token is valid.",
+        }
+
+    if not resp.content:
+        return {"error": "empty_response", "engine_url": engine_url}
+
+    return {
+        "url_path": path,
+        "engine": engine,
+        "format": "png",
+        "width": width,
+        "height": effective_height,
+        "image_base64": base64.b64encode(resp.content).decode("ascii"),
+        "size_bytes": len(resp.content),
+    }
