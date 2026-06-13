@@ -131,9 +131,15 @@ def set_automation_config(automation_id: str, config: dict) -> dict:
 
 
 @mcp.tool()
-def delete_automation(automation_id: str) -> dict:
-    """Delete an automation by id. Auto-reloads automations afterwards."""
+def delete_automation(automation_id: str, confirm: bool = False) -> dict:
+    """Delete an automation by id. Auto-reloads automations afterwards. Set confirm=True to proceed."""
     aid = _strip_prefix(automation_id, "automation")
+    if not confirm:
+        return {
+            "error": "confirmation_required",
+            "message": f"This will permanently delete automation '{aid}'. Call again with confirm=True.",
+            "action": f"delete_automation(automation_id='{automation_id}', confirm=True)",
+        }
     result = ha.delete_automation_config(aid)
     if result.get("status") == "not_found":
         return {"error": "not found", "automation_id": aid}
@@ -164,9 +170,15 @@ def set_script_config(script_id: str, config: dict) -> dict:
 
 
 @mcp.tool()
-def delete_script(script_id: str) -> dict:
-    """Delete a script by id. Auto-reloads scripts afterwards."""
+def delete_script(script_id: str, confirm: bool = False) -> dict:
+    """Delete a script by id. Auto-reloads scripts afterwards. Set confirm=True to proceed."""
     sid = _strip_prefix(script_id, "script")
+    if not confirm:
+        return {
+            "error": "confirmation_required",
+            "message": f"This will permanently delete script '{sid}'. Call again with confirm=True.",
+            "action": f"delete_script(script_id='{script_id}', confirm=True)",
+        }
     result = ha.delete_script_config(sid)
     if result.get("status") == "not_found":
         return {"error": "not found", "script_id": sid}
@@ -240,3 +252,178 @@ def get_last_script_trace(script_id: str, failed_only: bool = False) -> dict:
     if not run_id:
         return {"error": "no_traces" if not failed_only else "no_failed_traces", "script_id": sid}
     return ha._ws_call("trace/get", domain="script", item_id=sid, run_id=run_id)
+
+
+# ---------------------------------------------------------------------------
+# Best-practice linter
+# ---------------------------------------------------------------------------
+
+def _bp_state_trigger_no_for(auto: dict) -> bool:
+    triggers = auto.get("trigger") or auto.get("triggers") or []
+    if isinstance(triggers, dict):
+        triggers = [triggers]
+    return any(
+        isinstance(t, dict) and (t.get("platform") or t.get("trigger")) == "state" and "for" not in t
+        for t in triggers
+    )
+
+
+def _bp_triggers_without_ids(auto: dict) -> bool:
+    triggers = auto.get("trigger") or auto.get("triggers") or []
+    if isinstance(triggers, dict):
+        triggers = [triggers]
+    return len(triggers) >= 2 and any("id" not in t for t in triggers if isinstance(t, dict))
+
+
+def _bp_deprecated_service_key(auto: dict) -> bool:
+    def _scan(steps) -> bool:
+        if not isinstance(steps, list):
+            return False
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            if "service" in step:
+                return True
+            for nested in ("sequence", "then", "else", "default", "parallel"):
+                if _scan(step.get(nested)):
+                    return True
+        return False
+    actions = auto.get("action") or auto.get("actions") or []
+    if isinstance(actions, dict):
+        actions = [actions]
+    return _scan(actions)
+
+
+_CHECKS: list[tuple[str, str, object]] = [
+    (
+        "state_trigger_no_for",
+        "warning",
+        _bp_state_trigger_no_for,
+    ),
+    (
+        "missing_mode",
+        "info",
+        lambda a: "mode" not in a,
+    ),
+    (
+        "triggers_without_ids",
+        "info",
+        _bp_triggers_without_ids,
+    ),
+    (
+        "no_alias",
+        "warning",
+        lambda a: not a.get("alias") and not a.get("id"),
+    ),
+    (
+        "deprecated_service_key",
+        "info",
+        _bp_deprecated_service_key,
+    ),
+    (
+        "no_description",
+        "info",
+        lambda a: not a.get("description"),
+    ),
+    (
+        "restart_mode_caution",
+        "info",
+        lambda a: a.get("mode") == "restart",
+    ),
+]
+
+_MESSAGES: dict[str, str] = {
+    "state_trigger_no_for": (
+        "State trigger without 'for:' duration fires on every transient state change. "
+        "Add 'for: \"00:00:02\"' or longer to debounce."
+    ),
+    "missing_mode": (
+        "No 'mode:' declared — defaults to 'single', which silently drops concurrent triggers. "
+        "Add 'mode: single|restart|queued|parallel' to make intent explicit."
+    ),
+    "triggers_without_ids": (
+        "Multiple triggers found but some lack 'id:' fields. "
+        "Trigger IDs are required for trigger.id conditions and choose/if branches."
+    ),
+    "no_alias": (
+        "Automation has no 'alias:' and no 'id:'. "
+        "A descriptive alias makes logs and the UI much easier to read."
+    ),
+    "deprecated_service_key": (
+        "'service:' key used in action step. HA 2024.8+ prefers 'action:' instead. "
+        "Both work, but new automations should use 'action:'."
+    ),
+    "no_description": (
+        "No 'description:' field. A short description helps with maintenance."
+    ),
+    "restart_mode_caution": (
+        "Mode 'restart' cancels the running automation on each new trigger. "
+        "This can cause unexpected side-effects if actions have already started."
+    ),
+}
+
+
+@mcp.tool()
+def validate_best_practices(yaml_content: str) -> dict:
+    """Validate automation YAML against HA best practices (static linter).
+
+    Accepts a single automation dict or a list of automation dicts.
+
+    Checks:
+    - state trigger without 'for:' (bounce risk)
+    - missing 'mode:' declaration
+    - multiple triggers without 'id:' fields
+    - missing 'alias:' / 'id:'
+    - deprecated 'service:' key in actions (use 'action:' in HA 2024.8+)
+    - 'restart' mode caution
+    - missing 'description:'
+
+    Returns: {valid_yaml, automations_checked, issues_total, warnings, infos, issues[], summary}
+    Each issue: {automation, rule, severity, message}
+    severity: 'warning' = should fix, 'info' = good to know.
+    """
+    import yaml as _yaml
+
+    try:
+        parsed = _yaml.safe_load(yaml_content)
+    except _yaml.YAMLError as e:
+        return {"valid_yaml": False, "error": f"YAML parse error: {e}", "issues": []}
+
+    if parsed is None:
+        return {"valid_yaml": True, "automations_checked": 0, "issues": [], "summary": "✅ Nothing to check"}
+
+    if isinstance(parsed, dict):
+        automations = [parsed]
+    elif isinstance(parsed, list):
+        automations = parsed
+    else:
+        return {"valid_yaml": True, "error": "Expected a dict or list of automation dicts", "issues": []}
+
+    all_issues: list[dict] = []
+    for idx, auto in enumerate(automations):
+        if not isinstance(auto, dict):
+            continue
+        label = auto.get("alias") or auto.get("id") or f"automation[{idx}]"
+        for rule, severity, check_fn in _CHECKS:
+            try:
+                if check_fn(auto):
+                    all_issues.append({"automation": label, "rule": rule, "severity": severity, "message": _MESSAGES[rule]})
+            except Exception:
+                pass
+
+    warnings = sum(1 for i in all_issues if i["severity"] == "warning")
+    infos = sum(1 for i in all_issues if i["severity"] == "info")
+
+    return {
+        "valid_yaml": True,
+        "automations_checked": len(automations),
+        "issues_total": len(all_issues),
+        "warnings": warnings,
+        "infos": infos,
+        "issues": all_issues,
+        "summary": (
+            f"✅ No issues found"
+            if not all_issues
+            else f"⚠️ {warnings} warning(s), ℹ️ {infos} info(s) across {len(automations)} automation(s)"
+        ),
+    }

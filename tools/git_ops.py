@@ -95,16 +95,42 @@ def git_diff(sha: str | None = None) -> str:
 
 
 @mcp.tool()
-def git_rollback_file(relative_path: str, sha: str = "HEAD") -> dict:
-    """Restore a single file to its state at a specific commit (default: last commit = undo changes)."""
+def git_rollback_file(relative_path: str, sha: str = "HEAD", confirm: bool = False) -> dict:
+    """Restore a single file to its state at a specific commit (default: HEAD = undo uncommitted changes).
+
+    Set confirm=True to proceed; without it returns a safety prompt.
+    """
+    if not confirm:
+        return {
+            "error": "confirmation_required",
+            "message": f"This will restore '{relative_path}' to {sha}. Uncommitted changes to this file will be lost.",
+            "action": f"git_rollback_file(relative_path='{relative_path}', sha='{sha}', confirm=True)",
+        }
     repo = _repo()
     repo.git.checkout(sha, "--", relative_path)
     return {"status": "restored", "file": relative_path, "to": sha}
 
 
 @mcp.tool()
-def git_rollback_to_commit(sha: str) -> dict:
-    """Hard-reset config to a previous commit. WARNING: all changes after that commit are lost."""
+def git_rollback_to_commit(sha: str, confirm: bool = False) -> dict:
+    """Hard-reset config to a previous commit. WARNING: ALL changes after that commit are permanently lost.
+
+    Set confirm=True to proceed; without it returns a safety prompt.
+    """
+    if not confirm:
+        try:
+            repo = _repo()
+            current = next(iter(repo.iter_commits(max_count=1))).hexsha[:8]
+        except Exception:
+            current = "unknown"
+        return {
+            "error": "confirmation_required",
+            "message": (
+                f"This will hard-reset ALL config files to commit {sha}. "
+                f"Current HEAD is {current}. Every change after {sha} will be PERMANENTLY LOST."
+            ),
+            "action": f"git_rollback_to_commit(sha='{sha}', confirm=True)",
+        }
     repo = _repo()
     repo.git.reset("--hard", sha)
     return {"status": "reset", "to": sha}

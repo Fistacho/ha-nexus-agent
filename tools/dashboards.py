@@ -71,3 +71,86 @@ def add_view_to_dashboard(url_path: str, view_config: dict) -> dict:
     views.append(view_config)
     config["views"] = views
     return save_dashboard_config(config, url_path)
+
+
+@mcp.tool()
+def screenshot(
+    url_path: str | None = None,
+    width: int = 1280,
+    height: int = 800,
+    wait_ms: int = 3000,
+) -> dict:
+    """Capture a PNG screenshot of a Lovelace dashboard view.
+
+    Returns base64-encoded PNG and metadata.
+
+    Requires playwright (optional dependency):
+      pip install playwright && playwright install chromium
+    Restart Nexus after installing.
+
+    Args:
+        url_path: Dashboard view path, e.g. 'caly-dom'. Omit for the default view.
+        width: Viewport width in pixels (default 1280).
+        height: Viewport height in pixels (default 800).
+        wait_ms: Extra milliseconds to wait after page load for cards to render (default 3000).
+    """
+    try:
+        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+    except ImportError:
+        return {
+            "error": "playwright_not_installed",
+            "install": "pip install playwright && playwright install chromium",
+            "note": "Restart Nexus after installing.",
+        }
+
+    import base64
+
+    ha_url = ha._HA_URL.rstrip("/")
+    token = ha._TOKEN
+    target = f"{ha_url}/lovelace/{url_path}" if url_path else f"{ha_url}/lovelace"
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
+            )
+            ctx = browser.new_context(viewport={"width": width, "height": height})
+            page = ctx.new_page()
+
+            # Load base URL first so we can set localStorage on the correct origin
+            page.goto(ha_url, wait_until="domcontentloaded", timeout=15_000)
+
+            # Inject long-lived access token the same way the HA companion app does
+            page.evaluate(f"""() => {{
+                const t = JSON.stringify({{
+                    access_token: '{token}',
+                    token_type: 'Bearer',
+                    expires_in: 1800,
+                    hassUrl: '{ha_url}',
+                    clientId: 'https://home-assistant.io/android',
+                    expires: Date.now() + 1800000,
+                    refresh_token: ''
+                }});
+                window.localStorage.setItem('hassTokens', t);
+            }}""")
+
+            page.goto(target, wait_until="networkidle", timeout=20_000)
+            if wait_ms > 0:
+                page.wait_for_timeout(wait_ms)
+
+            png = page.screenshot(type="png", full_page=False)
+            browser.close()
+
+        return {
+            "url": target,
+            "format": "png",
+            "width": width,
+            "height": height,
+            "image_base64": base64.b64encode(png).decode("ascii"),
+            "size_bytes": len(png),
+        }
+    except PWTimeout as e:
+        return {"error": "timeout", "detail": str(e), "url": target}
+    except Exception as e:
+        return {"error": type(e).__name__, "detail": str(e), "url": target}

@@ -14,14 +14,32 @@ def check_config() -> dict:
 
 
 @mcp.tool()
-def restart_ha() -> dict:
-    """Restart Home Assistant. WARNING: causes ~30s downtime."""
+def restart_ha(confirm: bool = False) -> dict:
+    """Restart Home Assistant. WARNING: causes ~30s downtime.
+
+    Set confirm=True to proceed; without it returns a safety prompt.
+    """
+    if not confirm:
+        return {
+            "error": "confirmation_required",
+            "message": "This will restart Home Assistant (~30s downtime). Call again with confirm=True to proceed.",
+            "action": "restart_ha(confirm=True)",
+        }
     return ha.call_service("homeassistant", "restart")
 
 
 @mcp.tool()
-def stop_ha() -> dict:
-    """Stop Home Assistant. WARNING: requires manual restart."""
+def stop_ha(confirm: bool = False) -> dict:
+    """Stop Home Assistant. WARNING: requires manual restart.
+
+    Set confirm=True to proceed; without it returns a safety prompt.
+    """
+    if not confirm:
+        return {
+            "error": "confirmation_required",
+            "message": "This will STOP Home Assistant and require a manual restart. Call again with confirm=True to proceed.",
+            "action": "stop_ha(confirm=True)",
+        }
     return ha.call_service("homeassistant", "stop")
 
 

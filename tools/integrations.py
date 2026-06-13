@@ -66,8 +66,14 @@ def get_config_flow(flow_id: str) -> dict:
 
 
 @mcp.tool()
-def remove_integration(entry_id: str) -> dict:
-    """Remove (uninstall) an integration config entry."""
+def remove_integration(entry_id: str, confirm: bool = False) -> dict:
+    """Remove (uninstall) an integration config entry. Set confirm=True to proceed."""
+    if not confirm:
+        return {
+            "error": "confirmation_required",
+            "message": f"This will permanently remove integration '{entry_id}'. Call again with confirm=True.",
+            "action": f"remove_integration(entry_id='{entry_id}', confirm=True)",
+        }
     return ha._ws_call("config_entries/remove", entry_id=entry_id)
 
 

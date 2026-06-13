@@ -4,20 +4,63 @@ import ha_client as ha
 mcp = FastMCP("entities")
 
 
+_DEFAULT_FIELDS = frozenset({"entity_id", "state", "friendly_name"})
+_REGISTRY_FIELDS = frozenset({"area_id", "device_id", "labels"})
+
+
 @mcp.tool()
-def list_entities(domain: str | None = None) -> list[dict]:
-    """List all entities, optionally filtered by domain (light, switch, sensor…)."""
+def list_entities(
+    domain: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+    fields: list[str] | None = None,
+) -> list[dict]:
+    """List entities, optionally filtered by domain, with pagination and field selection.
+
+    Args:
+        domain: Filter by domain prefix (e.g. 'light', 'sensor').
+        limit: Max number of results. Omit for all.
+        offset: Skip first N results (pagination).
+        fields: Keys to return per entity. Defaults to [entity_id, state, friendly_name].
+                Also accepts: attributes, area_id, device_id, labels.
+    """
     states = ha.get_states()
     if domain:
         states = [s for s in states if s["entity_id"].startswith(f"{domain}.")]
-    return [
-        {
-            "entity_id": s["entity_id"],
-            "state": s["state"],
-            "friendly_name": s.get("attributes", {}).get("friendly_name"),
-        }
-        for s in states
-    ]
+
+    requested = set(fields) if fields else set(_DEFAULT_FIELDS)
+    need_registry = bool(requested & _REGISTRY_FIELDS)
+    registry: dict[str, dict] = {}
+    if need_registry:
+        for e in ha.get_entity_registry():
+            registry[e.get("entity_id", "")] = e
+
+    def _build(s: dict) -> dict:
+        row: dict = {}
+        if "entity_id" in requested:
+            row["entity_id"] = s["entity_id"]
+        if "state" in requested:
+            row["state"] = s["state"]
+        if "friendly_name" in requested:
+            row["friendly_name"] = s.get("attributes", {}).get("friendly_name")
+        if "attributes" in requested:
+            row["attributes"] = s.get("attributes", {})
+        if need_registry:
+            reg = registry.get(s["entity_id"], {})
+            if "area_id" in requested:
+                row["area_id"] = reg.get("area_id")
+            if "device_id" in requested:
+                row["device_id"] = reg.get("device_id")
+            if "labels" in requested:
+                row["labels"] = reg.get("labels", [])
+        return row
+
+    result = [_build(s) for s in states]
+    if offset:
+        result = result[offset:]
+    if limit is not None:
+        result = result[:limit]
+    return result
 
 
 @mcp.tool()

@@ -31,6 +31,7 @@ def _filter_states(
     area_id: str | None,
     entity_ids: list[dict] | None,
     summary: bool,
+    state_fields: list[str] | None = None,
 ) -> list[dict]:
     if domains:
         domset = set(domains)
@@ -57,6 +58,27 @@ def _filter_states(
                 entity_area[eid] = aid
         states = [s for s in states if entity_area.get(s["entity_id"]) == area_id]
 
+    if state_fields:
+        keep = set(state_fields)
+
+        def _project(s: dict) -> dict:
+            row: dict = {}
+            if "entity_id" in keep:
+                row["entity_id"] = s["entity_id"]
+            if "state" in keep:
+                row["state"] = s["state"]
+            if "friendly_name" in keep:
+                row["friendly_name"] = s.get("attributes", {}).get("friendly_name")
+            if "attributes" in keep:
+                row["attributes"] = s.get("attributes", {})
+            if "last_changed" in keep:
+                row["last_changed"] = s.get("last_changed")
+            if "last_updated" in keep:
+                row["last_updated"] = s.get("last_updated")
+            return row
+
+        return [_project(s) for s in states]
+
     if summary:
         return [
             {
@@ -75,6 +97,9 @@ def get_snapshot(
     domains: list[str] | None = None,
     area_id: str | None = None,
     summary: bool = True,
+    limit: int | None = None,
+    offset: int = 0,
+    state_fields: list[str] | None = None,
 ) -> dict:
     """One-shot aggregated view of HA state, filtered.
 
@@ -84,8 +109,12 @@ def get_snapshot(
 
     `domains` restricts the states list (e.g. ["light", "climate"]).
     `area_id` keeps only states whose entity/device belongs to that area.
-    `summary` strips state objects down to entity_id/state/friendly_name
-    (set False for full attributes — usually much larger).
+    `summary` strips state objects to entity_id/state/friendly_name
+    (set False for full attributes).
+
+    `limit` / `offset` paginate the states list (useful for large setups).
+    `state_fields` overrides summary — return only these keys per state.
+    Valid: entity_id, state, friendly_name, attributes, last_changed, last_updated.
 
     Returns: {"section_name": [...], ..., "_meta": {...}}.
     """
@@ -102,7 +131,14 @@ def get_snapshot(
 
     if "states" in sections:
         states = ha.get_states()
-        out["states"] = _filter_states(states, domains, area_id, entity_registry, summary)
+        filtered = _filter_states(states, domains, area_id, entity_registry, summary, state_fields)
+        total = len(filtered)
+        if offset:
+            filtered = filtered[offset:]
+        if limit is not None:
+            filtered = filtered[:limit]
+        out["states"] = filtered
+        out["_states_total"] = total
 
     if "areas" in sections:
         out["areas"] = ha.get_area_registry()
@@ -133,7 +169,14 @@ def get_snapshot(
 
     out["_meta"] = {
         "include": sections,
-        "filters": {"domains": domains, "area_id": area_id, "summary": summary},
+        "filters": {
+            "domains": domains,
+            "area_id": area_id,
+            "summary": summary,
+            "limit": limit,
+            "offset": offset,
+            "state_fields": state_fields,
+        },
         "counts": {k: len(v) for k, v in out.items() if isinstance(v, list)},
     }
     return out
