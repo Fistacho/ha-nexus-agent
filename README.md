@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **292 tools across 27 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), dashboards + screenshot + resource management, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, themes, **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
+**Give AI assistants full control over your smart home.** **302 tools across 28 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), dashboards + screenshot + resource management, energy, voice pipelines, blueprints, calendar, HACS, Supervisor, **ESPHome** (list devices, compile, OTA, logs), themes, **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
 
 Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
@@ -193,7 +193,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Tools
 
-292 tools across 27 categories:
+302 tools across 28 categories:
 
 | Category | Tools | Highlights |
 | --- | --- | --- |
@@ -223,13 +223,14 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | `themes_*` | 8 | list/create/update/delete Lovelace themes |
 | `card_builder_*` | 38 | Cards CRUD, style presets, CSS properties, media, renderer config, **embedded block schema** (`list_block_types`, `get_block_schema`, `list_button_toggle_features`), **embedded styles knowledge** (`list_style_categories`, `list_style_targets`, `list_style_snippets`, `build_styles`), **10 turnkey templates** (`make_template_card`), **`build_from_recipe`** high-level builder, **`validate_config`**, **`check_schema_sync`**, upload SVG/media/image-from-url, design patterns, design principles |
 | `snapshot_*` | 2 | **Aggregated one-call context** — states + areas + devices + entities + integrations, domain/area/field filters, pagination |
+| `esphome_*` | 10 | list devices + online status, read config YAML, get entities, **compile / validate / OTA upload** via Dashboard API, add-on logs, ping |
 | `discover_*` | 4 | **BM25 tool search** — query the tool catalogue, list namespaces, fetch full docstrings |
 
 ---
 
 ## Features
 
-- **292 MCP tools** across 27 categories — the most complete HA MCP server available
+- **302 MCP tools** across 28 categories — the most complete HA MCP server available
 - **Built-in tool search** — `discover_tool_search("query")` finds the right tool without flooding the AI's context
 - **Confirmation gates** — all destructive operations require `confirm=True`; without it they return the exact command to re-run
 - **Automation linter** — `automations_validate_best_practices` catches 7 common YAML mistakes before they cause issues
@@ -334,6 +335,7 @@ action:
 | `NEXUS_API_KEY` | No | auto-generated | Pin to a specific API key |
 | `NEXUS_PORT` | No | `7123` | HTTP server port |
 | `NEXUS_SCREENSHOT_ENGINE_URL` | No | auto-discovered | Explicit URL to Puppet engine (Docker/standalone) |
+| `ESPHOME_DASHBOARD_URL` | No | `http://homeassistant.local:6052` | ESPHome dashboard URL for compile/OTA tools |
 
 ---
 

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "ha-nexus-agent"
 version = "0.3.0"
-description = "Nexus — MCP server for Home Assistant; 202 tools across 21 domains for AI control of your smart home"
+description = "Nexus — MCP server for Home Assistant; 302 tools across 28 domains for AI control of your smart home"
 authors = [{ name = "Łukasz Żochowski" }]
 license = { text = "MIT" }
 readme = "README.md"

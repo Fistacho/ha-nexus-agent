@@ -30,6 +30,7 @@ from tools.voice import mcp as voice_mcp
 from tools.themes import mcp as themes_mcp
 from tools.card_builder import mcp as card_builder_mcp
 from tools.snapshot import mcp as snapshot_mcp
+from tools.esphome import mcp as esphome_mcp
 from tools import discover as discover_mod
 from tools.discover import mcp as discover_mcp
 
@@ -61,6 +62,7 @@ mcp.mount(voice_mcp, namespace="voice")
 mcp.mount(themes_mcp, namespace="themes")
 mcp.mount(card_builder_mcp, namespace="card_builder")
 mcp.mount(snapshot_mcp, namespace="snapshot")
+mcp.mount(esphome_mcp, namespace="esphome")
 mcp.mount(discover_mcp, namespace="discover")
 
 # Bind the root catalogue to discover.* so tool_search can introspect every
