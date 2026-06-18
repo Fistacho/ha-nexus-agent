@@ -99,22 +99,39 @@ def list_devices() -> dict:
     except Exception:
         pass
 
+    # ESPHome config entry IDs — reliable way to identify ESPHome devices
+    # regardless of how identifiers are serialised in this HA version
+    esphome_entry_ids: set[str] = set()
+    try:
+        for entry in ha._ws_call("config_entries/get", domain="esphome"):
+            esphome_entry_ids.add(entry.get("entry_id", ""))
+    except Exception:
+        pass
+
+    _ESPHOME_MANUFACTURERS = {"espressif", "esphome"}
+
     # ESPHome devices from HA device registry
     ha_devices: list[dict] = []
     try:
         for d in ha.get_device_registry():
+            # Strategy 1: any config entry belongs to ESPHome integration
+            by_entry = bool(esphome_entry_ids and
+                set(d.get("config_entries", [])) & esphome_entry_ids)
+            # Strategy 2: identifiers domain == "esphome"
             ids = d.get("identifiers", [])
-            is_esphome = any(
+            by_id = any(
                 isinstance(i, (list, tuple)) and len(i) >= 1 and str(i[0]) == "esphome"
                 for i in ids
             )
-            if not is_esphome:
+            # Strategy 3: manufacturer is Espressif / esphome (fallback)
+            by_mfr = str(d.get("manufacturer") or "").lower() in _ESPHOME_MANUFACTURERS
+
+            if not (by_entry or by_id or by_mfr):
                 continue
-            slug = next(
-                (str(i[1]).replace(".local", "").replace("-", "_").lower()
-                 for i in ids if isinstance(i, (list, tuple)) and len(i) >= 2 and str(i[0]) == "esphome"),
-                None,
-            )
+
+            # Derive slug for connection-status lookup
+            name = (d.get("name_by_user") or d.get("name") or "").lower()
+            slug = name.replace(" ", "_").replace("-", "_")
             ha_devices.append({
                 "name": d.get("name_by_user") or d.get("name"),
                 "manufacturer": d.get("manufacturer"),
@@ -122,7 +139,7 @@ def list_devices() -> dict:
                 "sw_version": d.get("sw_version"),
                 "hw_version": d.get("hw_version"),
                 "area_id": d.get("area_id"),
-                "connected": connected.get(slug) if slug else None,
+                "connected": connected.get(slug),
                 "ha_device_id": d.get("id"),
             })
     except Exception as e:

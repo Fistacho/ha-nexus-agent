@@ -1,5 +1,5 @@
 name: Nexus Agent
-version: "0.18.0"
+version: "0.18.1"
 slug: nexus_agent
 description: "MCP server for Home Assistant — 318 tools across 29 domains. New in 0.18: ESPHome (compile/OTA/logs), scene CRUD, long-term statistics (energy/sensor aggregates by day/week/month)"
 url: https://github.com/Fistacho/ha-nexus-agent

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.1
+
+- **Fix `esphome_list_devices`**: `ha_devices` was always empty — detection now uses three strategies: config entry domain lookup, identifiers field, and manufacturer name (`Espressif` / `esphome`) as fallback. All AC units and Level sensor now appear correctly.
+
 ## 0.18.0
 
 - **Scene CRUD** (`automations_*`): `get_scene_config`, `set_scene_config` (create/overwrite + auto-reload), `delete_scene` (confirm gate)
