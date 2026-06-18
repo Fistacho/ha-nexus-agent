@@ -147,6 +147,40 @@ def get_config(name: str) -> dict:
 
 
 @mcp.tool()
+def write_config(name: str, content: str) -> dict:
+    """Write ESPHome device YAML config to /config/esphome/. Validates YAML syntax before saving.
+
+    Supports HA custom tags (!secret, !include) — they pass through validation unchanged.
+    Creates the file if it doesn't exist.
+    """
+    import yaml
+
+    class _ESPHomeLoader(yaml.SafeLoader):
+        pass
+
+    def _tag_passthrough(loader, tag_suffix, node):
+        if isinstance(node, yaml.ScalarNode):
+            return loader.construct_scalar(node)
+        return None
+
+    for _tag in ("!secret", "!include", "!lambda", "!extend", "!remove"):
+        _ESPHomeLoader.add_constructor(
+            _tag, lambda l, n, t=_tag: _tag_passthrough(l, t, n)
+        )
+
+    try:
+        yaml.load(content, Loader=_ESPHomeLoader)
+    except yaml.YAMLError as e:
+        return {"success": False, "error": f"YAML validation failed: {e}"}
+
+    filename = name if name.endswith(".yaml") else f"{name}.yaml"
+    path = _ESPHOME_DIR / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return {"success": True, "name": filename, "path": str(path), "bytes": len(content.encode())}
+
+
+@mcp.tool()
 def get_device_entities(device_name: str) -> list[dict]:
     """Get all HA entities belonging to an ESPHome device (match by name/slug)."""
     try:

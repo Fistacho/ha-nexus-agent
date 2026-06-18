@@ -108,6 +108,68 @@ def reload_scenes() -> list[dict]:
     return ha.call_service("scene", "reload")
 
 
+# --- Scene config CRUD ---
+
+@mcp.tool()
+def get_scene_config(scene_id: str) -> dict | None:
+    """Get a scene's config dict (entities + their target states). Accepts bare id or 'scene.<id>'. Returns None if not found."""
+    sid = _strip_prefix(scene_id, "scene")
+    with ha._client() as c:
+        r = c.get(f"/api/config/scene/config/{sid}")
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool()
+def set_scene_config(scene_id: str, name: str, entities: dict) -> dict:
+    """Create or overwrite a scene config. Auto-reloads scenes.
+
+    entities format — keys are entity_ids, values are the target state dict:
+      {
+        "light.living_room": {"state": "on", "brightness": 76},
+        "cover.roleta":      {"state": "closed", "position": 0},
+        "switch.fan":        {"state": "off"}
+      }
+
+    brightness range is 0-255 (30% ≈ 76, 50% ≈ 128, 100% = 255).
+    """
+    if not isinstance(entities, dict) or not entities:
+        return {"error": "entities must be a non-empty dict of {entity_id: state_dict}"}
+    sid = _strip_prefix(scene_id, "scene")
+    config = {"id": sid, "name": name, "entities": entities}
+    with ha._client() as c:
+        r = c.post(f"/api/config/scene/config/{sid}", json=config)
+        r.raise_for_status()
+        try:
+            result = r.json()
+        except Exception:
+            result = {"status": "ok"}
+    ha.call_service("scene", "reload")
+    return {"scene_id": sid, "name": name, "entity_count": len(entities), **result}
+
+
+@mcp.tool()
+def delete_scene(scene_id: str, confirm: bool = False) -> dict:
+    """Delete a scene config. Requires confirm=True. Auto-reloads scenes."""
+    if not confirm:
+        sid = _strip_prefix(scene_id, "scene")
+        return {"error": "set confirm=True to delete", "command": f'delete_scene("{scene_id}", confirm=True)'}
+    sid = _strip_prefix(scene_id, "scene")
+    with ha._client() as c:
+        r = c.delete(f"/api/config/scene/config/{sid}")
+        if r.status_code == 404:
+            return {"status": "not_found", "scene_id": sid}
+        r.raise_for_status()
+        try:
+            result = r.json()
+        except Exception:
+            result = {"status": "ok"}
+    ha.call_service("scene", "reload")
+    return {"deleted": sid, **result}
+
+
 # --- Automation config CRUD ---
 
 @mcp.tool()
