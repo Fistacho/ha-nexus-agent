@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.0
+
+- **LVGL display tools** (`esphome_*`): 7 new tools for AI-driven LVGL UI management on ESPHome devices — `lvgl_list_devices` (find LVGL-capable devices), `lvgl_get_pages` (list pages + widget counts), `lvgl_get_page_widgets` (inspect widgets with types/IDs/positions), `lvgl_get_styles` (theme + style definitions), `lvgl_validate` (client-side validation: unique IDs, page references — no Dashboard needed), `lvgl_add_widget` (add widget to page + save), `lvgl_delete_widget` (delete widget by id + save)
+- `!lambda` / `!secret` / `!include` tags are preserved on YAML round-trip (NUL-encoded during parse, restored on dump)
+- 325 tools across 29 domains
+
 ## 0.18.1
 
 - **Fix `esphome_list_devices`**: `ha_devices` was always empty — detection now uses three strategies: config entry domain lookup, identifiers field, and manufacturer name (`Espressif` / `esphome`) as fallback. All AC units and Level sensor now appear correctly.

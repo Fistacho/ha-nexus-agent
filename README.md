@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **318 tools across 29 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), **scene CRUD**, dashboards + screenshot + resource management, energy, **long-term statistics** (sum/mean/min/max by day/week/month), voice pipelines, blueprints, calendar, HACS, Supervisor, **ESPHome** (list devices, compile, OTA, logs), themes, **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
+**Give AI assistants full control over your smart home.** **325 tools across 29 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), **scene CRUD**, dashboards + screenshot + resource management, energy, **long-term statistics** (sum/mean/min/max by day/week/month), voice pipelines, blueprints, calendar, HACS, Supervisor, **ESPHome** (list devices, compile, OTA, logs, **LVGL display UI management**), themes, **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
 
 Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
@@ -193,7 +193,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Tools
 
-318 tools across 29 categories:
+325 tools across 29 categories:
 
 | Category | Tools | Highlights |
 | --- | --- | --- |
@@ -223,7 +223,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | `themes_*` | 8 | list/create/update/delete Lovelace themes |
 | `card_builder_*` | 38 | Cards CRUD, style presets, CSS properties, media, renderer config, **embedded block schema** (`list_block_types`, `get_block_schema`, `list_button_toggle_features`), **embedded styles knowledge** (`list_style_categories`, `list_style_targets`, `list_style_snippets`, `build_styles`), **10 turnkey templates** (`make_template_card`), **`build_from_recipe`** high-level builder, **`validate_config`**, **`check_schema_sync`**, upload SVG/media/image-from-url, design patterns, design principles |
 | `snapshot_*` | 2 | **Aggregated one-call context** — states + areas + devices + entities + integrations, domain/area/field filters, pagination |
-| `esphome_*` | 11 | list devices + online status, **read / write** config YAML, get entities, **compile / validate / OTA upload** via Dashboard API, add-on logs, ping |
+| `esphome_*` | 18 | list devices + online status, **read / write** config YAML, get entities, **compile / validate / OTA upload** via Dashboard API, add-on logs, ping; **LVGL**: list LVGL devices, get pages/widgets/styles, **client-side validate** (unique IDs, page refs), add/delete widgets |
 | `statistics_*` | 4 | **long-term recorder statistics** — list IDs, get sum/mean/min/max by hour/day/week/month, **`get_energy_statistics`** (auto-discovers kWh/m³ sensors) |
 | `discover_*` | 4 | **BM25 tool search** — query the tool catalogue, list namespaces, fetch full docstrings |
 
@@ -231,7 +231,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Features
 
-- **318 MCP tools** across 29 categories — the most complete HA MCP server available
+- **325 MCP tools** across 29 categories — the most complete HA MCP server available
 - **Built-in tool search** — `discover_tool_search("query")` finds the right tool without flooding the AI's context
 - **Confirmation gates** — all destructive operations require `confirm=True`; without it they return the exact command to re-run
 - **Automation linter** — `automations_validate_best_practices` catches 7 common YAML mistakes before they cause issues
