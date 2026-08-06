@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.19.1
+
+Three diagnostic tools called Home Assistant endpoints that do not exist, so
+every one of them failed on a live instance. Verified against `home-assistant/core`.
+
+- **Fix `system_get_repairs`**: sent the WebSocket command `repairs/list`, which HA
+  rejects with `unknown_command`. The registered command is **`repairs/list_issues`**
+  (`components/repairs/websocket_api.py`).
+- **Fix `system_get_system_health`**: called `GET /api/system_health`, which 404s —
+  `system_health` registers no REST view, only the **`system_health/info`** WebSocket
+  subscription. That command answers with an empty `result`, then streams an `initial`
+  snapshot, one `update` per slow value and a final `finish`, so a plain request/response
+  call could never read it. Added `ha_client._ws_collect_events` (generic subscription
+  collector, returns partial data on timeout rather than failing) plus
+  `merge_system_health_events` to fold the stream into one dict.
+- **Fix `history_get_error_log`**: called `GET /api/error_log`, which HA registers
+  **only when it logs to a file** (`if DATA_LOGGING in hass.data`). Supervisor installs
+  default to `duplicate_log_file: false`, so the endpoint is absent and the tool 404'd.
+  It now falls back to the `system_log/list` WebSocket command and renders those records
+  as log-file-like text via `ha_client.format_system_log_entries`.
+- **Tests**: first `pytest` suite in the add-on (`tests/`), covering all three fixes plus
+  the Supervisor add-on options path. `pytest` added as an optional `dev` dependency.
+
 ## 0.19.0
 
 - **LVGL display tools** (`esphome_*`): 7 new tools for AI-driven LVGL UI management on ESPHome devices — `lvgl_list_devices` (find LVGL-capable devices), `lvgl_get_pages` (list pages + widget counts), `lvgl_get_page_widgets` (inspect widgets with types/IDs/positions), `lvgl_get_styles` (theme + style definitions), `lvgl_validate` (client-side validation: unique IDs, page references — no Dashboard needed), `lvgl_add_widget` (add widget to page + save), `lvgl_delete_widget` (delete widget by id + save)

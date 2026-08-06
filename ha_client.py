@@ -2,6 +2,8 @@ import os
 import asyncio
 import json
 import httpx
+from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any
 from dotenv import load_dotenv
 
@@ -64,6 +66,132 @@ def _ws_call(msg_type: str, **kwargs) -> Any:
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor() as pool:
         return pool.submit(asyncio.run, _ws_call_async(msg_type, **kwargs)).result()
+
+
+# --- Subscription-style WS commands ---
+#
+# Some HA commands answer with an empty `result` that only confirms the
+# subscription, then stream the payload as `event` messages. `_ws_call` would
+# return None for those, so they need to be collected until a terminal event.
+
+async def _ws_collect_events_async(
+    msg_type: str,
+    is_last: Callable[[dict], bool],
+    timeout: float = 15.0,
+    **kwargs,
+) -> list[dict]:
+    import websockets
+    events: list[dict] = []
+    async with websockets.connect(_ws_url(), max_size=None) as ws:
+        greeting = json.loads(await ws.recv())
+        assert greeting["type"] == "auth_required"
+        await ws.send(json.dumps({"type": "auth", "access_token": _HA_TOKEN}))
+        auth_ok = json.loads(await ws.recv())
+        if auth_ok["type"] != "auth_ok":
+            raise RuntimeError(f"WS auth failed: {auth_ok}")
+        await ws.send(json.dumps({"id": 1, "type": msg_type, **kwargs}))
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                # Partial data beats nothing — a slow platform must not sink the call.
+                return events
+            try:
+                data = json.loads(await asyncio.wait_for(ws.recv(), timeout=remaining))
+            except asyncio.TimeoutError:
+                return events
+            if data.get("id") != 1:
+                continue
+            if data.get("type") == "result" and not data.get("success", True):
+                raise RuntimeError(f"WS error: {data.get('error')}")
+            if data.get("type") != "event":
+                continue
+            event = data.get("event") or {}
+            events.append(event)
+            if is_last(event):
+                return events
+
+
+def _ws_collect_events(
+    msg_type: str,
+    is_last: Callable[[dict], bool],
+    timeout: float = 15.0,
+    **kwargs,
+) -> list[dict]:
+    coro_factory = lambda: _ws_collect_events_async(msg_type, is_last, timeout, **kwargs)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro_factory())
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        return pool.submit(asyncio.run, coro_factory()).result()
+
+
+# --- System health ---
+
+def merge_system_health_events(events: list[dict]) -> dict:
+    """Fold a `system_health/info` event stream into one {domain: {...}} dict.
+
+    The stream is an `initial` snapshot in which slow values are placeholders
+    (`{"type": "pending"}`), followed by one `update` per resolved value and a
+    final `finish`. Pure function — the network lives in `collect_system_health`.
+    """
+    data: dict = {}
+    for event in events:
+        kind = event.get("type")
+        if kind == "initial":
+            data = event.get("data") or {}
+        elif kind == "update":
+            domain = data.setdefault(event.get("domain"), {})
+            info = domain.setdefault("info", {})
+            key = event.get("key")
+            if event.get("success"):
+                info[key] = event.get("data")
+            else:
+                info[key] = {"error": event.get("error")}
+    return data
+
+
+def collect_system_health(timeout: float = 15.0) -> dict:
+    """Run the `system_health/info` subscription and return the merged result."""
+    events = _ws_collect_events(
+        "system_health/info",
+        is_last=lambda e: e.get("type") == "finish",
+        timeout=timeout,
+    )
+    return merge_system_health_events(events)
+
+
+# --- Error log ---
+
+def format_system_log_entries(entries: list[dict]) -> str:
+    """Render `system_log/list` records as log-file-like text.
+
+    Used when `/api/error_log` is unavailable — HA only registers that view when
+    it logs to a file, which Supervisor installs disable by default.
+    """
+    lines: list[str] = []
+    for entry in entries:
+        ts = entry.get("timestamp")
+        try:
+            stamp = datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat(timespec="seconds")
+        except (TypeError, ValueError):
+            stamp = "?"
+        messages = entry.get("message") or []
+        if isinstance(messages, str):
+            messages = [messages]
+        source = entry.get("source") or []
+        where = f"{source[0]}:{source[1]}" if len(source) >= 2 else ""
+        count = entry.get("count") or 1
+        repeats = f" (x{count})" if count > 1 else ""
+        head = f"{stamp} {entry.get('level', '?')} [{entry.get('name', '?')}]"
+        if where:
+            head += f" {where}"
+        lines.append(f"{head}{repeats} {' | '.join(str(m) for m in messages)}")
+        if entry.get("exception"):
+            lines.append(str(entry["exception"]).rstrip())
+    return "\n".join(lines)
 
 
 # --- States ---

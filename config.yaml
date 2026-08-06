@@ -1,7 +1,7 @@
 name: Nexus Agent
-version: "0.19.0"
+version: "0.19.1"
 slug: nexus_agent
-description: "MCP server for Home Assistant — 325 tools across 29 domains. New in 0.19: LVGL display tools (AI-driven UI on ESPHome devices), !lambda/!secret/!include preserved on YAML round-trip"
+description: "MCP server for Home Assistant — 325 tools across 29 domains. New in 0.19.1: the three diagnostic tools (system_get_repairs, system_get_system_health, history_get_error_log) now hit endpoints that actually exist and work on a live instance"
 url: https://github.com/Fistacho/ha-nexus-agent
 arch:
   - aarch64

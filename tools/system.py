@@ -98,10 +98,9 @@ def get_system_health() -> dict:
     Returns health checks for core HA subsystems (recorder, websocket, cloud,
     network, etc.) plus basic system info (version, dev mode, virtual env).
     """
-    with ha._client() as c:
-        r = c.get("/api/system_health")
-        r.raise_for_status()
-        return r.json()
+    # There is no /api/system_health REST view — system_health only registers
+    # the `system_health/info` WebSocket subscription.
+    return ha.collect_system_health()
 
 
 @mcp.tool()
@@ -111,7 +110,7 @@ def get_repairs() -> list[dict]:
     Returns current repair issues that require attention (deprecated config,
     broken integrations, required migrations, etc.).
     """
-    raw = ha._ws_call("repairs/list")
+    raw = ha._ws_call("repairs/list_issues")
     issues = raw if isinstance(raw, list) else raw.get("issues", [])
     return [
         {
