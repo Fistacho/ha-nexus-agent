@@ -1,7 +1,7 @@
 name: Nexus Agent
-version: "0.20.0"
+version: "0.21.0"
 slug: nexus_agent
-description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.20.0: section-aware Lovelace editing (dashboards_get_view_sections, dashboards_add_card_to_section, dashboards_update_card_in_section, dashboards_remove_card_from_section, dashboards_add_section_to_view) — cards can finally be placed on `type: sections` views, plus fixes for ~20 broken tools and a security fix restricting the Setup UI / key regeneration to ingress or an authenticated caller (rotate your API key after upgrading — see CHANGELOG)"
+description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.21.0: every tool now declares MCP annotations (read-only / destructive / idempotent / open-world) and fully documented parameters"
 url: https://github.com/Fistacho/ha-nexus-agent
 arch:
   - aarch64

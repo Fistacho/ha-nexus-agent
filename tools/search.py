@@ -1,9 +1,18 @@
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
+from typing import Annotated
+
 from fastmcp import FastMCP
+from pydantic import Field
+
 import ha_client as ha
+from tools._contract import read
 
 mcp = FastMCP("search")
+
+TOOL_CONTRACT = {"version": 1, "long_ok": {}, "heuristic_exceptions": {}}
 
 
 def _score(query: str, target: str | None) -> float:
@@ -37,11 +46,23 @@ def _safe_ws(msg_type: str, **kwargs) -> list[dict]:
         return []
 
 
-@mcp.tool()
-def search_entities(query: str, limit: int = 20) -> list[dict]:
-    """Fuzzy-rank entities by entity_id and friendly_name. Returns up to `limit` rows best first; every
-    row with a score above 0 is kept, so low scores are noise.
-    """
+@mcp.tool(annotations=read("Search entities"))
+def search_entities(
+    query: Annotated[str, Field(description="Search text to fuzzy-match against entity_id, friendly_name and device_id.")],
+    limit: Annotated[int, Field(description="Maximum number of ranked results to return; defaults to 20.")] = 20,
+) -> list[dict]:
+    """Fuzzy-rank entities by entity_id, friendly_name and device_id.
+
+    Scores every entity against `query` with substring match (score 1.0)
+    or a sequence-similarity ratio, keeps only scores above 0, and returns
+    the top `limit` matches sorted descending.
+
+    Use when: you don't know the exact entity_id and want a ranked guess
+    from a name fragment.
+    Returns: list of dicts (entity_id, friendly_name, state, device_id,
+    score) up to `limit` entries.
+    Limits: entities that score exactly 0 are dropped entirely, not just
+    deprioritised."""
     states = ha.get_states() or []
     results: list[dict] = []
     for s in states:
@@ -62,9 +83,25 @@ def search_entities(query: str, limit: int = 20) -> list[dict]:
     return results[:limit]
 
 
-@mcp.tool()
-def search_devices(query: str, limit: int = 20) -> list[dict]:
-    """Fuzzy search devices by name, name_by_user, manufacturer, and model."""
+@mcp.tool(annotations=read("Search devices"))
+def search_devices(
+    query: Annotated[str, Field(description="Search text to fuzzy-match against a device's name, name_by_user, manufacturer and model.")],
+    limit: Annotated[int, Field(description="Maximum number of ranked results to return; defaults to 20.")] = 20,
+) -> list[dict]:
+    """Fuzzy-rank devices by name, name_by_user, manufacturer and model.
+
+    Scores every device from the device registry against `query`, keeps
+    only scores above 0, and returns the top `limit` matches sorted
+    descending.
+
+    Use when: you don't know a device's exact id and want a ranked guess
+    from a name fragment.
+    Not for: an exact, unranked device list — use `devices_list_devices`,
+    `areas_list_devices` or `devices_list_devices_in_area`.
+    Returns: list of dicts (id, name, name_by_user, manufacturer, model,
+    area_id, score) up to `limit` entries.
+    Limits: devices that score exactly 0 are dropped entirely; a WS
+    failure yields an empty list rather than an error."""
     devices = _safe_ws("config/device_registry/list")
     results: list[dict] = []
     for d in devices:
@@ -87,9 +124,23 @@ def search_devices(query: str, limit: int = 20) -> list[dict]:
     return results[:limit]
 
 
-@mcp.tool()
-def search_areas(query: str, limit: int = 20) -> list[dict]:
-    """Fuzzy search areas by name."""
+@mcp.tool(annotations=read("Search areas"))
+def search_areas(
+    query: Annotated[str, Field(description="Search text to fuzzy-match against area names.")],
+    limit: Annotated[int, Field(description="Maximum number of ranked results to return; defaults to 20.")] = 20,
+) -> list[dict]:
+    """Fuzzy-rank areas by name.
+
+    Scores every area from the area registry against `query`, keeps only
+    scores above 0, and returns the top `limit` matches sorted descending.
+
+    Use when: you don't know an area's exact id and want a ranked guess
+    from a name fragment.
+    Not for: an exact, unranked area list — use `areas_list_areas`.
+    Returns: list of dicts (area_id, name, floor_id, icon, score) up to
+    `limit` entries.
+    Limits: areas that score exactly 0 are dropped entirely; a WS failure
+    yields an empty list rather than an error."""
     areas = _safe_ws("config/area_registry/list")
     results: list[dict] = []
     for a in areas:
@@ -107,9 +158,25 @@ def search_areas(query: str, limit: int = 20) -> list[dict]:
     return results[:limit]
 
 
-@mcp.tool()
-def deep_search(query: str, limit: int = 20) -> list[dict]:
-    """Search across entities, devices, areas, and automations; tagged with `kind`."""
+@mcp.tool(annotations=read("Search entities, devices and areas"))
+def deep_search(
+    query: Annotated[str, Field(description="Search text to fuzzy-match across entities, devices and areas.")],
+    limit: Annotated[int, Field(description="Maximum number of ranked results to return; defaults to 20.")] = 20,
+) -> list[dict]:
+    """Fuzzy-search entities, devices and areas together in one ranked list.
+
+    Scores states (tagging automation.* entities as kind 'automation',
+    others as 'entity'), devices and areas against `query` the same way as
+    the single-kind search tools, merges all matches, and returns the top
+    `limit` sorted descending.
+
+    Use when: you don't know whether what you're looking for is an entity,
+    device or area.
+    Not for: results scoped to one kind — use `search_search_entities`,
+    `search_search_devices` or `search_search_areas`.
+    Returns: list of dicts tagged with `kind` ('entity'/'automation'/
+    'device'/'area'), each with kind-specific fields plus `score`, up to
+    `limit` entries."""
     combined: list[dict] = []
 
     states = ha.get_states() or []
@@ -158,9 +225,24 @@ def deep_search(query: str, limit: int = 20) -> list[dict]:
     return combined[:limit]
 
 
-@mcp.tool()
-def find_related(entity_id: str) -> dict:
-    """Return device, area, floor, sibling entities (same device), and area-mates for an entity."""
+@mcp.tool(annotations=read("Find related entities and registry context"))
+def find_related(
+    entity_id: Annotated[str, Field(description="Entity ID to look up, e.g. 'light.kitchen'; must exist in the entity registry.")],
+) -> dict:
+    """Return an entity's device, area, floor and sibling entities.
+
+    Looks up `entity_id` in the entity registry, resolves its device
+    (falling back to the device's area if the entity itself has none) and
+    area/floor, then collects other entities on the same device and other
+    entities/devices in the same area.
+
+    Use when: exploring what else is connected to one entity before
+    changing or troubleshooting it.
+    Returns: dict with entity_id, device_id, area_id, floor_id, device,
+    area, same_device_entities, same_area_entities.
+    Errors: `{"entity_id": ..., "error": "entity not found in registry"}`
+    if the entity isn't in the registry, or `{"entity_id": ..., "error":
+    "<message>"}` on a WS failure."""
     try:
         entity_registry = ha._ws_call("config/entity_registry/list") or []
     except Exception as e:
@@ -220,12 +302,22 @@ def _parse_iso(ts: str | None):
         return None
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("Find possibly unused entities"))
 def find_unused_entities() -> list[dict]:
-    """Heuristic list of entities that are unavailable/unknown for more than 7 days, plus registry
-    entities without a device_id (normally helpers, automations and template entities — not proof of
-    disuse). Can be long; review before deleting anything.
-    """
+    """Heuristically list entities that look unused or orphaned.
+
+    Flags entities whose state has been 'unavailable' or 'unknown' for
+    more than 7 days (or has no `last_changed` at all), plus any
+    entity-registry entries with no `device_id` — which normally means
+    helpers, automations and template entities, not proof of disuse.
+
+    Use when: hunting for cleanup candidates, always reviewing each result
+    before deleting anything.
+    Returns: list of dicts (entity_id, state, last_changed, device_id,
+    reasons) — `reasons` explains which heuristic(s) matched.
+    Limits: purely heuristic; the 7-day unavailability threshold and a
+    missing device_id are weak signals, not confirmation that an entity is
+    truly unused."""
     states = ha.get_states() or []
     try:
         entity_registry = ha._ws_call("config/entity_registry/list") or []
@@ -266,9 +358,20 @@ def find_unused_entities() -> list[dict]:
     return results
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("Find orphan devices"))
 def find_orphan_devices() -> list[dict]:
-    """List devices that have no entities associated (orphans in device registry)."""
+    """List devices with no entities associated with them in the entity registry.
+
+    Compares every device's id against the set of `device_id` values
+    referenced by entity-registry entries and returns devices that no
+    entity points to.
+
+    Use when: hunting for device-registry entries that may be safe to
+    remove, always reviewing each result first.
+    Returns: list of dicts (id, name, name_by_user, manufacturer, model,
+    area_id, config_entries) for devices with no referencing entity.
+    Limits: a WS failure on either registry silently yields an empty
+    underlying list rather than an error, which can under-report orphans."""
     devices = _safe_ws("config/device_registry/list")
     try:
         entity_registry = ha._ws_call("config/entity_registry/list") or []

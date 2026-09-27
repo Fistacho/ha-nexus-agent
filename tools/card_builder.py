@@ -28,13 +28,17 @@ import re
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from pydantic import Field
 
 import ha_client as ha
+from tools._contract import destructive, read, write
 
 mcp = FastMCP("card_builder")
+
+TOOL_CONTRACT = {"version": 1, "long_ok": {}, "heuristic_exceptions": {}}
 
 
 # =========================================================================
@@ -951,35 +955,85 @@ BLOCK_TYPES: dict[str, dict[str, Any]] = {
 # Cards CRUD
 # =========================================================================
 
-@mcp.tool()
+@mcp.tool(annotations=read("List Card Builder cards"))
 def list_cards() -> list[dict]:
-    """List all Card Builder cards (id, name, description, config, version, tags, …)."""
+    """List every Card Builder card stored on this Home Assistant instance.
+
+    Calls the `card_builder/cards/list` WebSocket command and returns the
+    raw collection: each entry carries `id`, `name`, `description`,
+    `config` (the DocumentData block tree), `version`, `tags` and
+    `categories`.
+
+    Use when: discovering existing cards before reading one in full with
+    `card_builder_get_card` or editing one with `card_builder_update_card`.
+    Returns: list of card dicts, in storage order, unfiltered.
+    """
     return ha._ws_call("card_builder/cards/list")
 
 
-@mcp.tool()
-def get_card(card_id: str) -> dict:
-    """Get one card by id. Returns the card dict (including `config`) or an error."""
+@mcp.tool(annotations=read("Get Card Builder card by ID"))
+def get_card(
+    card_id: Annotated[
+        str,
+        Field(description="Card id or card_id from card_builder_list_cards, e.g. a UUID string."),
+    ],
+) -> dict:
+    """Get one Card Builder card by id, including its full config.
+
+    Fetches the whole card collection via `card_builder/cards/list` and
+    matches on `id` or the legacy `card_id` field client-side — there is no
+    dedicated get-by-id WebSocket command.
+
+    Use when: inspecting or copying one card's `config` before calling
+    `card_builder_update_card` or `card_builder_renderer_card_config`.
+    Returns: the matching card dict (same shape as one entry from
+    `card_builder_list_cards`).
+    Errors: `{"error": "not_found", "card_id": ...}` when no card matches.
+    """
     for card in ha._ws_call("card_builder/cards/list") or []:
         if card.get("id") == card_id or card.get("card_id") == card_id:
             return card
     return {"error": "not_found", "card_id": card_id}
 
 
-@mcp.tool()
+@mcp.tool(annotations=write("Create Card Builder card", idempotent=False))
 def create_card(
-    name: str,
-    config: dict,
-    description: str = "",
-    tags: list[str] | None = None,
-    categories: list[str] | None = None,
-    author: str = "",
+    name: Annotated[str, Field(description="Display name for the new card, e.g. 'AC Salon'.")],
+    config: Annotated[
+        dict,
+        Field(
+            description=(
+                "Full DocumentData v3 block tree (version/rootId/slots/blocks). "
+                "Build it with `card_builder_build_from_recipe` rather than "
+                "hand-writing it."
+            )
+        ),
+    ],
+    description: Annotated[str, Field(description="Free-text card description. Empty string if omitted.")] = "",
+    tags: Annotated[
+        list[str] | None,
+        Field(description="Freeform tags for filtering in the Card Builder UI. Omit for no tags."),
+    ] = None,
+    categories: Annotated[
+        list[str] | None,
+        Field(description="Category labels (e.g. domain names) for the Card Builder UI. Omit for none."),
+    ] = None,
+    author: Annotated[str, Field(description="Author name to store on the card. Empty string if omitted.")] = "",
 ) -> dict:
-    """Create a new Card Builder card.
+    """Create a new Card Builder card from a DocumentData config.
 
-    `config` is the full block tree (DocumentData v3). Build it with
-    `build_from_recipe` instead of hand-crafting JSON. Validate with
-    `validate_config` before saving. See `recipe_guide` for the full how-to.
+    Sends `config` and the metadata fields to `card_builder/cards/create`,
+    which assigns a new id server-side (confirmed in upstream `storage.py`:
+    every create path generates a fresh `uuid4`) — repeating this call with
+    identical arguments creates a second, distinct card rather than
+    updating the first.
+
+    Use when: saving a card built with `card_builder_build_from_recipe` or
+    `card_builder_make_template_card`'s underlying recipe.
+    Not for: changing an existing card — use `card_builder_update_card`.
+    Returns: the created card dict, including its new `id`.
+    Limits: run `card_builder_validate_config` on `config` first; this tool
+    does not validate the block tree before sending it.
     """
     payload: dict[str, Any] = {
         "name": name,
@@ -995,17 +1049,37 @@ def create_card(
     return ha._ws_call("card_builder/cards/create", **payload)
 
 
-@mcp.tool()
+@mcp.tool(annotations=destructive("Update Card Builder card", idempotent=False))
 def update_card(
-    card_id: str,
-    name: str | None = None,
-    description: str | None = None,
-    config: dict | None = None,
-    tags: list[str] | None = None,
-    categories: list[str] | None = None,
-    skip_version_bump: bool = False,
+    card_id: Annotated[str, Field(description="Id of the card to update, from card_builder_list_cards.")],
+    name: Annotated[str | None, Field(description="New display name. Omit to leave the current name unchanged.")] = None,
+    description: Annotated[str | None, Field(description="New description text. Omit to leave it unchanged.")] = None,
+    config: Annotated[
+        dict | None,
+        Field(description="New DocumentData v3 block tree, replacing the whole config. Omit to keep the current config."),
+    ] = None,
+    tags: Annotated[list[str] | None, Field(description="Replacement tag list. Omit to leave tags unchanged.")] = None,
+    categories: Annotated[
+        list[str] | None,
+        Field(description="Replacement category list. Omit to leave categories unchanged."),
+    ] = None,
+    skip_version_bump: Annotated[
+        bool,
+        Field(description="If true, do not bump the card's stored version counter for this change."),
+    ] = False,
 ) -> dict:
-    """Update an existing card. Only the provided fields are changed."""
+    """Update fields of an existing Card Builder card.
+
+    Sends only the parameters that are not omitted to
+    `card_builder/cards/update`; every omitted parameter's prior value in
+    storage is left untouched, but any parameter that is supplied
+    (including `config`) fully replaces the previous value for that field
+    with no way to recover it afterwards.
+
+    Use when: renaming a card, editing its `config`, or retagging it.
+    Not for: creating a new card — use `card_builder_create_card`.
+    Returns: the updated card dict as returned by the WebSocket command.
+    """
     payload: dict[str, Any] = {"card_id": card_id}
     if name is not None:
         payload["name"] = name
@@ -1022,9 +1096,24 @@ def update_card(
     return ha._ws_call("card_builder/cards/update", **payload)
 
 
-@mcp.tool()
-def delete_card(card_id: str) -> dict:
-    """Delete a card by id. HA's WS handler returns an empty payload on success."""
+@mcp.tool(annotations=destructive("Delete Card Builder card", idempotent=True))
+def delete_card(
+    card_id: Annotated[str, Field(description="Id of the card to delete, from card_builder_list_cards.")],
+) -> dict:
+    """Permanently delete one Card Builder card by id.
+
+    Calls `card_builder/cards/delete`; Home Assistant's WebSocket handler
+    returns an empty payload on success. Any dashboard still referencing
+    this `card_id` via `custom:card-builder-renderer-card` will show a
+    broken/empty card afterwards — this tool does not check for or update
+    such references.
+
+    Use when: removing a card that is no longer used on any dashboard.
+    Returns: `{"status": "deleted", "card_id": ..., "result": ...}` on
+    success.
+    Errors: on failure, returns `{"status": "error", "card_id": ...,
+    "error": <exception text>}` instead of raising.
+    """
     try:
         result = ha._ws_call("card_builder/cards/delete", card_id=card_id)
     except Exception as err:
@@ -1036,35 +1125,80 @@ def delete_card(card_id: str) -> dict:
 # Style presets
 # =========================================================================
 
-@mcp.tool()
+@mcp.tool(annotations=read("List Card Builder style presets"))
 def list_style_presets() -> list[dict]:
-    """List all reusable style presets."""
+    """List every reusable Card Builder style preset.
+
+    Calls `card_builder/style_presets/list` and returns the raw
+    collection: each entry has `id`, `name`, `description`, `data` (the
+    CSS-style configuration blob) and, if present, `extends_preset_id`.
+
+    Use when: picking an existing preset to extend, or checking presets
+    before creating a new one with `card_builder_create_style_preset`.
+    Returns: list of style-preset dicts, unfiltered.
+    """
     return ha._ws_call("card_builder/style_presets/list")
 
 
-@mcp.tool()
+@mcp.tool(annotations=write("Create Card Builder style preset", idempotent=False))
 def create_style_preset(
-    name: str,
-    data: dict,
-    description: str = "",
-    extends_preset_id: str | None = None,
+    name: Annotated[str, Field(description="Display name for the new preset, e.g. 'Dark Hero'.")],
+    data: Annotated[
+        dict,
+        Field(description="CSS-style configuration blob, shaped like a style category map (see card_builder_list_style_categories)."),
+    ],
+    description: Annotated[str, Field(description="Free-text preset description. Empty string if omitted.")] = "",
+    extends_preset_id: Annotated[
+        str | None,
+        Field(description="Id of another style preset this one extends/inherits from. Omit for no inheritance."),
+    ] = None,
 ) -> dict:
-    """Create a style preset. `data` is the CSS-style configuration blob."""
+    """Create a new reusable Card Builder style preset.
+
+    Sends `data` and the metadata fields to `card_builder/style_presets/create`,
+    which assigns a new id server-side (confirmed in upstream `storage.py`:
+    every create path generates a fresh `uuid4`) — repeating this call
+    creates a second, distinct preset rather than updating the first.
+
+    Use when: packaging a reusable set of style properties (e.g. a card
+    theme) to apply across multiple cards.
+    Not for: changing an existing preset — use
+    `card_builder_update_style_preset`.
+    Returns: the created style-preset dict, including its new `id`.
+    """
     payload: dict[str, Any] = {"name": name, "data": data, "description": description}
     if extends_preset_id:
         payload["extends_preset_id"] = extends_preset_id
     return ha._ws_call("card_builder/style_presets/create", **payload)
 
 
-@mcp.tool()
+@mcp.tool(annotations=destructive("Update Card Builder style preset", idempotent=False))
 def update_style_preset(
-    style_preset_id: str,
-    name: str | None = None,
-    description: str | None = None,
-    data: dict | None = None,
-    extends_preset_id: str | None = None,
+    style_preset_id: Annotated[str, Field(description="Id of the preset to update, from card_builder_list_style_presets.")],
+    name: Annotated[str | None, Field(description="New display name. Omit to leave the current name unchanged.")] = None,
+    description: Annotated[str | None, Field(description="New description text. Omit to leave it unchanged.")] = None,
+    data: Annotated[
+        dict | None,
+        Field(description="Replacement CSS-style configuration blob. Omit to leave the current data unchanged."),
+    ] = None,
+    extends_preset_id: Annotated[
+        str | None,
+        Field(description="Replacement parent preset id to inherit from. Omit to leave inheritance unchanged."),
+    ] = None,
 ) -> dict:
-    """Update a style preset."""
+    """Update fields of an existing Card Builder style preset.
+
+    Sends only the parameters that are not omitted to
+    `card_builder/style_presets/update`; any parameter that is supplied
+    (including `data`) fully replaces the previous value for that field,
+    with no way to recover the prior value afterwards.
+
+    Use when: adjusting an existing preset's style data or metadata.
+    Not for: creating a new preset — use
+    `card_builder_create_style_preset`.
+    Returns: the updated style-preset dict as returned by the WebSocket
+    command.
+    """
     payload: dict[str, Any] = {"style_preset_id": style_preset_id}
     if name is not None:
         payload["name"] = name
@@ -1077,9 +1211,23 @@ def update_style_preset(
     return ha._ws_call("card_builder/style_presets/update", **payload)
 
 
-@mcp.tool()
-def delete_style_preset(style_preset_id: str) -> dict:
-    """Delete a style preset."""
+@mcp.tool(annotations=destructive("Delete Card Builder style preset", idempotent=True))
+def delete_style_preset(
+    style_preset_id: Annotated[str, Field(description="Id of the preset to delete, from card_builder_list_style_presets.")],
+) -> dict:
+    """Permanently delete one Card Builder style preset by id.
+
+    Calls `card_builder/style_presets/delete`. Any card whose style data
+    references this preset via `extends_preset_id` keeps that dangling id —
+    this tool does not check for or update such references.
+
+    Use when: removing a preset that is no longer extended by any card or
+    other preset.
+    Returns: `{"status": "deleted", "style_preset_id": ..., "result": ...}`
+    on success.
+    Errors: on failure, returns `{"status": "error", "style_preset_id":
+    ..., "error": <exception text>}` instead of raising.
+    """
     try:
         result = ha._ws_call("card_builder/style_presets/delete", style_preset_id=style_preset_id)
     except Exception as err:
@@ -1091,20 +1239,44 @@ def delete_style_preset(style_preset_id: str) -> dict:
 # CSS custom properties
 # =========================================================================
 
-@mcp.tool()
+@mcp.tool(annotations=read("List Card Builder CSS custom properties"))
 def list_css_custom_properties() -> list[dict]:
-    """List CSS custom properties (`@property` registrations)."""
+    """List every registered CSS custom property (`@property` registration).
+
+    Calls `card_builder/css_custom_properties/list` and returns the raw
+    collection: each entry has `id`, `name`, `syntax` (e.g. `<color>`),
+    `initial_value` and `inherits`.
+
+    Use when: checking which custom properties already exist before
+    registering a new one with
+    `card_builder_create_css_custom_property`.
+    Returns: list of CSS-custom-property dicts, unfiltered.
+    """
     return ha._ws_call("card_builder/css_custom_properties/list")
 
 
-@mcp.tool()
+@mcp.tool(annotations=write("Create CSS custom property", idempotent=False))
 def create_css_custom_property(
-    name: str,
-    syntax: str,
-    initial_value: str,
-    inherits: bool = False,
+    name: Annotated[str, Field(description="CSS custom property name, e.g. '--card-accent-color' (with the leading '--').")],
+    syntax: Annotated[str, Field(description="CSS @property syntax descriptor, e.g. '<color>' or '<length>'.")],
+    initial_value: Annotated[str, Field(description="Initial value matching `syntax`, e.g. '#2196f3' for a <color>.")],
+    inherits: Annotated[
+        bool,
+        Field(description="Whether the property inherits from parent elements, per the CSS @property spec. Defaults to false."),
+    ] = False,
 ) -> dict:
-    """Register a CSS custom property. `syntax` is e.g. `"<color>"` or `"<length>"`."""
+    """Register a new CSS custom property (`@property`) for use in card styles.
+
+    Sends the four fields to `card_builder/css_custom_properties/create`,
+    which assigns a new id server-side (confirmed in upstream
+    `storage.py`: every create path generates a fresh `uuid4`) — repeating
+    this call registers a second, distinct property rather than updating
+    the first.
+
+    Use when: defining an animatable/typed CSS variable (e.g. a themeable
+    accent color) that card styles can reference by name.
+    Returns: the created CSS-custom-property dict, including its new `id`.
+    """
     return ha._ws_call(
         "card_builder/css_custom_properties/create",
         name=name,
@@ -1114,9 +1286,24 @@ def create_css_custom_property(
     )
 
 
-@mcp.tool()
-def delete_css_custom_property(custom_property_id: str) -> dict:
-    """Delete a CSS custom property."""
+@mcp.tool(annotations=destructive("Delete CSS custom property", idempotent=True))
+def delete_css_custom_property(
+    custom_property_id: Annotated[str, Field(description="Id of the property to delete, from card_builder_list_css_custom_properties.")],
+) -> dict:
+    """Permanently delete one registered CSS custom property by id.
+
+    Calls `card_builder/css_custom_properties/delete`. Any card style
+    still referencing this property's `name` keeps that reference — the
+    browser falls back to an unset CSS variable — this tool does not check
+    for or update such references.
+
+    Use when: removing a custom property that is no longer used by any
+    card style.
+    Returns: `{"status": "deleted", "custom_property_id": ..., "result":
+    ...}` on success.
+    Errors: on failure, returns `{"status": "error", "custom_property_id":
+    ..., "error": <exception text>}` instead of raising.
+    """
     try:
         result = ha._ws_call(
             "card_builder/css_custom_properties/delete",
@@ -1131,32 +1318,63 @@ def delete_css_custom_property(custom_property_id: str) -> dict:
 # Media manager (config/www/card_builder/)
 # =========================================================================
 
-@mcp.tool()
-def list_media(path: str = "") -> dict:
-    """List files/folders in the Card Builder media directory (relative to `www/card_builder/`)."""
+@mcp.tool(annotations=read("List Card Builder media files"))
+def list_media(
+    path: Annotated[
+        str,
+        Field(description="Sub-folder relative to www/card_builder/ to list. Empty string lists the root."),
+    ] = "",
+) -> dict:
+    """List files and folders in the Card Builder media directory.
+
+    Calls `card_builder/media/list`, scoped to `www/card_builder/<path>`.
+
+    Use when: checking what's already uploaded before calling
+    `card_builder_upload_media` or `card_builder_delete_media`.
+    Returns: dict with the media-browser entries HA's WS handler returns
+    for that path (files and sub-folders).
+    """
     return ha._ws_call("card_builder/media/list", path=path)
 
 
-@mcp.tool()
-def upload_media(filename: str, content_base64: str, path: str = "") -> dict:
-    """Upload a file to the Card Builder media directory.
+@mcp.tool(annotations=destructive("Upload media to Card Builder library", idempotent=True))
+def upload_media(
+    filename: Annotated[
+        str,
+        Field(description="Bare target filename with an allowed image/SVG extension, e.g. 'bg-1.png'. No path separators."),
+    ],
+    content_base64: Annotated[str, Field(description="Raw file bytes, base64-encoded.")],
+    path: Annotated[
+        str,
+        Field(description="Sub-folder under www/card_builder/ to upload into. Empty string uploads to the root."),
+    ] = "",
+) -> dict:
+    """Upload base64-encoded bytes as a file in the Card Builder media directory.
 
-    `content_base64` must be the raw bytes already base64-encoded. `filename`
-    must be a bare name (no `/`, `\\`, or `..` — use `path=` for sub-folders)
-    whose last extension is one of `_ALLOWED_MEDIA_EXTENSIONS`
-    (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.avif`), matched
-    case-insensitively; anything else (`.html`, `.htm`, `.xhtml`, `.js`,
-    `.mjs`, `.json`, a double extension like `a.png.html`, ...) is refused
-    with `{"error": "extension_not_allowed"}` before the payload is touched.
-    Decoded content over `_MAX_MEDIA_UPLOAD_BYTES` (15 MiB) is refused with
-    `{"error": "file_too_large"}`.
+    Decodes `content_base64` and writes it under `www/card_builder/<path>/
+    <filename>` via `card_builder/media/upload`. `filename` must be a bare
+    name (no `/`, `\\`, or `..`) with an allowed extension — `.png`,
+    `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.avif` (case-insensitive). A
+    `.svg` filename gets its decoded content sanitized (script/handler/
+    unsafe-URL stripping, element-count cap) — see `sanitize_svg`. The
+    file becomes **public** under `/local/` with **no authentication**,
+    same origin as the HA frontend. Upstream's `_write_media_file` writes
+    with no existence check, so uploading onto an existing `filename`/
+    `path` **silently overwrites it**, with no backup.
 
-    Returns the `cb-media://` reference plus a `/local/...` URL usable in any
-    card. The uploaded file becomes **public** under Home Assistant's
-    `/local/` path with **no authentication**, in the same origin as the HA
-    frontend. If `filename` ends in `.svg`, the decoded content is sanitized
-    (script/event-handler/unsafe-URL stripping, plus an element-count cap)
-    before upload — see `sanitize_svg`.
+    Use when: the file bytes are already in memory (e.g. generated inline).
+    Not for: a file already on the HA config filesystem — use
+    `card_builder_upload_media_from_path`; a remote image — use
+    `card_builder_upload_image_from_url`; raw SVG you'd rather not
+    base64-encode — use `card_builder_upload_svg`.
+    Returns: `{reference, path, url}` — `reference` is the
+    `cb-media://local/card_builder/<filename>` URI for a block-image's
+    `mediaReference` prop.
+    Errors: `{"error": "extension_not_allowed" | "invalid_base64" |
+    "file_too_large" | "invalid_svg" | ...}` (plus `sanitize_svg` errors)
+    when validation or sanitization rejects the input.
+    Limits: decoded content over `_MAX_MEDIA_UPLOAD_BYTES` (15 MiB) is
+    refused.
     """
     filename_err = _validate_upload_filename_and_path(filename, path)
     if filename_err:
@@ -1189,17 +1407,45 @@ def upload_media(filename: str, content_base64: str, path: str = "") -> dict:
     )
 
 
-@mcp.tool()
-def upload_media_from_path(local_path: str, path: str = "", filename: str | None = None) -> dict:
-    """Upload a local image file to the Card Builder media directory.
+@mcp.tool(annotations=destructive("Upload local file to Card Builder media", idempotent=True))
+def upload_media_from_path(
+    local_path: Annotated[
+        str,
+        Field(description="Absolute or relative path to the source file; must resolve under <config>/www or <config>/media."),
+    ],
+    path: Annotated[
+        str,
+        Field(description="Sub-folder under www/card_builder/ to upload into. Empty string uploads to the root."),
+    ] = "",
+    filename: Annotated[
+        str | None,
+        Field(description="Target filename to store as. Omit to reuse local_path's own filename."),
+    ] = None,
+) -> dict:
+    """Read a local file under the HA config directory and upload it as Card Builder media.
 
     `local_path` must resolve (after following symlinks) under `<config>/www`
     or `<config>/media`, and have an image/SVG extension — see
     `_ALLOWED_MEDIA_EXTENSIONS`. Anything else (e.g. `secrets.yaml`,
     `/data/options.json`, a sibling directory) is refused before the file is
-    read. The uploaded file becomes public under Home Assistant's `/local/`
-    path with no authentication. `.svg` files are sanitized (script/event-
-    handler/unsafe-URL stripping) before upload — see `sanitize_svg`.
+    read. `.svg` files are sanitized (script/event-handler/unsafe-URL
+    stripping) before upload — see `sanitize_svg`. The uploaded file
+    becomes **public** under Home Assistant's `/local/` path with **no
+    authentication**. Upstream's `_write_media_file` writes with no
+    existence check, so uploading onto a `path`/`filename` that already
+    holds a file **silently overwrites it**, with no backup.
+
+    Use when: re-publishing a file that already exists on the config
+    filesystem (e.g. under `www/`) into the Card Builder media library.
+    Not for: bytes already in memory — use `card_builder_upload_media`; a
+    remote URL — use `card_builder_upload_image_from_url`.
+    Returns: `{reference, path, url}` on success, same shape as
+    `card_builder_upload_media`.
+    Errors: `{"error": "invalid_path" | "path_not_allowed" |
+    "extension_not_allowed" | "file_not_found" | "invalid_svg" | ...}`
+    (plus the `sanitize_svg` errors) when the source path is outside the
+    allowed roots, has a disallowed extension, doesn't exist, or fails
+    sanitization.
     """
     src, err = _resolve_media_source(local_path)
     if err:
@@ -1228,34 +1474,42 @@ def upload_media_from_path(local_path: str, path: str = "", filename: str | None
     )
 
 
-@mcp.tool()
-def upload_svg(svg_content: str, filename: str, path: str = "") -> dict:
-    """Upload SVG markup to www/card_builder/.
+@mcp.tool(annotations=destructive("Upload SVG markup to Card Builder media", idempotent=True))
+def upload_svg(
+    svg_content: Annotated[str, Field(description="Raw SVG markup, starting with '<svg' or '<?xml ...'.")],
+    filename: Annotated[str, Field(description="Bare target filename, e.g. 'gradient-bg'. '.svg' is appended if missing.")],
+    path: Annotated[
+        str,
+        Field(description="Sub-folder under www/card_builder/ to upload into. Empty string uploads to the root."),
+    ] = "",
+) -> dict:
+    """Sanitize SVG markup and upload it to the Card Builder media directory.
 
-    `svg_content` must start with `<svg` or `<?xml` — anything else is
-    rejected. `.svg` is appended to `filename` if missing. Stored under
-    `www/card_builder/<path>/<filename>`. `filename` must be a bare name
-    (no `/`, `\\`, or `..`) and `path` must not contain a `..` segment or an
-    absolute anchor. `svg_content` is capped at `_MAX_MEDIA_UPLOAD_BYTES`
-    (15 MiB, checked before parsing) and, after parsing, at `_SVG_MAX_ELEMENTS`
-    total elements — both refused with `{"error": "file_too_large"}` /
-    `{"error": "svg_too_complex"}` respectively.
+    `svg_content` must start with `<svg` or `<?xml`. `.svg` is appended to
+    `filename` if missing; the result is stored under
+    `www/card_builder/<path>/<filename>`. `svg_content` is always
+    sanitized first: `<script>`, `<style>`, `<foreignObject>`, `<iframe>`,
+    `<embed>`, `<object>` and other non-presentation elements are stripped
+    with their subtree, along with every `on*=` handler and any
+    `href`/`xlink:href` pointing at `javascript:` or an external/
+    `data:image/svg+xml` URL — see `sanitize_svg` for the allowlist. This
+    matters because the file becomes **public**, unauthenticated, under
+    `/local/`, where an unsanitized SVG opened directly executes embedded
+    script as stored XSS into an admin session. `_write_media_file` writes
+    with no existence check, so uploading onto an existing `path`/
+    `filename` **silently overwrites it**, with no backup.
 
-    The uploaded file becomes public under Home Assistant's `/local/` path
-    with **no authentication**, in the same origin as the HA frontend — an
-    unsanitized SVG opened directly executes embedded script as a stored-XSS
-    vector into an admin session. `svg_content` is always sanitized before
-    upload: `<script>`, `<style>`, `<foreignObject>`, `<iframe>`, `<embed>`,
-    `<object>` and any other non-presentation element are stripped (with
-    their whole subtree), along with every `on*=` handler and any
-    `href`/`xlink:href`/other attribute pointing at `javascript:` or an
-    external/`data:image/svg+xml` URL. See `sanitize_svg` for the exact
-    allowlist. Only `#fragment` references and raster `data:image/...` URIs
-    are kept as link targets.
-
-    Returns `{reference, path, url}` — `reference` is the
+    Use when: publishing generated or hand-written SVG markup as media.
+    Not for: an SVG file on disk — use
+    `card_builder_upload_media_from_path`; a remote SVG URL — use
+    `card_builder_upload_image_from_url`.
+    Returns: `{reference, path, url}` — `reference` is the
     `cb-media://local/card_builder/<filename>` URI for a block-image's
     `mediaReference` prop.
+    Errors: `{"error": "not_svg" | "file_too_large" | "path_not_allowed" |
+    "svg_too_complex"}` on invalid, unsafe, or oversized input.
+    Limits: capped at `_MAX_MEDIA_UPLOAD_BYTES` (15 MiB), then
+    `_SVG_MAX_ELEMENTS` elements after parsing.
     """
     txt = (svg_content or "").lstrip()
     if not (txt.startswith("<svg") or txt.startswith("<?xml")):
@@ -1282,21 +1536,44 @@ def upload_svg(svg_content: str, filename: str, path: str = "") -> dict:
     )
 
 
-@mcp.tool()
-def upload_image_from_url(url: str, filename: str | None = None, path: str = "") -> dict:
+@mcp.tool(annotations=destructive("Download and upload image from URL", idempotent=True, open_world=True))
+def upload_image_from_url(
+    url: Annotated[str, Field(description="http(s) URL of the image to download, e.g. 'https://example.com/bg.png'.")],
+    filename: Annotated[
+        str | None,
+        Field(description="Target filename to store as. Omit to derive one from the URL's last path segment."),
+    ] = None,
+    path: Annotated[
+        str,
+        Field(description="Sub-folder under www/card_builder/ to upload into. Empty string uploads to the root."),
+    ] = "",
+) -> dict:
     """Download an image from an http(s) URL and upload it to the Card Builder media library.
 
-    Only `http`/`https` schemes are accepted (no `file://`, `ftp://`, ...). The
-    response must declare an `image/*` Content-Type (covers `image/svg+xml`)
-    and stay within `_MAX_URL_IMAGE_BYTES` (15 MiB); otherwise nothing is
-    uploaded. Falls back to deriving filename from the URL path.
+    Only `http`/`https` schemes are accepted. The response must declare an
+    `image/*` Content-Type (covers `image/svg+xml`) and stay within
+    `_MAX_URL_IMAGE_BYTES`, else nothing is uploaded. Falls back to
+    deriving `filename` from the URL path. An `image/svg+xml` response is
+    sanitized (script/handler/unsafe-URL stripping) before upload — see
+    `sanitize_svg` — regardless of the requested `filename`, since the
+    remote server controls the actual bytes. The file becomes **public**
+    under `/local/` with **no authentication**. `card_builder/media/upload`
+    writes with no existence check, so uploading onto an existing
+    `path`/`filename` **silently overwrites it**, with no backup.
 
-    The uploaded file becomes public under Home Assistant's `/local/` path
-    with no authentication. When the response is `image/svg+xml`, the
-    downloaded markup is sanitized (script/event-handler/unsafe-URL
-    stripping) before upload — see `sanitize_svg` — regardless of what
-    `filename`/extension was requested, since the untrusted remote server
-    controls the actual bytes.
+    Use when: mirroring a remote image (e.g. a weather-background asset)
+    into the media library so a card can reference it locally.
+    Not for: bytes already in memory — use `card_builder_upload_media`; a
+    file already on the HA config filesystem — use
+    `card_builder_upload_media_from_path`.
+    Returns: `{reference, path, url}`, same shape as
+    `card_builder_upload_media`.
+    Errors: `{"error": "scheme_not_allowed" | "content_type_not_allowed" |
+    "file_too_large" | "download_failed" | "invalid_svg" | ...}` (plus
+    `sanitize_svg` errors) when the URL, response, or SVG fails validation.
+    Limits: 30-second download timeout, capped at `_MAX_URL_IMAGE_BYTES`
+    (15 MiB); the one Card Builder tool that reaches outside the HA
+    instance and its host.
     """
     import urllib.request
     from urllib.parse import urlparse
@@ -1348,9 +1625,24 @@ def upload_image_from_url(url: str, filename: str | None = None, path: str = "")
     )
 
 
-@mcp.tool()
-def delete_media(path: str) -> dict:
-    """Delete a file from the Card Builder media directory by its relative path."""
+@mcp.tool(annotations=destructive("Delete Card Builder media file", idempotent=True))
+def delete_media(
+    path: Annotated[str, Field(description="Path of the file to delete, relative to www/card_builder/ (see card_builder_list_media).")],
+) -> dict:
+    """Permanently delete one file from the Card Builder media directory.
+
+    Calls `card_builder/media/delete` with `path` relative to
+    `www/card_builder/`. Any card whose `mediaReference` points at this
+    file (e.g. via `block-image` or `block-weather-background`) will fail
+    to load it afterwards — this tool does not check for or update such
+    references.
+
+    Use when: removing an uploaded image/SVG that no card uses anymore.
+    Returns: `{"status": "deleted", "path": ..., "result": ...}` on
+    success.
+    Errors: on failure, returns `{"status": "error", "path": ..., "error":
+    <exception text>}` instead of raising.
+    """
     try:
         result = ha._ws_call("card_builder/media/delete", path=path)
     except Exception as err:
@@ -1362,20 +1654,32 @@ def delete_media(path: str) -> dict:
 # Dashboard helper
 # =========================================================================
 
-@mcp.tool()
+@mcp.tool(annotations=read("Build renderer card config"))
 def renderer_card_config(
-    card_id: str,
-    slot_entities: dict | None = None,
-    slot_actions: dict | None = None,
+    card_id: Annotated[str, Field(description="Id of the Card Builder card to render, from card_builder_list_cards.")],
+    slot_entities: Annotated[
+        dict | None,
+        Field(description="Maps each slot id defined in the card to a HA entity_id, e.g. {'climate': 'climate.salon'}. Omit for no slot bindings."),
+    ] = None,
+    slot_actions: Annotated[
+        dict | None,
+        Field(description="Per-instance overrides for the card's action slots. Omit to use the card's own defaults."),
+    ] = None,
 ) -> dict:
-    """Build a Lovelace card config that renders a Card Builder card on a dashboard.
+    """Build the Lovelace card config dict that renders a Card Builder card.
 
-    Returns:
-        {"type": "custom:card-builder-renderer-card", "card_id": ..., "slot_entities": {...}, "slot_actions": {...}}
+    Pure computation — assembles
+    `{"type": "custom:card-builder-renderer-card", "card_id": ...}` plus
+    the optional `slot_entities`/`slot_actions` keys; makes no call to
+    Home Assistant.
 
-    Add it with dashboards_add_card_to_section (sections views) or dashboards_add_card_to_view
-    (masonry/panel views). `slot_entities` maps each slot id defined in the card to a HA entity_id;
-    `slot_actions` overrides per-instance action configs.
+    Use when: embedding an existing Card Builder card on a dashboard.
+    Not for: adding the resulting config to a dashboard — pass it as
+    `card_config` to `dashboards_add_card_to_section` (sections views) or
+    `dashboards_add_card_to_view` (masonry/panel views).
+    Returns: `{"type": "custom:card-builder-renderer-card", "card_id":
+    ..., "slot_entities": {...}, "slot_actions": {...}}` — the latter two
+    keys are omitted when not provided.
     """
     config: dict[str, Any] = {
         "type": "custom:card-builder-renderer-card",
@@ -1392,12 +1696,29 @@ def renderer_card_config(
 # Introspection
 # =========================================================================
 
-@mcp.tool()
-def list_block_types(category: str | None = None, include_internal: bool = False) -> list[dict]:
-    """List every block type understood by Card Builder.
+@mcp.tool(annotations=read("List Card Builder block types"))
+def list_block_types(
+    category: Annotated[
+        str | None,
+        Field(description="Block category to filter to: basic, layout, entities, controls, advanced, or weather. Omit for every category."),
+    ] = None,
+    include_internal: Annotated[
+        bool,
+        Field(description="If true, also list internal-only block types (e.g. block-drop-zone) that a recipe must not use directly."),
+    ] = False,
+) -> list[dict]:
+    """List every block type from the embedded Card Builder schema (`BLOCK_TYPES`).
 
-    Pass `category` to filter (basic, layout, entities, controls, advanced).
-    Returns a compact list — call `get_block_schema(type)` for full prop details.
+    Reads the module-level `BLOCK_TYPES` constant synced from upstream Card
+    Builder (see `card_builder_check_schema_sync`); makes no call to Home
+    Assistant.
+
+    Use when: discovering which block types exist before writing a recipe
+    for `card_builder_build_from_recipe`.
+    Not for: full prop details of one type — use
+    `card_builder_get_block_schema`.
+    Returns: list of `{type, category, label, accepts_children,
+    requires_entity, prop_count}`, one entry per block type.
     """
     out: list[dict] = []
     for type_name, info in BLOCK_TYPES.items():
@@ -1418,9 +1739,24 @@ def list_block_types(category: str | None = None, include_internal: bool = False
     return out
 
 
-@mcp.tool()
-def get_block_schema(block_type: str) -> dict:
-    """Full schema for one block type: props with types/defaults/enum values, notes, supported domains, style targets."""
+@mcp.tool(annotations=read("Get Card Builder block schema"))
+def get_block_schema(
+    block_type: Annotated[str, Field(description="Block type id, e.g. 'block-slider', from card_builder_list_block_types.")],
+) -> dict:
+    """Get the full embedded schema for one Card Builder block type.
+
+    Looks up `block_type` in the module-level `BLOCK_TYPES` constant and
+    adds its style targets from `STYLE_TARGETS`; makes no call to Home
+    Assistant.
+
+    Use when: checking a block's exact prop names, types, defaults, enum
+    values, and supported entity domains before writing a recipe.
+    Returns: `{type, category, label, accepts_children, requires_entity,
+    props, notes, supported_domains, style_targets, ...}` — the same
+    entry as in `BLOCK_TYPES` plus `style_targets`.
+    Errors: `{"error": "unknown_block_type", "block_type": ..., "known":
+    [...]}` when `block_type` isn't in the embedded schema.
+    """
     info = BLOCK_TYPES.get(block_type)
     if not info:
         return {"error": "unknown_block_type", "block_type": block_type, "known": list(BLOCK_TYPES.keys())}
@@ -1435,17 +1771,25 @@ def get_block_schema(block_type: str) -> dict:
 # Style introspection
 # =========================================================================
 
-@mcp.tool()
-def list_button_toggle_features(domain: str | None = None) -> list[dict]:
+@mcp.tool(annotations=read("List button-toggle feature IDs"))
+def list_button_toggle_features(
+    domain: Annotated[
+        str | None,
+        Field(description="HA entity domain to filter to, e.g. 'climate' or 'cover'. Omit to list every domain's features."),
+    ] = None,
+) -> list[dict]:
     """List the `feature` IDs accepted by block-button-toggle / block-select-menu.
 
-    Feature IDs are **namespaced by domain** — e.g. `climate_hvac_mode` for an
-    AC, `cover_state` for a blind, `light_power` for a bulb. Pass `domain` to
-    filter; omit to see everything.
+    Reads the module-level `FEATURE_DEFINITIONS` constant; makes no call
+    to Home Assistant. Feature IDs are **namespaced by domain** — e.g.
+    `climate_hvac_mode` for an AC, `cover_state` for a blind, `light_power`
+    for a bulb.
 
-    `feature: "auto"` (the block default) lets Card Builder pick the first
-    available feature for the entity at runtime — usually what you want for
-    reusable templates.
+    Use when: picking an explicit `feature` value for a
+    `block-button-toggle`/`block-select-menu` prop instead of the default
+    `"auto"`, which lets Card Builder pick the first available feature for
+    the entity at runtime.
+    Returns: list of `{domain, id, label}` dicts.
     """
     if domain:
         defs = FEATURE_DEFINITIONS.get(domain) or []
@@ -1457,12 +1801,21 @@ def list_button_toggle_features(domain: str | None = None) -> list[dict]:
     return out
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("List Card Builder style categories"))
 def list_style_categories() -> list[dict]:
     """List CSS style categories with their property names and unit conventions.
 
-    Property names are camelCase (e.g. ``flexDirection``, ``backgroundColor``).
-    Anything else gets discarded by Card Builder's CSS resolver.
+    Reads the module-level `STYLE_CATEGORIES` constant; makes no call to
+    Home Assistant. Property names are **camelCase** (e.g.
+    `flexDirection`, `backgroundColor`) — anything else is silently
+    discarded by Card Builder's CSS resolver.
+
+    Use when: looking up the exact property names/units for a style
+    category before hand-writing a `styles`/`dz_styles` blob.
+    Not for: ready-to-use presets — use
+    `card_builder_list_style_snippets`.
+    Returns: list of `{category, properties, length_units,
+    legacy_aliases, notes}` dicts.
     """
     return [
         {
@@ -1476,12 +1829,23 @@ def list_style_categories() -> list[dict]:
     ]
 
 
-@mcp.tool()
-def list_style_targets(block_type: str) -> dict:
-    """Style targets available for a block — sub-components you can style independently.
+@mcp.tool(annotations=read("List style targets for a block type"))
+def list_style_targets(
+    block_type: Annotated[str, Field(description="Block type id, e.g. 'block-entity-field-state', from card_builder_list_block_types.")],
+) -> dict:
+    """List the style targets (sub-components) one block type supports.
 
-    Example: ``block-entity-field-state`` has ``state`` and ``unit`` targets so you
-    can colour the number and the unit differently.
+    Looks up `block_type` in `STYLE_TARGETS` (defaulting to the single
+    `"block"` target); makes no call to Home Assistant. Example:
+    `block-entity-field-state` has `state` and `unit` targets so you can
+    colour the number and the unit differently.
+
+    Use when: styling a sub-component of a block (e.g. a slider's thumb)
+    rather than the whole block.
+    Returns: `{block_type, targets}` where `targets` is the list of valid
+    keys for that block's `styles` dict.
+    Errors: `{"error": "unknown_block_type", "block_type": ...}` when
+    `block_type` isn't in the embedded schema.
     """
     if block_type not in BLOCK_TYPES:
         return {"error": "unknown_block_type", "block_type": block_type}
@@ -1489,11 +1853,21 @@ def list_style_targets(block_type: str) -> dict:
     return {"block_type": block_type, "targets": targets}
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("List built-in style snippets"))
 def list_style_snippets() -> list[dict]:
-    """List built-in style snippets — drop them straight into a node's ``styles`` or ``dz_styles``.
+    """List built-in Card Builder style snippets by name and style category.
 
-    Compose multiple snippets with ``build_styles(["card_padded", "vertical_stack"])``.
+    Reads the module-level `STYLE_SNIPPETS` constant; makes no call to
+    Home Assistant.
+
+    Use when: browsing ready-made style presets (padding, flex layout,
+    typography scale) before composing them with
+    `card_builder_build_styles`.
+    Not for: the full property list per category — use
+    `card_builder_list_style_categories`; the full body of one snippet —
+    use `card_builder_get_style_snippet`.
+    Returns: list of `{name, categories}` dicts, where `categories` are
+    the style-category keys that snippet sets.
     """
     return [
         {"name": name, "categories": list(snippet.keys())}
@@ -1501,12 +1875,24 @@ def list_style_snippets() -> list[dict]:
     ]
 
 
-@mcp.tool()
-def get_style_snippet(name: str, target: str = "block", container: str = "desktop") -> dict:
-    """Fetch one snippet wrapped in the full target/container envelope.
+@mcp.tool(annotations=read("Get one style snippet"))
+def get_style_snippet(
+    name: Annotated[str, Field(description="Snippet name, e.g. 'card_padded', from card_builder_list_style_snippets.")],
+    target: Annotated[str, Field(description="Style target key to wrap the snippet under, e.g. 'block' or 'state'. Defaults to 'block'.")] = "block",
+    container: Annotated[str, Field(description="Responsive container to wrap the snippet under: 'desktop', 'tablet', or 'mobile'. Defaults to 'desktop'.")] = "desktop",
+) -> dict:
+    """Fetch one built-in style snippet wrapped in the full target/container envelope.
 
-    Returns ``{<target>: {containers: {<container>: <snippet>}}}`` — ready to assign
-    to a block's ``styles`` directly.
+    Looks up `name` in `STYLE_SNIPPETS` and wraps it as
+    `{target: {containers: {container: <snippet>}}}`; makes no call to
+    Home Assistant.
+
+    Use when: assigning exactly one snippet to a block's `styles` without
+    composing several via `card_builder_build_styles`.
+    Returns: `{<target>: {containers: {<container>: <snippet>}}}` — ready
+    to assign to a block's `styles` directly.
+    Errors: `{"error": "unknown_snippet", "name": ..., "known": [...]}`
+    when `name` isn't a known snippet.
     """
     snippet = STYLE_SNIPPETS.get(name)
     if not snippet:
@@ -1514,22 +1900,28 @@ def get_style_snippet(name: str, target: str = "block", container: str = "deskto
     return {target: {"containers": {container: snippet}}}
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("Compose styles from snippets"))
 def build_styles(
-    snippet_names: list[str],
-    target: str = "block",
-    container: str = "desktop",
-    extra: dict | None = None,
+    snippet_names: Annotated[list[str], Field(description="Ordered list of snippet names from card_builder_list_style_snippets to merge, e.g. ['card_padded', 'vertical_stack'].")],
+    target: Annotated[str, Field(description="Style target key to wrap the result under, e.g. 'block' or 'state'. Defaults to 'block'.")] = "block",
+    container: Annotated[str, Field(description="Responsive container to wrap the result under: 'desktop', 'tablet', or 'mobile'. Defaults to 'desktop'.")] = "desktop",
+    extra: Annotated[
+        dict | None,
+        Field(description="Extra ContainerStyleData ({category: {prop: {value, unit}}}) merged in last, overriding the snippets. Omit for none."),
+    ] = None,
 ) -> dict:
-    """Compose a styles object from one or more snippets plus optional extra overrides.
+    """Compose a styles object from one or more built-in snippets plus optional overrides.
 
-    ``extra`` is shaped like the inner ContainerStyleData (``{category: {prop: {value, unit}}}``).
-    Later snippets override earlier ones at the property level.
+    Merges each named entry from `STYLE_SNIPPETS` in order, then `extra`,
+    at the property level — later entries override earlier ones for the
+    same category/property; makes no call to Home Assistant.
 
-    Example::
-
-        build_styles(["card_padded", "vertical_stack"])
-        -> {"block": {"containers": {"desktop": {"spacing": {...}, "border": {...}, "background": {...}, "flex": {...}}}}}
+    Use when: assembling a block's `styles`/`dz_styles` from reusable
+    presets instead of hand-writing the full envelope.
+    Returns: `{<target>: {containers: {<container>: {<category>:
+    {<prop>: <value>, ...}, ...}}}}`.
+    Errors: `{"error": "unknown_snippet", "name": ..., "known": [...]}`
+    when a name in `snippet_names` isn't a known snippet.
     """
     merged: dict[str, Any] = {}
     for name in snippet_names:
@@ -1548,15 +1940,28 @@ def build_styles(
 # Schema sync
 # =========================================================================
 
-@mcp.tool()
+@mcp.tool(annotations=read("Check embedded schema against upstream", open_world=True))
 def check_schema_sync() -> dict:
-    """Compare the embedded schema with upstream Card Builder's HEAD manifest and block loader.
+    """Compare the embedded block schema against upstream Card Builder's main branch on GitHub.
 
-    Hits ``raw.githubusercontent.com`` for ``custom_components/card_builder/manifest.json``
-    and ``frontend/src/common/blocks/loader.ts`` and reports whether the
-    embedded schema still matches the upstream version and registered blocks.
-    Use this when a recipe stops working — the upstream may have shipped a
-    breaking schema change.
+    Fetches `custom_components/card_builder/manifest.json` and
+    `frontend/src/common/blocks/loader.ts` from
+    `raw.githubusercontent.com/{UPSTREAM_REPO}/main` over HTTP and diffs
+    the upstream version/block list against this module's `BLOCK_TYPES`
+    and `UPSTREAM_SCHEMA_SYNC` constants. Reaches outside the HA instance
+    and its host.
+
+    Use when: a recipe that used to work stops producing the expected
+    card — the upstream integration may have shipped a breaking schema
+    change.
+    Returns: `{status: "ok"|"drift"|"fetch_failed", upstream_version,
+    embedded_version, version_matches, missing_block_types,
+    extra_embedded_block_types, advice, embedded_schema, ...}`.
+    Errors: `{"status": "fetch_failed", "error": <exception text>,
+    "embedded": ...}` when the manifest request itself fails (a timeout or
+    network error); a failed loader fetch instead sets `loader_fetch_error`
+    and still returns `status`.
+    Limits: two GitHub requests with a 10-second timeout each.
     """
     import json
     import re
@@ -1863,13 +2268,20 @@ custom property colours, and the right control props.
 """
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("Get Card Builder recipe guide"))
 def recipe_guide() -> str:
-    """Embedded how-to for designing Card Builder cards programmatically.
+    """Get the embedded how-to for building Card Builder cards programmatically.
 
-    Returns a markdown reference covering DocumentData layout, the block
-    tree, entity inheritance, slots, drop-zones, dashboard embedding, and
-    the recipe shorthand consumed by `build_from_recipe`.
+    Returns the static `_RECIPE_GUIDE_MD` constant; makes no call to Home
+    Assistant.
+
+    Use when: starting a card build and needing the DocumentData shape,
+    prop-wrapping rules, slots, or recipe shorthand before calling
+    `card_builder_build_from_recipe`.
+    Not for: UX/visual guidance — use `card_builder_design_principles`.
+    Returns: markdown text covering DocumentData layout, the block tree,
+    entity inheritance, slots, drop-zones, dashboard embedding, and the
+    recipe shorthand consumed by `card_builder_build_from_recipe`.
     """
     return _RECIPE_GUIDE_MD
 
@@ -2032,16 +2444,22 @@ Don't leave gaps when an entity is `unavailable` or `unknown`. Either:
 """
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("Get Card Builder design principles"))
 def design_principles() -> str:
-    """Embedded UX design playbook for Card Builder cards.
+    """Get the embedded UX design playbook for Card Builder cards.
 
-    Companion to `recipe_guide()`: that one covers HOW to build a card
-    (block tree, slots, props); this one covers WHAT to build for the
-    result to feel polished — hierarchy, state feedback via binding,
+    Returns the static `_DESIGN_PRINCIPLES_MD` constant; makes no call to
+    Home Assistant.
+
+    Use when: deciding hierarchy, state feedback, spacing, typography, or
+    layout choices for a card, before or after using
+    `card_builder_recipe_guide` for the mechanics.
+    Not for: HOW to build the block tree itself — use
+    `card_builder_recipe_guide`.
+    Returns: markdown text covering hierarchy, state feedback via binding,
     spacing rhythm, typography scale, semantic colors, layout choice
     (grid vs flow vs absolute), state badges, background images, empty
-    states, and the anti-patterns that produce flat-feeling cards.
+    states, and anti-patterns that produce flat-feeling cards.
     """
     return _DESIGN_PRINCIPLES_MD
 
@@ -2172,13 +2590,23 @@ DESIGN_PATTERNS: dict[str, dict[str, Any]] = {
 }
 
 
-@mcp.tool()
-def list_design_patterns(domain: str | None = None) -> list[dict]:
-    """Curated UX design patterns. Each entry pairs a recipe recommendation with WHY.
+@mcp.tool(annotations=read("List curated design patterns"))
+def list_design_patterns(
+    domain: Annotated[
+        str | None,
+        Field(description="HA entity domain to filter to, e.g. 'climate' or 'sensor'. Omit to list every pattern."),
+    ] = None,
+) -> list[dict]:
+    """List curated UX design patterns, each pairing a recipe recommendation with the reasoning behind it.
 
-    Pass ``domain`` to filter to patterns relevant for a specific HA entity domain.
-    Each pattern gives an intent description, a recommended template, UX rationale,
-    and the anti-patterns it specifically avoids.
+    Reads the module-level `DESIGN_PATTERNS` constant; makes no call to
+    Home Assistant.
+
+    Use when: browsing available design patterns before picking one by
+    hand, rather than letting `card_builder_design_for_intent` score them.
+    Returns: list of pattern dicts, each with `name`, `intent_keywords`,
+    `domains`, `label`, `description`, `ux_notes`,
+    `recommended_template`, `anti_patterns`.
     """
     out: list[dict] = []
     for name, info in DESIGN_PATTERNS.items():
@@ -2188,25 +2616,56 @@ def list_design_patterns(domain: str | None = None) -> list[dict]:
     return out
 
 
-@mcp.tool()
-def get_design_pattern(name: str) -> dict:
-    """Full design pattern entry — same fields as `list_design_patterns`."""
+@mcp.tool(annotations=read("Get one design pattern"))
+def get_design_pattern(
+    name: Annotated[str, Field(description="Pattern name, e.g. 'sensor_hero', from card_builder_list_design_patterns.")],
+) -> dict:
+    """Get one curated design pattern by name, in full.
+
+    Looks up `name` in the module-level `DESIGN_PATTERNS` constant; makes
+    no call to Home Assistant.
+
+    Use when: reading the full rationale/anti-patterns for one pattern
+    already picked (e.g. via `card_builder_design_for_intent`).
+    Returns: same fields as one entry from
+    `card_builder_list_design_patterns`.
+    Errors: `{"error": "unknown_pattern", "name": ..., "known": [...]}`
+    when `name` isn't a known pattern.
+    """
     info = DESIGN_PATTERNS.get(name)
     if not info:
         return {"error": "unknown_pattern", "name": name, "known": list(DESIGN_PATTERNS.keys())}
     return {"name": name, **info}
 
 
-@mcp.tool()
-def design_for_intent(intent: str, domain: str | None = None, entity_id: str | None = None) -> dict:
-    """Smart picker: given a free-text intent (and optional domain/entity_id),
-    recommend the best design pattern, the underlying template, and a checklist
-    of things the AI client should consider before generating the card.
+@mcp.tool(annotations=read("Recommend a design pattern for intent"))
+def design_for_intent(
+    intent: Annotated[str, Field(description="Free-text description of what the card should do, e.g. 'show battery level'.")],
+    domain: Annotated[
+        str | None,
+        Field(description="HA entity domain to weight the match toward, e.g. 'sensor'. Omit to infer from entity_id or match on keywords alone."),
+    ] = None,
+    entity_id: Annotated[
+        str | None,
+        Field(description="Full entity id, e.g. 'sensor.battery'; used to infer domain when domain is omitted."),
+    ] = None,
+) -> dict:
+    """Score curated design patterns against a free-text intent and recommend the top match.
 
-    Combines `DESIGN_PATTERNS` (the WHY), `CARD_RECIPES` (the HOW), and
-    `DESIGN_PRINCIPLES` (the rules) into one recommendation. The reply
-    is purposely small — pull richer text via `design_principles()` or
-    `get_design_pattern(name)` if needed.
+    Scores each entry in `DESIGN_PATTERNS` by domain match (weight 5) and
+    intent-keyword overlap (weight 1.5 per hit against `intent.lower()`),
+    then returns the top scorer plus up to three runners-up; makes no
+    call to Home Assistant.
+
+    Use when: turning a user's free-text card request into a concrete
+    pattern/template recommendation.
+    Not for: the full pattern body — call
+    `card_builder_get_design_pattern(name)` on the recommendation; the
+    underlying design rules — call `card_builder_design_principles`.
+    Returns: `{intent, domain, entity_id, recommendation, score, label,
+    description, ux_notes, recommended_template, anti_patterns,
+    next_steps, alternatives}`, or `{..., "recommendation": None, "note":
+    ...}` when nothing scores above zero.
     """
     intent_norm = (intent or "").lower()
     if not domain and entity_id and "." in entity_id:
@@ -2589,24 +3048,41 @@ def _build_block_tree(
     return ids
 
 
-@mcp.tool()
-def build_from_recipe(recipe: dict) -> dict:
+@mcp.tool(annotations=read("Build card config from recipe"))
+def build_from_recipe(
+    recipe: Annotated[
+        dict,
+        Field(
+            description=(
+                "Recipe shorthand: {slots, root_slot|root_entity, blocks, "
+                "root_styles, root_dz_styles, canvas_styles, action_slots, "
+                "...} — see card_builder_recipe_guide for the full shape."
+            )
+        ),
+    ],
+) -> dict:
     """Materialise a recipe shorthand into a full DocumentData (config) dict.
 
-    Recipe shape::
+    Builds a `canvas` root wrapping one `block-container`, recursively
+    turns `recipe["blocks"]` into the block tree via `_build_block_tree`
+    (auto-inserting `block-drop-zone` children for layout blocks and
+    auto-wrapping raw prop scalars in `{"value": ...}`), and returns the
+    assembled `{version, rootId, slots, blocks}` dict. Pure computation —
+    makes no call to Home Assistant.
 
-        {
-          "slots": {"<slot_id>": {"name": "...", "description": "...", "domains": [...]}},
-          "root_slot": "<slot_id>",          # binds root container to that slot
-          "root_entity": "entity.full_id",    # OR set a fixed entity on root
-          "blocks": [                         # children of the root container
-            {"type": "block-...", "props": {...}, "children": [...]},
-            ...
-          ]
-        }
-
-    Returns a dict ready to pass as `config` to `create_card`. Run
-    `validate_config` on it first if you want a sanity check.
+    Use when: turning a recipe (hand-written or from
+    `card_builder_get_card_template`) into the config to pass to
+    `card_builder_create_card`/`card_builder_update_card`.
+    Not for: hand-crafted low-level DocumentData — assemble that directly
+    instead; a template-driven one-shot creation — use
+    `card_builder_make_template_card`.
+    Returns: a dict ready to pass as `config` to `card_builder_create_card`.
+    Errors: raises `ValueError` when `recipe["root_slot"]` isn't defined in
+    `recipe["slots"]`, when a block in `recipe["blocks"]` has an unknown or
+    internal `type`, or when a non-container block type is given
+    `children`.
+    Limits: run `card_builder_validate_config` on the result before
+    saving — this tool does not validate the produced tree itself.
     """
     slots_def = recipe.get("slots") or {}
     root_slot = recipe.get("root_slot")
@@ -2677,13 +3153,29 @@ def build_from_recipe(recipe: dict) -> dict:
 # Validation
 # =========================================================================
 
-@mcp.tool()
-def validate_config(config: dict) -> dict:
-    """Lightweight structural validation for a Card Builder config (DocumentData).
+@mcp.tool(annotations=read("Validate Card Builder config"))
+def validate_config(
+    config: Annotated[
+        dict,
+        Field(description="DocumentData config to check, as produced by card_builder_build_from_recipe or returned by card_builder_get_card."),
+    ],
+) -> dict:
+    """Run lightweight structural validation on a Card Builder config (DocumentData).
 
-    Checks: version, rootId presence, every block has known type, parent/child
-    links are consistent, entity-required blocks have an entity available
-    (inherited, slot, or fixed). Returns `{ok: bool, errors: [...], warnings: [...]}`.
+    Checks `version`, `rootId` presence, that every block has a known
+    type, that parent/child links are mutually consistent, that
+    entity-required blocks resolve an entity provider (inherited, slot, or
+    fixed) by walking up the tree, and that prop values use the
+    `{value: ...}`/`{binding: ...}` wrapper Card Builder requires. Pure
+    computation — makes no call to Home Assistant and does not check
+    against the live upstream schema (see
+    `card_builder_check_schema_sync` for that).
+
+    Use when: sanity-checking a config before
+    `card_builder_create_card`/`card_builder_update_card`.
+    Returns: `{ok: bool, errors: [...], warnings: [...], block_count,
+    slot_count}` — `ok` is false only when `errors` is non-empty;
+    `warnings` flags renamed/unwrapped/unknown props without failing.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -3404,12 +3896,22 @@ CARD_RECIPES: dict[str, dict] = {
 }
 
 
-@mcp.tool()
-def list_card_templates(domain: str | None = None) -> list[dict]:
-    """List built-in card recipe templates.
+@mcp.tool(annotations=read("List built-in card templates"))
+def list_card_templates(
+    domain: Annotated[
+        str | None,
+        Field(description="HA entity domain to filter to, e.g. 'climate' or 'light'. Omit to list every template."),
+    ] = None,
+) -> list[dict]:
+    """List built-in Card Builder recipe templates (`CARD_RECIPES`).
 
-    Each entry: ``{name, label, description, domains}``. Pass ``domain`` to
-    filter to templates that target a specific HA entity domain.
+    Reads the module-level `CARD_RECIPES` constant; makes no call to Home
+    Assistant.
+
+    Use when: browsing available templates before previewing one with
+    `card_builder_get_card_template` or instantiating it with
+    `card_builder_make_template_card`.
+    Returns: list of `{name, label, description, domains}` dicts.
     """
     out: list[dict] = []
     for name, info in CARD_RECIPES.items():
@@ -3419,12 +3921,27 @@ def list_card_templates(domain: str | None = None) -> list[dict]:
     return out
 
 
-@mcp.tool()
-def get_card_template(name: str, slot: str | None = None) -> dict:
-    """Get the resolved DocumentData for a template (without creating a card).
+@mcp.tool(annotations=read("Preview a card template config"))
+def get_card_template(
+    name: Annotated[str, Field(description="Template name, e.g. 'sensor_hero', from card_builder_list_card_templates.")],
+    slot: Annotated[
+        str | None,
+        Field(description="Override the template's default entity-slot name, e.g. 'main' instead of 'entity'. Omit to use the template's default."),
+    ] = None,
+) -> dict:
+    """Resolve one built-in template into a full DocumentData config, without saving anything.
 
-    Returns the full config — feed it into `create_card` yourself, or use
-    `make_template_card` to skip the boilerplate.
+    Calls the template's recipe function and, if it returned a recipe
+    shorthand rather than a full DocumentData, runs it through
+    `card_builder_build_from_recipe`. Makes no call to Home Assistant.
+
+    Use when: inspecting or hand-editing a template's config before
+    calling `card_builder_create_card` yourself.
+    Not for: saving the card directly — use
+    `card_builder_make_template_card` to skip this step.
+    Returns: the full DocumentData config dict for the template.
+    Errors: `{"error": "unknown_template", "name": ..., "known": [...]}`
+    when `name` isn't a known template.
     """
     entry = CARD_RECIPES.get(name)
     if not entry:
@@ -3437,20 +3954,45 @@ def get_card_template(name: str, slot: str | None = None) -> dict:
     return build_from_recipe(output)
 
 
-@mcp.tool()
+@mcp.tool(annotations=write("Create card from template", idempotent=False))
 def make_template_card(
-    template: str,
-    name: str,
-    description: str = "",
-    slot: str | None = None,
-    tags: list[str] | None = None,
-    categories: list[str] | None = None,
+    template: Annotated[str, Field(description="Template name, e.g. 'sensor_hero', from card_builder_list_card_templates.")],
+    name: Annotated[str, Field(description="Display name for the new card, e.g. 'Battery Salon'.")],
+    description: Annotated[
+        str,
+        Field(description="Card description. Empty string uses the template's own description instead."),
+    ] = "",
+    slot: Annotated[
+        str | None,
+        Field(description="Override the template's default entity-slot name, e.g. 'main' instead of 'entity'. Omit to use the template's default."),
+    ] = None,
+    tags: Annotated[
+        list[str] | None,
+        Field(description="Replacement tag list. Omit to default to ['nexus-template', template]."),
+    ] = None,
+    categories: Annotated[
+        list[str] | None,
+        Field(description="Replacement category list. Omit to default to the template's first domain, or 'tile' if it has none."),
+    ] = None,
 ) -> dict:
-    """One-shot: pick a template, name it, get back a saved card_id.
+    """Resolve a built-in template and save it as a new Card Builder card in one call.
 
-    Use the returned ``id`` with ``renderer_card_config(card_id, slot_entities={<slot>: ...})``
-    to drop the card on a dashboard. ``slot`` overrides the default slot
-    name in the recipe (e.g. ``"main"`` instead of ``"entity"``).
+    Resolves `template` the same way as `card_builder_get_card_template`,
+    then passes the config straight to `card_builder_create_card` — which
+    assigns a new id server-side, so repeating this call creates a second,
+    distinct card.
+
+    Use when: turning a built-in template into a saved card without the
+    separate preview/create steps.
+    Not for: previewing the config first without saving — use
+    `card_builder_get_card_template`; a fully custom recipe — use
+    `card_builder_build_from_recipe` and `card_builder_create_card`
+    directly.
+    Returns: the created card dict, including its new `id`. Use that `id`
+    with `card_builder_renderer_card_config(card_id, slot_entities=
+    {<slot>: ...})` to place the card on a dashboard.
+    Errors: `{"error": "unknown_template", "template": ..., "known":
+    [...]}` when `template` isn't a known template.
     """
     entry = CARD_RECIPES.get(template)
     if not entry:

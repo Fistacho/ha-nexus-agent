@@ -34,10 +34,17 @@ import os
 import shutil
 import httpx
 from pathlib import Path
+from typing import Annotated
+
 from fastmcp import FastMCP
+from pydantic import Field
+
 import ha_client as ha
+from tools._contract import destructive, read, write
 
 mcp = FastMCP("esphome")
+
+TOOL_CONTRACT = {"version": 1, "long_ok": {}, "heuristic_exceptions": {}}
 
 _CONFIG_PATH = Path(os.getenv("HA_CONFIG_PATH", "/config"))
 _ESPHOME_DIR = _CONFIG_PATH / "esphome"
@@ -355,9 +362,24 @@ def _yaml_names() -> list[str]:
 
 # ── tools ─────────────────────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(annotations=read("List ESPHome devices"))
 def list_devices() -> dict:
-    """List ESPHome devices: YAML configs on disk + HA device registry entries + online status."""
+    """List ESPHome devices from YAML configs, the HA device registry and online status.
+
+    Combines `<name>.yaml` files under `/config/esphome/` with matching HA
+    device-registry entries (identified via ESPHome config entries,
+    `identifiers` domain, or manufacturer as a fallback) and each device's
+    `binary_sensor.*_api_connection_status` state.
+
+    Use when: getting an overview of every ESPHome device, whether or not it
+    currently has a matching HA device.
+    Not for: one device's entities — use `esphome_get_device_entities`.
+    Returns: `{"yaml_configs": [...], "ha_devices": [...], "online": <int>,
+    "offline": <int>}`.
+    Errors: `ha_devices` becomes `[{"error": str(e)}]` if reading the HA
+    device registry raises; connection-status lookups are silently skipped
+    on error instead of failing the whole call.
+    """
     configs = _yaml_names()
 
     # Connection status from HA entity states
@@ -425,9 +447,32 @@ def list_devices() -> dict:
     }
 
 
-@mcp.tool()
-def get_config(name: str) -> dict:
-    """Read ESPHome device YAML config from /config/esphome/. Pass name with or without .yaml."""
+@mcp.tool(annotations=read("Get ESPHome device YAML config"))
+def get_config(
+    name: Annotated[
+        str,
+        Field(
+            description=(
+                "Device name, with or without the '.yaml' suffix, e.g. "
+                "'kitchen_sensor'. Discover names with "
+                "`esphome_list_devices`."
+            )
+        ),
+    ],
+) -> dict:
+    """Read one ESPHome device's YAML config from `/config/esphome/`.
+
+    Resolves `name` to `<name>.yaml` under `_ESPHOME_DIR`, rejecting path
+    separators/leading dots/paths that escape that directory.
+
+    Use when: inspecting a device's current configuration before editing it
+    with `esphome_write_config` or one of the `esphome_lvgl_*` editors.
+    Not for: a device's HA entities — use `esphome_get_device_entities`.
+    Returns: `{"name": <filename>, "content": <yaml text>}`.
+    Errors: `{"error": "Invalid device name: ..."}` for a path-escaping
+    `name`; `{"error": "Not found: ...", "esphome_dir": ...}` when the file
+    doesn't exist.
+    """
     try:
         path = _device_path(name)
     except ValueError as e:
@@ -437,12 +482,44 @@ def get_config(name: str) -> dict:
     return {"name": path.name, "content": path.read_text(encoding="utf-8")}
 
 
-@mcp.tool()
-def write_config(name: str, content: str) -> dict:
-    """Write ESPHome device YAML config to /config/esphome/. Validates YAML syntax before saving.
+@mcp.tool(annotations=destructive("Write ESPHome device YAML config", idempotent=True))
+def write_config(
+    name: Annotated[
+        str,
+        Field(
+            description=(
+                "Device name, with or without the '.yaml' suffix, e.g. "
+                "'kitchen_sensor'. If the file already exists, its entire "
+                "content is replaced."
+            )
+        ),
+    ],
+    content: Annotated[
+        str,
+        Field(description="Full YAML document to write, replacing the file's current content."),
+    ],
+) -> dict:
+    """Write a full ESPHome device YAML config to `/config/esphome/`, overwriting any existing file.
 
-    Supports HA custom tags (!secret, !include) — they pass through validation unchanged.
-    Creates the file if it doesn't exist.
+    Validates YAML syntax first (HA custom tags `!secret`/`!include`/
+    `!lambda`/`!extend`/`!remove` pass through unchanged) and only writes if
+    that succeeds. This replaces the whole file — there is no merge with
+    the previous content and, unlike `git_safe_write_with_checkpoint`, no
+    checkpoint commit is made first, so the previous content is not
+    recoverable through this tool.
+
+    Use when: saving a complete device config you already have in full,
+    e.g. after fetching and editing it with `esphome_get_config`.
+    Not for: a git-checkpointed config write — use
+    `git_safe_write_with_checkpoint`; for a generic `/config` file write use
+    `files_write_config_file`; for a single LVGL widget edit use
+    `esphome_lvgl_add_widget`/`esphome_lvgl_delete_widget` instead of
+    hand-editing the whole YAML text.
+    Returns: `{"success": True, "name": ..., "path": ..., "bytes": ...}` on
+    success.
+    Errors: `{"success": False, "error": "YAML validation failed: ..."}` for
+    invalid YAML; `{"success": False, "error": "Invalid device name: ..."}`
+    for a path-escaping `name`.
     """
     import yaml
 
@@ -473,9 +550,33 @@ def write_config(name: str, content: str) -> dict:
     return {"success": True, "name": path.name, "path": str(path), "bytes": len(content.encode())}
 
 
-@mcp.tool()
-def get_device_entities(device_name: str) -> list[dict]:
-    """Get all HA entities belonging to an ESPHome device (match by name/slug)."""
+@mcp.tool(annotations=read("Get an ESPHome device's HA entities"))
+def get_device_entities(
+    device_name: Annotated[
+        str,
+        Field(
+            description=(
+                "Device name as used in HA, e.g. 'Kitchen Sensor' or "
+                "'kitchen_sensor' (matched case-insensitively against a "
+                "slugified form)."
+            )
+        ),
+    ],
+) -> list[dict]:
+    """Get every HA entity belonging to one ESPHome device.
+
+    Slugifies `device_name` (lowercase, spaces/dashes to underscores) and
+    matches it against entity registry entries whose `platform` is
+    "esphome" and whose `entity_id` contains that slug.
+
+    Use when: inspecting a specific device's exposed entities and their
+    current state.
+    Not for: the device list itself — use `esphome_list_devices`.
+    Returns: list of `{"entity_id", "name", "domain", "state",
+    "attributes", "disabled"}` dicts.
+    Errors: `[{"error": str(e)}]` when reading the entity registry or
+    states raises.
+    """
     try:
         entity_reg = ha.get_entity_registry()
         states = {s["entity_id"]: s for s in ha.get_states()}
@@ -499,20 +600,52 @@ def get_device_entities(device_name: str) -> list[dict]:
     return result
 
 
-@mcp.tool()
-def compile_device(name: str, only_generate: bool = False, timeout: float = 180, log_lines: int = 200) -> dict:
-    """Compile ESPHome firmware for a device via the dashboard WebSocket API (/compile).
+@mcp.tool(annotations=write("Compile ESPHome firmware", idempotent=True, open_world=True))
+def compile_device(
+    name: Annotated[
+        str,
+        Field(description="Device name, with or without the '.yaml' suffix, e.g. 'kitchen_sensor'."),
+    ],
+    only_generate: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true, only generate the C++ source and skip the "
+                "platform build. Set false for a full firmware build."
+            )
+        ),
+    ] = False,
+    timeout: Annotated[
+        float,
+        Field(description="Maximum seconds to wait for the compile process to finish, e.g. 180."),
+    ] = 180,
+    log_lines: Annotated[
+        int,
+        Field(description="Number of trailing build-log lines to return, e.g. 200."),
+    ] = 200,
+) -> dict:
+    """Compile ESPHome firmware for a device via the dashboard WebSocket API (`/compile`).
 
-    Blocks until the compile process exits (~60-180s). Returns the exit code and the
-    last `log_lines` lines of build output (not the full log — it can be very large).
-    `only_generate=True` only generates the C++ source, skipping the platform build.
+    Blocks until the compile process exits (~60-180s). Verified compatible
+    with the "ESPHome Device Builder" add-on (github.com/esphome/
+    device-builder, read on GitHub 2026-09-27): `/compile` is one of the
+    two routes it keeps for HA back-compat, with the same spawn wire
+    protocol as the old dashboard, now backed by its firmware job queue. On
+    a first build for a given platform, the PlatformIO toolchain fetches
+    build packages from the internet (registry.platformio.org) into its
+    own cache before compiling.
 
-    Verified compatible with the "ESPHome Device Builder" add-on (github.com/esphome/
-    device-builder, api/legacy.py read on GitHub 2026-09-27): /compile is one of the
-    two WebSocket routes it keeps for HA back-compat, with the same
-    `{"type": "spawn", ...}` in / `{"event": "line"/"exit"}` out wire protocol as the
-    old dashboard — internally it now runs through Device Builder's firmware job
-    queue instead of a bare subprocess, but the wire shape is unchanged.
+    Use when: building firmware for a device before `esphome_upload_device`.
+    Not for: checking config validity without a full build — use
+    `esphome_validate_config`, which is faster and does not fetch packages.
+    Returns: `{"device": ..., "action": "compile", "exit_code": <int>,
+    "success": <bool>, "log_tail": [...], "log_lines": <int>}`.
+    Errors: `{"device": ..., "action": "compile", "error": "Invalid device
+    name: ..."}` for a path-escaping `name`; `{"error": "timeout", ...}`
+    when `timeout` elapses; `{"error": "Cannot connect to ESPHome dashboard
+    at ...: ..."}` when unreachable.
+    Limits: blocks for up to `timeout` seconds; `log_lines` truncates the
+    returned log.
     """
     try:
         filename = _safe_filename(name)
@@ -525,21 +658,47 @@ def compile_device(name: str, only_generate: bool = False, timeout: float = 180,
     return {"device": name, "action": "compile", **result}
 
 
-@mcp.tool()
-def validate_config(name: str, timeout: float = 60, log_lines: int = 200) -> dict:
-    """Validate ESPHome YAML config (no compile, fast) via the dashboard's `/ws` API.
+@mcp.tool(annotations=read("Validate ESPHome device config"))
+def validate_config(
+    name: Annotated[
+        str,
+        Field(description="Device name, with or without the '.yaml' suffix, e.g. 'kitchen_sensor'."),
+    ],
+    timeout: Annotated[
+        float,
+        Field(description="Maximum seconds to wait for the validation result, e.g. 60."),
+    ] = 60,
+    log_lines: Annotated[
+        int,
+        Field(description="Number of trailing log lines to return, e.g. 200."),
+    ] = 200,
+) -> dict:
+    """Validate an ESPHome device's YAML config without compiling it.
 
-    Uses the `devices/validate` command on Device Builder's newer multiplexed `/ws`
-    protocol (github.com/esphome/device-builder, docs/API.md, confirmed 2026-09-27) —
-    the legacy per-endpoint `/validate` WebSocket route from the old ESPHome dashboard
-    does NOT exist in Device Builder's `api/legacy.py` (it keeps only /compile and
-    /upload for HA back-compat), so this can no longer use the old spawn protocol.
-    If the dashboard has a username/password configured, this fails fast with a clear
-    error instead of hanging (no ESPHOME_USERNAME/ESPHOME_PASSWORD credential wiring
-    exists yet). Not yet exercised against a live add-on — only against the
-    documented protocol — so treat a failure here as a signal to check
-    esphome_get_addon_logs / esphome_ping_dashboard before assuming the config itself
-    is bad.
+    Uses the `devices/validate` command on Device Builder's newer
+    multiplexed `/ws` protocol (github.com/esphome/device-builder,
+    docs/API.md, confirmed 2026-09-27) — the legacy `/validate` WebSocket
+    route from the old ESPHome dashboard no longer exists in Device
+    Builder's `api/legacy.py`. Unlike `esphome_compile_device`, this never
+    builds firmware and never fetches PlatformIO packages. If the
+    dashboard needs a username/password, this fails fast instead of
+    hanging (no credential wiring exists yet).
+
+    Use when: checking a config's validity quickly, e.g. before
+    `esphome_compile_device`.
+    Not for: a full firmware build — use `esphome_compile_device`; not for
+    LVGL-only structural checks — use `esphome_lvgl_validate`, which runs
+    without the dashboard.
+    Returns: `{"device": ..., "action": "validate", "success": <bool>,
+    "result": ..., "log_tail": [...], "log_lines": <int>}`.
+    Errors: `{"device": ..., "action": "validate", "error": "Invalid device
+    name: ..."}` for a path-escaping `name`; `{"error": "timeout", ...}`
+    when `timeout` elapses; `{"error": "Dashboard requires
+    authentication..."}` when unsupported credentials are needed;
+    `{"error": "Cannot connect to ESPHome dashboard at ...: ..."}` when
+    unreachable. Not yet exercised against a live add-on — treat a failure
+    as a signal to check `esphome_get_addon_logs`/`esphome_ping_dashboard`
+    first.
     """
     try:
         filename = _safe_filename(name)
@@ -549,18 +708,54 @@ def validate_config(name: str, timeout: float = 60, log_lines: int = 200) -> dic
     return {"device": name, "action": "validate", **result}
 
 
-@mcp.tool()
-def upload_device(name: str, port: str = "OTA", timeout: float = 240, log_lines: int = 200) -> dict:
-    """OTA flash compiled firmware to an ESPHome device via the dashboard WebSocket API (/upload).
+@mcp.tool(annotations=destructive("Flash firmware to an ESPHome device", idempotent=False))
+def upload_device(
+    name: Annotated[
+        str,
+        Field(description="Device name, with or without the '.yaml' suffix, e.g. 'kitchen_sensor'."),
+    ],
+    port: Annotated[
+        str,
+        Field(
+            description=(
+                "'OTA' for wireless flash (default) or a serial device "
+                "path, e.g. '/dev/ttyUSB0', for a wired flash."
+            )
+        ),
+    ] = "OTA",
+    timeout: Annotated[
+        float,
+        Field(description="Maximum seconds to wait for the upload to finish, e.g. 240."),
+    ] = 240,
+    log_lines: Annotated[
+        int,
+        Field(description="Number of trailing upload-log lines to return, e.g. 200."),
+    ] = 200,
+) -> dict:
+    """Flash previously compiled firmware to an ESPHome device via the dashboard WebSocket API (`/upload`).
 
-    `port` is "OTA" (default, wireless flash) or a serial device path (e.g. "/dev/ttyUSB0").
-    Requires the device to be on the network (for OTA) and a matching OTA password.
-    Blocks until done (~30-240s).
+    Requires the device to already be built (`esphome_compile_device`) and,
+    for OTA, reachable on the network with a matching OTA password. Blocks
+    until done (~30-240s) and overwrites the device's running firmware —
+    there is no automatic rollback if the new firmware is broken. Verified
+    compatible with the "ESPHome Device Builder" add-on (github.com/esphome/
+    device-builder, `api/legacy.py` read on GitHub 2026-09-27): `/upload` is
+    the other WebSocket route it keeps for HA back-compat, with the same
+    spawn wire protocol as `esphome_compile_device`.
 
-    Verified compatible with the "ESPHome Device Builder" add-on (github.com/esphome/
-    device-builder, api/legacy.py read on GitHub 2026-09-27): /upload is the other
-    WebSocket route it keeps for HA back-compat, with the same spawn wire protocol
-    as before (see esphome_compile_device's docstring for details).
+    Use when: deploying a compiled build to the physical device.
+    Not for: building the firmware itself — use `esphome_compile_device`
+    first.
+    Returns: `{"device": ..., "action": "upload", "exit_code": <int>,
+    "success": <bool>, "log_tail": [...], "log_lines": <int>}` on
+    completion.
+    Errors: `{"device": ..., "action": "upload", "error": "Invalid device
+    name: ..."}` for a path-escaping `name`; `{"error": "timeout", ...}`
+    when `timeout` elapses; `{"error": "Cannot connect to ESPHome dashboard
+    at ...: ..."}` when unreachable.
+    Limits: blocks for up to `timeout` seconds; overwrites the device's
+    firmware with no built-in rollback if the upload succeeds but the new
+    firmware is broken.
     """
     try:
         filename = _safe_filename(name)
@@ -571,20 +766,47 @@ def upload_device(name: str, port: str = "OTA", timeout: float = 240, log_lines:
     return {"device": name, "action": "upload", **result}
 
 
-@mcp.tool()
-def clean_mqtt(name: str, timeout: float = 60, log_lines: int = 200) -> dict:
+@mcp.tool(annotations=destructive("Clean stale MQTT discovery entries", idempotent=True))
+def clean_mqtt(
+    name: Annotated[
+        str,
+        Field(description="Device name, with or without the '.yaml' suffix, e.g. 'kitchen_sensor'."),
+    ],
+    timeout: Annotated[
+        float,
+        Field(description="Maximum seconds to wait for the operation to finish, e.g. 60."),
+    ] = 60,
+    log_lines: Annotated[
+        int,
+        Field(description="Number of trailing log lines to return, e.g. 200."),
+    ] = 200,
+) -> dict:
     """Remove stale MQTT discovery entries for an ESPHome device (MQTT mode only).
 
-    OPEN RISK — unverified / likely broken against the currently installed add-on:
-    this still calls the old dashboard's `/clean-mqtt` WebSocket spawn endpoint, but
-    that route does not exist in Device Builder's `api/legacy.py` (github.com/esphome/
-    device-builder, read on GitHub 2026-09-27 — it keeps exactly six HA-compat routes:
-    /devices, /ping, /json-config, /encryption-key, /compile, /upload; no /validate,
-    no /clean-mqtt). Its docs/API.md's `/ws` command list has no MQTT-discovery-clean
-    equivalent either — the closest command, `firmware/clean`, clears build artifacts,
-    not MQTT discovery topics. Verified compatible only with the legacy ESPHome pip
-    dashboard (esphome <= 2026.5.0). Expect this to fail (connection/timeout/404-style
-    error) against Device Builder until an equivalent is found or ESPHome restores one.
+    WARNING: unverified / likely broken against the currently installed
+    add-on. This calls the old dashboard's `/clean-mqtt` WebSocket spawn
+    endpoint, which does not exist in Device Builder's `api/legacy.py`
+    (github.com/esphome/device-builder, read on GitHub 2026-09-27 — it
+    keeps only six HA-compat routes, none of them `/clean-mqtt`). Its
+    docs/API.md `/ws` command list has no equivalent either — the closest,
+    `firmware/clean`, clears build artifacts, not MQTT topics. Verified
+    compatible only with the legacy ESPHome pip dashboard (esphome
+    <= 2026.5.0).
+
+    Use when: a local MQTT broker still shows discovery entries for a
+    device that was removed or renamed, and the installed dashboard still
+    serves the legacy `/clean-mqtt` route.
+    Not for: the currently documented "ESPHome Device Builder" add-on —
+    expect this to fail there (connection/timeout/404-style error) until an
+    equivalent command is found or ESPHome restores one; check
+    `esphome_get_addon_logs` after a failure.
+    Returns: `{"device": ..., "action": "clean_mqtt", "exit_code": <int>,
+    "success": <bool>, "log_tail": [...], "log_lines": <int>}` on
+    completion.
+    Errors: `{"device": ..., "action": "clean_mqtt", "error": "Invalid
+    device name: ..."}` for a path-escaping `name`; `{"error": "timeout",
+    ...}` when `timeout` elapses; `{"error": "Cannot connect to ESPHome
+    dashboard at ...: ..."}` when unreachable.
     """
     try:
         filename = _safe_filename(name)
@@ -594,13 +816,22 @@ def clean_mqtt(name: str, timeout: float = 60, log_lines: int = 200) -> dict:
     return {"device": name, "action": "clean_mqtt", **result}
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("Get ESPHome add-on status"))
 def get_addon_info() -> dict:
-    """Get ESPHome add-on status, version, and update availability via Supervisor API.
+    """Get the ESPHome add-on's status, version and update availability via the Supervisor API.
 
-    The add-on slug is discovered dynamically from the live `/addons` list (see
-    `_discover_esphome_slug`) rather than guessed from a fixed set of hashes — the
-    hash prefix in `<hash>_esphome` differs per add-on-store repository/installation.
+    The add-on slug is discovered dynamically from the live `/addons` list
+    (see `_discover_esphome_slug`) rather than guessed from a fixed set of
+    hashes — the hash prefix in `<hash>_esphome` differs per add-on-store
+    repository/installation.
+
+    Use when: checking whether the ESPHome add-on is installed, running,
+    and up to date.
+    Not for: log output — use `esphome_get_addon_logs`.
+    Returns: `{"slug", "name", "state", "version", "version_latest",
+    "update_available", "ingress_url"}`.
+    Errors: `{"error": "ESPHome add-on not found. Tried: [...]"}` when no
+    matching add-on slug responds, or when `SUPERVISOR_TOKEN` is unset.
     """
     for slug in _esphome_slug_candidates():
         result = _sup_json("GET", f"/addons/{slug}/info")
@@ -618,11 +849,28 @@ def get_addon_info() -> dict:
     return {"error": f"ESPHome add-on not found. Tried: {_esphome_slug_candidates()}"}
 
 
-@mcp.tool()
-def get_addon_logs(lines: int = 150) -> dict:
-    """Get ESPHome add-on log output (last N lines). Shows compile errors, OTA status, device connections.
+@mcp.tool(annotations=read("Get ESPHome add-on log output"))
+def get_addon_logs(
+    lines: Annotated[
+        int,
+        Field(description="Number of trailing log lines to return, e.g. 150."),
+    ] = 150,
+) -> dict:
+    """Get the ESPHome add-on's recent log output.
 
-    The add-on slug is discovered dynamically — see `esphome_get_addon_info`.
+    Fetches raw text logs via the Supervisor API and returns the last
+    `lines` lines. Shows compile errors, OTA status and device connection
+    events. The add-on slug is discovered dynamically — see
+    `esphome_get_addon_info`.
+
+    Use when: diagnosing why `esphome_compile_device`/`esphome_upload_device`/
+    `esphome_validate_config` failed, or checking recent device activity.
+    Not for: any other add-on's logs — use
+    `supervisor_get_addon_logs` with its slug instead.
+    Returns: `{"slug": ..., "logs": "<text>", "total_lines": <int>}`.
+    Errors: `{"error": "ESPHome add-on not found. Tried: [...]"}` when no
+    matching slug responds; `{"error": "HTTP <status>"}` for a non-404 HTTP
+    error; `{"error": str(e)}` for any other failure.
     """
     candidates = _esphome_slug_candidates()
     for slug in candidates:
@@ -640,18 +888,23 @@ def get_addon_logs(lines: int = 150) -> dict:
     return {"error": f"ESPHome add-on not found. Tried: {candidates}"}
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("Check ESPHome dashboard reachability"))
 def ping_dashboard() -> dict:
-    """Check ESPHome dashboard reachability at ESPHOME_DASHBOARD_URL (default
-    http://homeassistant.local:6052, override via that env var).
+    """Check whether the ESPHome dashboard responds at its configured URL.
 
-    `reachable: false` here does NOT necessarily mean the add-on is down — it means
-    this URL/port isn't reachable from nexus's container. Two live-only things to
-    check next (not verifiable from this module alone): whether `mDNS
-    homeassistant.local` actually resolves inside the nexus container, and whether
-    the add-on's `ingress_url`/host port from esphome_get_addon_info matches
-    ESPHOME_DASHBOARD_URL — an ingress-only add-on (no host-network port exposed)
-    would need ESPHOME_DASHBOARD_URL pointed at that ingress path instead.
+    Calls `GET /ping` on `ESPHOME_DASHBOARD_URL` (default
+    `http://homeassistant.local:6052`, override via that env var).
+    `reachable: false` here does not necessarily mean the add-on is down —
+    it means this URL/port isn't reachable from nexus's container; two
+    live-only things to check next are whether `mDNS homeassistant.local`
+    actually resolves inside the nexus container, and whether the add-on's
+    `ingress_url`/host port from `esphome_get_addon_info` matches
+    `ESPHOME_DASHBOARD_URL`.
+
+    Use when: diagnosing a connection failure from
+    `esphome_compile_device`/`esphome_validate_config`/`esphome_upload_device`.
+    Not for: add-on version/update status — use `esphome_get_addon_info`.
+    Returns: `{"url": ..., "reachable": <bool>, "result": {...}}`.
     """
     result = _dash("GET", "/ping", timeout=5)
     return {"url": _DASH_URL, "reachable": "error" not in result, "result": result}
@@ -758,11 +1011,18 @@ def _summarize_widget(w: dict) -> dict:
     return {}
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("List ESPHome devices with LVGL support"))
 def lvgl_list_devices() -> list[dict]:
-    """List ESPHome devices that have LVGL display support (lvgl: key present in config).
+    """List ESPHome devices whose YAML config has an `lvgl:` section.
 
-    Returns device names, page count, and page IDs for each LVGL-capable device.
+    Parses every device YAML under `/config/esphome/` (tolerating parse
+    errors by skipping that device) and reports the ones with LVGL display
+    support.
+
+    Use when: finding which devices have an LVGL screen before inspecting
+    or editing its pages/widgets.
+    Not for: page detail on one device — use `esphome_lvgl_get_pages`.
+    Returns: list of `{"device", "pages": <count>, "page_ids": [...]}`.
     """
     result = []
     for name in _yaml_names():
@@ -781,9 +1041,27 @@ def lvgl_list_devices() -> list[dict]:
     return result
 
 
-@mcp.tool()
-def lvgl_get_pages(device_name: str) -> dict:
-    """Get LVGL pages configured on an ESPHome device with widget counts and background colors."""
+@mcp.tool(annotations=read("Get an ESPHome device's LVGL pages"))
+def lvgl_get_pages(
+    device_name: Annotated[
+        str,
+        Field(description="Device name, with or without the '.yaml' suffix, e.g. 'kitchen_display'."),
+    ],
+) -> dict:
+    """Get the LVGL pages configured on an ESPHome device.
+
+    Parses the device's YAML and reads the `lvgl:` section's `pages` and
+    `displays[0].default_page`.
+
+    Use when: getting page IDs, background colors and widget counts before
+    drilling into one page with `esphome_lvgl_get_page_widgets`.
+    Not for: the widgets on one specific page — use
+    `esphome_lvgl_get_page_widgets`.
+    Returns: `{"device": ..., "default_page": ..., "pages": [{"id", "bg_color",
+    "widget_count"}, ...]}`.
+    Errors: `{"error": "..."}` when the file can't be found/parsed, or when
+    there is no `lvgl:` section in the device config.
+    """
     parsed, err = _lvgl_load(device_name)
     if err:
         return {"error": err}
@@ -809,12 +1087,30 @@ def lvgl_get_pages(device_name: str) -> dict:
     return {"device": device_name, "default_page": default_page, "pages": pages}
 
 
-@mcp.tool()
-def lvgl_get_page_widgets(device_name: str, page_id: str) -> dict:
-    """Get all LVGL widgets on a specific page of an ESPHome device.
+@mcp.tool(annotations=read("Get widgets on an ESPHome LVGL page"))
+def lvgl_get_page_widgets(
+    device_name: Annotated[
+        str,
+        Field(description="Device name, with or without the '.yaml' suffix, e.g. 'kitchen_display'."),
+    ],
+    page_id: Annotated[
+        str,
+        Field(description="LVGL page ID to inspect, from `esphome_lvgl_get_pages`."),
+    ],
+) -> dict:
+    """Get all LVGL widgets on one page of an ESPHome device.
 
-    Returns widget types, IDs, positions, and key properties.
-    Lambda callback values are shown as '<lambda>' (opaque — use esphome_get_config to see full source).
+    Parses the device's YAML and summarises each widget on the requested
+    page: type, ID, position and key properties. Lambda callback values are
+    shown as the literal string `<lambda>` (opaque here — use
+    `esphome_get_config` to see the full source).
+
+    Use when: inspecting an existing page's widget tree before adding or
+    removing a widget.
+    Not for: page-level metadata only — use `esphome_lvgl_get_pages`.
+    Returns: `{"device", "page", "widget_count", "widgets": [...]}`.
+    Errors: `{"error": "..."}` when the file can't be found/parsed, when
+    there is no `lvgl:` section, or when `page_id` doesn't exist.
     """
     parsed, err = _lvgl_load(device_name)
     if err:
@@ -835,9 +1131,26 @@ def lvgl_get_page_widgets(device_name: str, page_id: str) -> dict:
     return {"error": f"Page '{page_id}' not found in {device_name}"}
 
 
-@mcp.tool()
-def lvgl_get_styles(device_name: str) -> dict:
-    """Get LVGL theme and style definitions from an ESPHome device config."""
+@mcp.tool(annotations=read("Get an ESPHome device's LVGL styles"))
+def lvgl_get_styles(
+    device_name: Annotated[
+        str,
+        Field(description="Device name, with or without the '.yaml' suffix, e.g. 'kitchen_display'."),
+    ],
+) -> dict:
+    """Get the LVGL theme and style definitions from an ESPHome device config.
+
+    Parses the device's YAML and reads the `lvgl:` section's `theme`,
+    `style_definitions` and `gradients` keys.
+
+    Use when: checking what theme/styles a device's LVGL UI currently uses
+    before referencing a style name in a new widget.
+    Not for: page/widget content — use `esphome_lvgl_get_pages`/
+    `esphome_lvgl_get_page_widgets`.
+    Returns: `{"device", "theme", "style_definitions", "gradients"}`.
+    Errors: `{"error": "..."}` when the file can't be found/parsed, or when
+    there is no `lvgl:` section in the device config.
+    """
     parsed, err = _lvgl_load(device_name)
     if err:
         return {"error": err}
@@ -852,12 +1165,28 @@ def lvgl_get_styles(device_name: str) -> dict:
     }
 
 
-@mcp.tool()
-def lvgl_validate(device_name: str) -> dict:
-    """Validate LVGL config client-side: unique widget/page IDs, valid page references.
+@mcp.tool(annotations=read("Validate an ESPHome device's LVGL structure"))
+def lvgl_validate(
+    device_name: Annotated[
+        str,
+        Field(description="Device name, with or without the '.yaml' suffix, e.g. 'kitchen_display'."),
+    ],
+) -> dict:
+    """Validate an ESPHome device's LVGL structure client-side, without the dashboard.
 
-    Runs without ESPHome Dashboard — useful as a pre-check before compiling.
-    For full component/property validation use esphome_validate_config.
+    Checks for duplicate page/widget IDs and `default_page` references that
+    don't exist among the parsed pages. This is a structural check only —
+    it does not validate widget properties or ESPHome component
+    correctness.
+
+    Use when: a quick local pre-check after editing LVGL pages/widgets,
+    before a full `esphome_validate_config` or `esphome_compile_device`.
+    Not for: full component/property validation — use
+    `esphome_validate_config`.
+    Returns: `{"device", "valid": <bool>, "pages": <count>, "widgets":
+    <count>, "issues": [...]}`.
+    Errors: `{"error": "...", "valid": False}` when the file can't be
+    found/parsed, or when there is no `lvgl:` section in the device config.
     """
     parsed, err = _lvgl_load(device_name)
     if err:
@@ -904,20 +1233,61 @@ def lvgl_validate(device_name: str) -> dict:
     }
 
 
-@mcp.tool()
-def lvgl_add_widget(device_name: str, page_id: str, widget_type: str, properties: dict) -> dict:
-    """Add an LVGL widget to a page on an ESPHome device and save the config.
+@mcp.tool(annotations=destructive("Add an LVGL widget to a page", idempotent=False))
+def lvgl_add_widget(
+    device_name: Annotated[
+        str,
+        Field(description="Device name, with or without the '.yaml' suffix, e.g. 'kitchen_display'."),
+    ],
+    page_id: Annotated[
+        str,
+        Field(description="LVGL page ID to add the widget to, from `esphome_lvgl_get_pages`."),
+    ],
+    widget_type: Annotated[
+        str,
+        Field(
+            description=(
+                "LVGL widget type, e.g. 'label', 'button', 'slider', 'arc', "
+                "'switch', 'spinbox', 'img', 'line', 'meter'."
+            )
+        ),
+    ],
+    properties: Annotated[
+        dict,
+        Field(
+            description=(
+                "Widget properties, e.g. {'id': ..., 'x': ..., 'y': ..., "
+                "'width': ..., 'height': ..., 'text': ..., 'value': ..., "
+                "'styles': ...}."
+            )
+        ),
+    ],
+) -> dict:
+    """Add an LVGL widget to a page on an ESPHome device and save the whole config.
 
-    widget_type: LVGL widget type — label, button, slider, arc, switch, spinbox, img, line, meter, etc.
-    properties: dict of widget properties (id, x, y, width, height, text, value, styles, ...).
+    Appends `{widget_type: properties}` to the page's `widgets` list, then
+    rewrites the entire device YAML file via `yaml.dump` — comments, blank
+    lines and YAML anchors/aliases elsewhere in the file are NOT preserved.
+    A `<file>.bak` copy of the previous content is written first so the
+    original formatting can be recovered manually. Lambda callbacks
+    (`on_click`, `on_value_changed`) are not supported here — add them
+    manually via `esphome_get_config`/`esphome_write_config`. Calling this
+    twice with the same arguments adds two separate widgets.
 
-    Lambda callbacks (on_click, on_value_changed) are not supported here — add them manually
-    via esphome_get_config / esphome_write_config. After adding, run esphome_validate_config
-    then esphome_compile_device + esphome_upload_device to deploy.
-
-    WARNING: this rewrites the entire device YAML file — comments, blank lines and YAML
-    anchors/aliases elsewhere in the file are NOT preserved. A `<file>.bak` copy of the
-    previous content is written first so you can recover the original formatting.
+    Use when: adding one widget to an existing LVGL page without
+    hand-editing the full YAML.
+    Not for: removing a widget — use `esphome_lvgl_delete_widget`; not for
+    lambda callbacks or other structural edits — use
+    `esphome_get_config`/`esphome_write_config`. After adding, run
+    `esphome_lvgl_validate`/`esphome_validate_config`, then
+    `esphome_compile_device` and `esphome_upload_device` to deploy.
+    Returns: `{"success": True, "name": ..., "bytes": ..., "backup": ...,
+    "added": <widget_type>, "to_page": <page_id>}` on success.
+    Errors: `{"error": "..."}` when the file can't be found/parsed, when
+    there is no `lvgl:` section, when `page_id` doesn't exist, or when the
+    save itself fails (`{"success": False, "error": ...}`).
+    Limits: rewrites and overwrites the whole file; only the pre-write
+    content is recoverable, via the `.bak` copy.
     """
     parsed, err = _lvgl_load(device_name)
     if err:
@@ -937,15 +1307,40 @@ def lvgl_add_widget(device_name: str, page_id: str, widget_type: str, properties
     return {"error": f"Page '{page_id}' not found in {device_name}"}
 
 
-@mcp.tool()
-def lvgl_delete_widget(device_name: str, page_id: str, widget_id: str) -> dict:
-    """Delete an LVGL widget by id from a page on an ESPHome device and save the config.
+@mcp.tool(annotations=destructive("Delete an LVGL widget from a page", idempotent=True))
+def lvgl_delete_widget(
+    device_name: Annotated[
+        str,
+        Field(description="Device name, with or without the '.yaml' suffix, e.g. 'kitchen_display'."),
+    ],
+    page_id: Annotated[
+        str,
+        Field(description="LVGL page ID the widget belongs to, from `esphome_lvgl_get_pages`."),
+    ],
+    widget_id: Annotated[
+        str,
+        Field(description="Widget `id` to delete, from `esphome_lvgl_get_page_widgets`."),
+    ],
+) -> dict:
+    """Delete an LVGL widget by id from a page on an ESPHome device and save the whole config.
 
-    After deleting, run esphome_validate_config then esphome_compile_device + esphome_upload_device.
+    Removes the matching widget from the page's `widgets` list, then
+    rewrites the entire device YAML file via `yaml.dump` — comments, blank
+    lines and YAML anchors/aliases elsewhere in the file are NOT preserved.
+    A `<file>.bak` copy of the previous content is written first so the
+    original formatting can be recovered manually.
 
-    WARNING: this rewrites the entire device YAML file — comments, blank lines and YAML
-    anchors/aliases elsewhere in the file are NOT preserved. A `<file>.bak` copy of the
-    previous content is written first so you can recover the original formatting.
+    Use when: removing one widget from an existing LVGL page.
+    Not for: adding a widget — use `esphome_lvgl_add_widget`. After
+    deleting, run `esphome_lvgl_validate`/`esphome_validate_config`, then
+    `esphome_compile_device` and `esphome_upload_device` to deploy.
+    Returns: `{"success": True, "name": ..., "bytes": ..., "backup": ...,
+    "deleted": <widget_id>, "from_page": <page_id>}` on success.
+    Errors: `{"error": "..."}` when the file can't be found/parsed, when
+    there is no `lvgl:` section, when `page_id`/`widget_id` doesn't exist,
+    or when the save itself fails (`{"success": False, "error": ...}`).
+    Limits: rewrites and overwrites the whole file; only the pre-write
+    content is recoverable, via the `.bak` copy.
     """
     parsed, err = _lvgl_load(device_name)
     if err:

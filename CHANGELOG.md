@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.21.0
+
+**Added**
+
+- MCP tool annotations on all 323 tools (`readOnlyHint`/`destructiveHint`/`idempotentHint`/
+  `openWorldHint` + `title`) so clients can auto-approve reads and ask before destructive
+  calls; every parameter now carries a schema description (`Field(description=...)`); tool
+  descriptions rewritten to a single contract template (what it does, when to use / not
+  for with the alternative tool, returns, errors, limits).
+- `discover_get_tool_doc` also returns `input_schema` and `annotations` alongside the
+  description, so a client can inspect a tool's full parameter schema and MCP hints
+  without a separate `tools/list` round trip.
+- Tool contract test suite (`tests/test_tool_contract.py`, `tests/test_discover_contract.py`,
+  `tests/contract/`) — a golden API surface snapshot, tool/domain counts, and a per-tool
+  lint guarding descriptions, annotations and overlap cross-references, so future changes
+  to the tool surface fail loudly instead of drifting silently.
+
+**Changed**
+
+- Dependencies pinned to tested majors: `fastmcp>=3.2.4,<4`, `mcp>=1.27,<2`,
+  `pydantic>=2,<3`, and upper bounds added for `fastapi`, `uvicorn`, `httpx`, `websockets`,
+  `pyyaml` and `python-dotenv` — the add-on builds its image at install time, so an
+  unpinned major meant every new install could silently run untested code.
+- `helpers_reload_helpers` now returns `{"reloaded": [...], "failed": {domain: message}}`
+  instead of a bare list, so a failed domain reload is visible instead of swallowed.
+- Supervisor destructive tools (reboot/shutdown/restart-core and friends) return the
+  common `{"error": "confirmation_required", "message": ..., "action": ...}` shape when
+  called without `confirm=True`, instead of each tool inventing its own refusal format.
+
+**Fixed**
+
+- `automations_validate_automation_references` checked almost no services for classic
+  automations — the legacy top-level `action:` list was skipped — and silently reported
+  "nothing missing" when fetching live services/entities failed. It now reports
+  `entities_check`/`services_check` (`"ok"`/`"unavailable"`) and `errors[]` naming which
+  fetch failed.
+- `automations_set_group` rejects `entities` combined with `add_entities`/
+  `remove_entities` instead of calling `group.set` with an ambiguous mix.
+- `entities_bulk_set_state` tags per-item failures with `error_type`
+  (`validation`/`http`/`unexpected`) instead of a single undifferentiated error string.
+- `themes_*` tools return `{"success": false, "error": "invalid_theme_name", ...}` for a
+  bad theme name instead of raising.
+
+**Removed**
+
+- Dead `ha_client.read_config_file` (raised `NotImplementedError`, unused).
+
 ## 0.20.0
 
 Cards could not be added to any modern (`type: sections`) dashboard view. A sections

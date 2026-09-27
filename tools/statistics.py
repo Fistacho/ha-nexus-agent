@@ -7,10 +7,17 @@ Useful for energy analysis, temperature trends, and sensor summaries.
 from __future__ import annotations
 
 import datetime
+from typing import Annotated
+
 from fastmcp import FastMCP
+from pydantic import Field
+
 import ha_client as ha
+from tools._contract import read
 
 mcp = FastMCP("statistics")
+
+TOOL_CONTRACT = {"version": 1, "long_ok": {}, "heuristic_exceptions": {}}
 
 
 def _iso(dt: datetime.datetime) -> str:
@@ -31,12 +38,31 @@ def _parse_dt(s: str) -> datetime.datetime:
     raise ValueError(f"Cannot parse date: {s!r}. Use YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS")
 
 
-@mcp.tool()
-def list_statistic_ids(statistic_type: str = "sum") -> list[dict]:
-    """List all available statistic IDs (sensor entities tracked by recorder).
+@mcp.tool(annotations=read("List recorder statistic IDs"))
+def list_statistic_ids(
+    statistic_type: Annotated[
+        str,
+        Field(
+            description=(
+                "Which kind of statistic to list: 'sum' for counters (energy, "
+                "gas, water) or 'mean' for sensors (temperature, humidity)."
+            )
+        ),
+    ] = "sum",
+) -> list[dict]:
+    """List recorder statistic IDs of the requested type.
 
-    statistic_type: 'sum' (counters: energy, gas, water) or 'mean' (sensors: temperature, humidity).
-    Returns id, name, source, unit_of_measurement.
+    Calls WS `recorder/list_statistic_ids` and returns one entry per
+    statistic the recorder tracks, with its source and unit.
+
+    Use when: discovering which entities have long-term statistics before
+    calling `statistics_get_statistics` or `statistics_get_statistics_metadata`.
+    Not for: raw short-term state history — use
+    `history_get_state_history` instead.
+    Returns: list of `{"statistic_id", "name", "source", "unit", "has_sum",
+    "has_mean"}` dicts.
+    Errors: `[{"error": "..."}]` when `statistic_type` is not 'sum'/'mean',
+    when the WS response isn't a list, or when the WS call raises.
     """
     if statistic_type not in ("sum", "mean"):
         return [{"error": "statistic_type must be 'sum' or 'mean'"}]
@@ -59,25 +85,71 @@ def list_statistic_ids(statistic_type: str = "sum") -> list[dict]:
         return [{"error": str(e)}]
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("Get aggregated statistics for a time range"))
 def get_statistics(
-    statistic_ids: list[str],
-    start: str,
-    end: str | None = None,
-    period: str = "day",
-    types: list[str] | None = None,
+    statistic_ids: Annotated[
+        list[str],
+        Field(
+            description=(
+                "Entity or statistic IDs to fetch, e.g. "
+                "['sensor.energy_consumption']. Discover valid values with "
+                "`statistics_list_statistic_ids`."
+            )
+        ),
+    ],
+    start: Annotated[
+        str,
+        Field(
+            description=(
+                "Start of the range: a date ('2024-01-01') or datetime "
+                "('2024-01-01T00:00:00')."
+            )
+        ),
+    ],
+    end: Annotated[
+        str | None,
+        Field(
+            description=(
+                "End of the range, same formats as `start`. Omit to use the "
+                "current time."
+            )
+        ),
+    ] = None,
+    period: Annotated[
+        str,
+        Field(
+            description=(
+                "Aggregation bucket size: one of '5minute', 'hour', 'day', "
+                "'week', 'month'."
+            )
+        ),
+    ] = "day",
+    types: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Which aggregates to include per bucket, any of 'sum', "
+                "'mean', 'min', 'max', 'state', 'change'. Omit to use "
+                "['sum', 'mean', 'min', 'max']."
+            )
+        ),
+    ] = None,
 ) -> dict:
-    """Get aggregated statistics for one or more entities over a time range.
+    """Get aggregated recorder statistics for one or more IDs over a time range.
 
-    Args:
-        statistic_ids: list of entity IDs or statistic IDs, e.g. ["sensor.energy_consumption"]
-        start: start date/time, e.g. "2024-01-01" or "2024-01-01T00:00:00"
-        end: end date/time (defaults to now)
-        period: aggregation period — "hour", "day", "week", "month", "5minute"
-        types: which aggregates to return — any of ["sum", "mean", "min", "max", "state", "change"]
-                defaults to ["sum", "mean", "min", "max"]
+    Calls WS `recorder/statistics_during_period` with `start`/`end` parsed
+    into UTC timestamps, converts each row's epoch `start` back to an ISO
+    string, and rounds numeric aggregates to 4 decimals.
 
-    Returns dict of {statistic_id: [{"start": ..., "sum": ..., "mean": ..., ...}]}.
+    Use when: analysing energy/temperature/etc. trends over hours, days,
+    weeks or months using the recorder's pre-aggregated data.
+    Not for: raw short-term state changes between two points in time — use
+    `history_get_state_history` instead.
+    Returns: `{"period", "start", "end", "types", "data": {statistic_id:
+    [{"start": <iso>, "sum": ..., "mean": ..., ...}, ...]}}`.
+    Errors: `{"error": "..."}` for an empty `statistic_ids`, an invalid
+    `period`/`types` value, an unparsable `start`/`end`, a non-dict WS
+    response, or when the WS call raises.
     """
     if not statistic_ids:
         return {"error": "statistic_ids must be a non-empty list"}
@@ -146,12 +218,48 @@ def get_statistics(
     }
 
 
-@mcp.tool()
-def get_energy_statistics(days: int = 30, period: str = "day") -> dict:
-    """Get sum statistics for all energy-related sensors (kWh, gas m³) for the last N days.
+@mcp.tool(annotations=read("Get energy sum statistics for recent days"))
+def get_energy_statistics(
+    days: Annotated[
+        int,
+        Field(
+            description=(
+                "Number of days back from now to include, between 1 and "
+                "365."
+            )
+        ),
+    ] = 30,
+    period: Annotated[
+        str,
+        Field(
+            description=(
+                "Aggregation bucket size passed to the underlying "
+                "statistics query, e.g. 'day', 'week', 'month'."
+            )
+        ),
+    ] = "day",
+) -> dict:
+    """Get sum statistics for every energy-related sensor over the last N days.
 
-    Convenience wrapper around get_statistics — auto-discovers 'sum' statistic IDs.
-    Useful for tracking overall energy consumption trends.
+    Auto-discovers 'sum' statistic IDs via WS `recorder/list_statistic_ids`,
+    keeps only those whose unit is an energy/volume unit (kWh, MWh, Wh, m³,
+    ft³, L, gal — instantaneous power sensors in 'W' are excluded since a
+    'sum' statistic on a power sensor is not a meaningful energy value),
+    then fetches `sum`/`change` via WS `recorder/statistics_during_period`
+    for the requested window. This is a convenience wrapper around
+    `statistics_get_statistics`.
+
+    Use when: a quick overview of overall energy consumption trends is
+    needed without first listing statistic IDs by hand.
+    Not for: a hand-picked set of statistic IDs or non-energy sensors — use
+    `statistics_get_statistics` directly.
+    Returns: `{"days", "period", "statistic_count", "data": {statistic_id:
+    {"unit": ..., "rows": [{"start": <date>, "change": ..., "sum": ...},
+    ...]}}}`, or `{"message": "..."}` when no energy statistic IDs are
+    found.
+    Errors: `{"error": "days must be between 1 and 365"}` for an
+    out-of-range `days`; `{"error": "..."}` when either WS call raises or
+    returns an unexpected shape.
     """
     if days < 1 or days > 365:
         return {"error": "days must be between 1 and 365"}
@@ -220,9 +328,32 @@ def get_energy_statistics(days: int = 30, period: str = "day") -> dict:
     }
 
 
-@mcp.tool()
-def get_statistics_metadata(statistic_ids: list[str]) -> list[dict]:
-    """Get metadata (unit, source, name) for specific statistic IDs."""
+@mcp.tool(annotations=read("Get statistics metadata"))
+def get_statistics_metadata(
+    statistic_ids: Annotated[
+        list[str],
+        Field(
+            description=(
+                "Statistic IDs to fetch metadata for, e.g. "
+                "['sensor.energy_consumption']. Discover valid values with "
+                "`statistics_list_statistic_ids`."
+            )
+        ),
+    ],
+) -> list[dict]:
+    """Get metadata (unit, source, name) for specific recorder statistic IDs.
+
+    Calls WS `recorder/get_statistics_metadata` and returns one entry per
+    requested ID.
+
+    Use when: you already know the statistic IDs and only need their
+    unit/source/name, without their historical values.
+    Not for: the actual aggregated values — use `statistics_get_statistics`.
+    Returns: list of `{"statistic_id", "name", "source", "unit", "has_sum",
+    "has_mean"}` dicts.
+    Errors: `[{"error": "..."}]` when the WS response isn't a list or the
+    WS call raises.
+    """
     try:
         result = ha._ws_call("recorder/get_statistics_metadata", statistic_ids=statistic_ids)
         if not isinstance(result, list):

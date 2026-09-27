@@ -1,0 +1,6266 @@
+{
+  "namespace_count": 29,
+  "tool_count": 323,
+  "tools": {
+    "areas_control_area": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "area_id": {
+            "type": "string"
+          },
+          "domain": {
+            "default": "light",
+            "type": "string"
+          }
+        },
+        "required": [
+          "area_id",
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "areas_create_area": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "areas_delete_area": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "area_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "area_id"
+        ],
+        "type": "object"
+      }
+    },
+    "areas_get_area_entities": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "area_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "area_id"
+        ],
+        "type": "object"
+      }
+    },
+    "areas_get_area_states": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "area_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "area_id"
+        ],
+        "type": "object"
+      }
+    },
+    "areas_list_areas": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "areas_list_devices": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "areas_list_floors": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "automations_activate_scene": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_delete_automation": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "automation_id": {
+            "type": "string"
+          },
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "automation_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_delete_scene": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
+          "scene_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scene_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_delete_script": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
+          "script_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "script_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_disable_automation": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_enable_automation": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_get_automation_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "automation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "automation_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_get_automation_trace": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "automation_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "automation_id",
+          "run_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_get_last_automation_trace": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "automation_id": {
+            "type": "string"
+          },
+          "failed_only": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "automation_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_get_last_script_trace": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "failed_only": {
+            "default": false,
+            "type": "boolean"
+          },
+          "script_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "script_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_get_scene_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "scene_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scene_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_get_script_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "script_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "script_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_get_script_trace": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "script_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "script_id",
+          "run_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_list_automation_traces": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "automation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "automation_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_list_automations": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "automations_list_groups": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "automations_list_scenes": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "automations_list_script_traces": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "script_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "script_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_list_scripts": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "automations_reload_automations": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "automations_reload_scenes": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "automations_reload_scripts": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "automations_remove_group": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
+          "group_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_run_script": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "variables": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_set_automation_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "automation_id": {
+            "type": "string"
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "automation_id",
+          "config"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_set_group": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "add_entities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "all_entities": {
+            "default": false,
+            "type": "boolean"
+          },
+          "entities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "remove_entities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_set_scene_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entities": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scene_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scene_id",
+          "name",
+          "entities"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_set_script_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "script_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "script_id",
+          "config"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_trigger_automation": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_validate_automation_references": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "yaml_content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "yaml_content"
+        ],
+        "type": "object"
+      }
+    },
+    "automations_validate_best_practices": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "yaml_content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "yaml_content"
+        ],
+        "type": "object"
+      }
+    },
+    "blueprints_delete_blueprint": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "default": "automation",
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "blueprints_import_blueprint": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "default": "automation",
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    "blueprints_list_blueprints": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "default": "automation",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "blueprints_save_blueprint": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "default": "automation",
+            "type": "string"
+          },
+          "overwrite": {
+            "default": false,
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "yaml_content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "yaml_content"
+        ],
+        "type": "object"
+      }
+    },
+    "blueprints_substitute_blueprint": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "default": "automation",
+            "type": "string"
+          },
+          "input": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "input"
+        ],
+        "type": "object"
+      }
+    },
+    "calendar_create_event": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "type": "string"
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "start": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "summary",
+          "start",
+          "end"
+        ],
+        "type": "object"
+      }
+    },
+    "calendar_delete_event": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "recurrence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "recurrence_range": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "uid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "uid"
+        ],
+        "type": "object"
+      }
+    },
+    "calendar_list_calendars": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "calendar_list_events": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "type": "string"
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "start",
+          "end"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_build_from_recipe": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "recipe": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "recipe"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_build_styles": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "container": {
+            "default": "desktop",
+            "type": "string"
+          },
+          "extra": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "snippet_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "target": {
+            "default": "block",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snippet_names"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_check_schema_sync": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "card_builder_create_card": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {
+            "default": "",
+            "type": "string"
+          },
+          "categories": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "name",
+          "config"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_create_css_custom_property": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "inherits": {
+            "default": false,
+            "type": "boolean"
+          },
+          "initial_value": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "syntax": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "syntax",
+          "initial_value"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_create_style_preset": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "extends_preset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "data"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_delete_card": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "card_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "card_id"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_delete_css_custom_property": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "custom_property_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "custom_property_id"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_delete_media": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_delete_style_preset": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "style_preset_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "style_preset_id"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_design_for_intent": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "entity_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "intent": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "intent"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_design_principles": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "card_builder_get_block_schema": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "block_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "block_type"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_get_card": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "card_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "card_id"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_get_card_template": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_get_design_pattern": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_get_style_snippet": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "container": {
+            "default": "desktop",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "target": {
+            "default": "block",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_list_block_types": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "include_internal": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "card_builder_list_button_toggle_features": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "card_builder_list_card_templates": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "card_builder_list_cards": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "card_builder_list_css_custom_properties": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "card_builder_list_design_patterns": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "card_builder_list_media": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "card_builder_list_style_categories": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "card_builder_list_style_presets": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "card_builder_list_style_snippets": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "card_builder_list_style_targets": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "block_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "block_type"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_make_template_card": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "categories": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "type": "string"
+          },
+          "slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "template": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "template",
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_recipe_guide": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "card_builder_renderer_card_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "card_id": {
+            "type": "string"
+          },
+          "slot_actions": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "slot_entities": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "card_id"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_update_card": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "card_id": {
+            "type": "string"
+          },
+          "categories": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "skip_version_bump": {
+            "default": false,
+            "type": "boolean"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "card_id"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_update_style_preset": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "extends_preset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "style_preset_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "style_preset_id"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_upload_image_from_url": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "path": {
+            "default": "",
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_upload_media": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content_base64": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "path": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "content_base64"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_upload_media_from_path": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "local_path": {
+            "type": "string"
+          },
+          "path": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "required": [
+          "local_path"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_upload_svg": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "path": {
+            "default": "",
+            "type": "string"
+          },
+          "svg_content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "svg_content",
+          "filename"
+        ],
+        "type": "object"
+      }
+    },
+    "card_builder_validate_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "config"
+        ],
+        "type": "object"
+      }
+    },
+    "dashboards_add_card_to_section": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "card_config": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "section_index": {
+            "type": "integer"
+          },
+          "url_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "view_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "url_path",
+          "section_index",
+          "card_config"
+        ],
+        "type": "object"
+      }
+    },
+    "dashboards_add_card_to_view": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "card_config": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "url_path": {
+            "type": "string"
+          },
+          "view_index": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "url_path",
+          "view_index",
+          "card_config"
+        ],
+        "type": "object"
+      }
+    },
+    "dashboards_add_dashboard_resource": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "resource_type": {
+            "default": "module",
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    "dashboards_add_section_to_view": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "section_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "url_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "view_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "url_path"
+        ],
+        "type": "object"
+      }
+    },
+    "dashboards_add_view_to_dashboard": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "url_path": {
+            "type": "string"
+          },
+          "view_config": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "url_path",
+          "view_config"
+        ],
+        "type": "object"
+      }
+    },
+    "dashboards_get_dashboard_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "url_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "dashboards_get_dashboard_resources": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "dashboards_get_view_sections": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "url_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "view_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "dashboards_list_dashboards": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "dashboards_remove_card_from_section": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "card_index": {
+            "type": "integer"
+          },
+          "section_index": {
+            "type": "integer"
+          },
+          "url_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "view_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "url_path",
+          "section_index",
+          "card_index"
+        ],
+        "type": "object"
+      }
+    },
+    "dashboards_remove_dashboard_resource": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
+          "resource_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "resource_id"
+        ],
+        "type": "object"
+      }
+    },
+    "dashboards_save_dashboard_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "url_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "config"
+        ],
+        "type": "object"
+      }
+    },
+    "dashboards_screenshot": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "full_page": {
+            "default": false,
+            "type": "boolean"
+          },
+          "height": {
+            "default": 800,
+            "type": "integer"
+          },
+          "url_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "wait_ms": {
+            "default": 2500,
+            "type": "integer"
+          },
+          "width": {
+            "default": 1280,
+            "type": "integer"
+          },
+          "zoom": {
+            "default": 1.0,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "dashboards_update_card_in_section": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "card_config": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "card_index": {
+            "type": "integer"
+          },
+          "merge": {
+            "default": true,
+            "type": "boolean"
+          },
+          "section_index": {
+            "type": "integer"
+          },
+          "url_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "view_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "url_path",
+          "section_index",
+          "card_index",
+          "card_config"
+        ],
+        "type": "object"
+      }
+    },
+    "dashboards_update_dashboard_resource": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "resource_id": {
+            "type": "integer"
+          },
+          "resource_type": {
+            "default": "module",
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_id",
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    "devices_list_devices": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "devices_list_devices_in_area": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "area_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "area_id"
+        ],
+        "type": "object"
+      }
+    },
+    "devices_remove_device": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "config_entry_id": {
+            "type": "string"
+          },
+          "device_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "config_entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "devices_update_device": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "area_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "disabled_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name_by_user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "device_id"
+        ],
+        "type": "object"
+      }
+    },
+    "discover_get_tool_doc": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "discover_list_namespaces": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "discover_refresh_index": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "discover_tool_search": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "query": {
+            "type": "string"
+          },
+          "top_k": {
+            "default": 10,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "energy_add_battery_source": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "stat_energy_from": {
+            "type": "string"
+          },
+          "stat_energy_to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stat_energy_from",
+          "stat_energy_to"
+        ],
+        "type": "object"
+      }
+    },
+    "energy_add_grid_consumption": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "stat_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "stat_energy_from": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stat_energy_from"
+        ],
+        "type": "object"
+      }
+    },
+    "energy_add_grid_return": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "stat_compensation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "stat_energy_to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stat_energy_to"
+        ],
+        "type": "object"
+      }
+    },
+    "energy_add_solar_source": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "config_entry_solar_forecast": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "stat_energy_from": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stat_energy_from"
+        ],
+        "type": "object"
+      }
+    },
+    "energy_get_energy_info": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "energy_get_energy_prefs": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "energy_remove_energy_source": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "stat_energy_from": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stat_energy_from"
+        ],
+        "type": "object"
+      }
+    },
+    "energy_save_energy_prefs": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "device_consumption": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "energy_per_unit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "energy_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "energy_validate_energy_prefs": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "entities_assign_entity_to_area": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "area_id": {
+            "type": "string"
+          },
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "area_id"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_bulk_control": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "entity_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "entity_ids",
+          "action"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_bulk_set_entity_exposure": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "assistants": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "entity_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "should_expose": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entity_ids",
+          "should_expose"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_bulk_set_state": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "updates": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "updates"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_disable_entity": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_enable_entity": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_get_entity": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_get_entity_exposure": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_list_entities": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "fields": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "offset": {
+            "default": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "entities_list_entity_registry": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "entities_list_exposed_entities": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "assistant": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assistant"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_select_option": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "option": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "option"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_set_entity_exposure": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "assistant": {
+            "type": "string"
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "should_expose": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entity_id",
+          "assistant",
+          "should_expose"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_set_value": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "entity_id",
+          "value"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_toggle": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_turn_off": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_turn_on": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "brightness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "color_temp": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "color_temp_kelvin": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "rgb_color": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "entities_update_entity_name": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_clean_mqtt": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "log_lines": {
+            "default": 200,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "timeout": {
+            "default": 60,
+            "type": "number"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_compile_device": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "log_lines": {
+            "default": 200,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "only_generate": {
+            "default": false,
+            "type": "boolean"
+          },
+          "timeout": {
+            "default": 180,
+            "type": "number"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_get_addon_info": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "esphome_get_addon_logs": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "lines": {
+            "default": 150,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "esphome_get_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_get_device_entities": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "device_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_name"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_list_devices": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "esphome_lvgl_add_widget": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "device_name": {
+            "type": "string"
+          },
+          "page_id": {
+            "type": "string"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "widget_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_name",
+          "page_id",
+          "widget_type",
+          "properties"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_lvgl_delete_widget": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "device_name": {
+            "type": "string"
+          },
+          "page_id": {
+            "type": "string"
+          },
+          "widget_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_name",
+          "page_id",
+          "widget_id"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_lvgl_get_page_widgets": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "device_name": {
+            "type": "string"
+          },
+          "page_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_name",
+          "page_id"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_lvgl_get_pages": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "device_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_name"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_lvgl_get_styles": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "device_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_name"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_lvgl_list_devices": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "esphome_lvgl_validate": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "device_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_name"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_ping_dashboard": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "esphome_upload_device": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "log_lines": {
+            "default": 200,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "port": {
+            "default": "OTA",
+            "type": "string"
+          },
+          "timeout": {
+            "default": 240,
+            "type": "number"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_validate_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "log_lines": {
+            "default": 200,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "timeout": {
+            "default": 60,
+            "type": "number"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "esphome_write_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    "files_append_to_config_file": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "relative_path": {
+            "type": "string"
+          },
+          "validate_yaml": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "relative_path",
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    "files_delete_config_file": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "relative_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "relative_path"
+        ],
+        "type": "object"
+      }
+    },
+    "files_list_config_files": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "subdirectory": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "files_read_config_file": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "relative_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "relative_path"
+        ],
+        "type": "object"
+      }
+    },
+    "files_validate_yaml_content": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    "files_write_config_file": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "relative_path": {
+            "type": "string"
+          },
+          "validate_yaml": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "relative_path",
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    "git_git_checkout_branch": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "branch_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "branch_name"
+        ],
+        "type": "object"
+      }
+    },
+    "git_git_commit_all": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    "git_git_create_branch": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "branch_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "branch_name"
+        ],
+        "type": "object"
+      }
+    },
+    "git_git_diff": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "git_git_init_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "git_git_list_branches": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "git_git_log": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "git_git_rollback_file": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
+          "relative_path": {
+            "type": "string"
+          },
+          "sha": {
+            "default": "HEAD",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relative_path"
+        ],
+        "type": "object"
+      }
+    },
+    "git_git_rollback_to_commit": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
+          "sha": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha"
+        ],
+        "type": "object"
+      }
+    },
+    "git_git_status": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "git_safe_write_with_checkpoint": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "commit_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "content": {
+            "type": "string"
+          },
+          "relative_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "relative_path",
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    "hacs_add_custom_repository": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "category"
+        ],
+        "type": "object"
+      }
+    },
+    "hacs_get_hacs_repository": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "repo_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_id"
+        ],
+        "type": "object"
+      }
+    },
+    "hacs_install_hacs_repository": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "repo_id": {
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "repo_id"
+        ],
+        "type": "object"
+      }
+    },
+    "hacs_list_hacs_critical_updates": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "hacs_list_hacs_repositories": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "hacs_uninstall_hacs_repository": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "repo_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_id"
+        ],
+        "type": "object"
+      }
+    },
+    "hacs_update_hacs_repository": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "repo_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_id"
+        ],
+        "type": "object"
+      }
+    },
+    "helpers_cancel_timer": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "helpers_increment_counter": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "helpers_list_helpers": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "helpers_reload_helpers": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "helpers_reset_counter": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "helpers_set_input_boolean": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "value": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entity_id",
+          "value"
+        ],
+        "type": "object"
+      }
+    },
+    "helpers_set_input_datetime": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "datetime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "helpers_set_input_number": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "entity_id",
+          "value"
+        ],
+        "type": "object"
+      }
+    },
+    "helpers_set_input_select": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "option": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "option"
+        ],
+        "type": "object"
+      }
+    },
+    "helpers_set_input_text": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "value"
+        ],
+        "type": "object"
+      }
+    },
+    "helpers_start_timer": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "duration": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "history_get_error_log": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "history_get_ha_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "history_get_logbook": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "hours": {
+            "default": 24,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "history_get_state_history": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "hours": {
+            "default": 24,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "history_get_system_info": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "integrations_abort_config_flow": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "flow_id"
+        ],
+        "type": "object"
+      }
+    },
+    "integrations_abort_options_flow": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "flow_id"
+        ],
+        "type": "object"
+      }
+    },
+    "integrations_disable_integration": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "integrations_enable_integration": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "integrations_get_config_flow": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "flow_id"
+        ],
+        "type": "object"
+      }
+    },
+    "integrations_list_flow_handlers": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "integrations_list_flows_in_progress": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "integrations_remove_integration": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
+          "entry_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "integrations_start_config_flow": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "handler": {
+            "type": "string"
+          },
+          "show_advanced_options": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "handler"
+        ],
+        "type": "object"
+      }
+    },
+    "integrations_start_options_flow": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_id": {
+            "type": "string"
+          },
+          "show_advanced_options": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "integrations_submit_config_flow_step": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          },
+          "user_input": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "flow_id",
+          "user_input"
+        ],
+        "type": "object"
+      }
+    },
+    "integrations_submit_options_flow_step": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          },
+          "user_input": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "flow_id",
+          "user_input"
+        ],
+        "type": "object"
+      }
+    },
+    "integrations_update_integration_entry": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_id": {
+            "type": "string"
+          },
+          "pref_disable_new_entities": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "pref_disable_polling": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "labels_assign_label_to_device": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "device_id": {
+            "type": "string"
+          },
+          "label_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "label_id"
+        ],
+        "type": "object"
+      }
+    },
+    "labels_assign_label_to_entity": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "label_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "label_id"
+        ],
+        "type": "object"
+      }
+    },
+    "labels_create_category": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "labels_create_label": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "labels_delete_category": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "category_id": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "category_id"
+        ],
+        "type": "object"
+      }
+    },
+    "labels_delete_label": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "label_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label_id"
+        ],
+        "type": "object"
+      }
+    },
+    "labels_list_categories": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "default": "automation",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "labels_list_devices_with_label": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "label_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label_id"
+        ],
+        "type": "object"
+      }
+    },
+    "labels_list_entities_with_label": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "label_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label_id"
+        ],
+        "type": "object"
+      }
+    },
+    "labels_list_labels": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "labels_remove_label_from_device": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "device_id": {
+            "type": "string"
+          },
+          "label_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "label_id"
+        ],
+        "type": "object"
+      }
+    },
+    "labels_remove_label_from_entity": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "label_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "label_id"
+        ],
+        "type": "object"
+      }
+    },
+    "labels_update_category": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "category_id": {
+            "type": "string"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "category_id"
+        ],
+        "type": "object"
+      }
+    },
+    "labels_update_label": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "label_id": {
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "label_id"
+        ],
+        "type": "object"
+      }
+    },
+    "search_deep_search": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "search_find_orphan_devices": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "search_find_related": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "search_find_unused_entities": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "search_search_areas": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "search_search_devices": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "search_search_entities": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "services_call_service": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "domain": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain",
+          "service"
+        ],
+        "type": "object"
+      }
+    },
+    "services_camera_record": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "duration": {
+            "default": 10,
+            "type": "integer"
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "filename"
+        ],
+        "type": "object"
+      }
+    },
+    "services_camera_snapshot": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "filename"
+        ],
+        "type": "object"
+      }
+    },
+    "services_fire_event": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "event_data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "event_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_type"
+        ],
+        "type": "object"
+      }
+    },
+    "services_list_services": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "services_media_play_pause": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "services_media_seek": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "position": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "entity_id",
+          "position"
+        ],
+        "type": "object"
+      }
+    },
+    "services_notify_persistent_create": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "notification_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    "services_notify_persistent_dismiss": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "notification_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "notification_id"
+        ],
+        "type": "object"
+      }
+    },
+    "services_notify_persistent_dismiss_all": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "services_press_button": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "services_reload_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain"
+        ],
+        "type": "object"
+      }
+    },
+    "services_render_template": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "template": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "template"
+        ],
+        "type": "object"
+      }
+    },
+    "services_send_notification": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    "services_set_climate_mode": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "hvac_mode": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "hvac_mode"
+        ],
+        "type": "object"
+      }
+    },
+    "services_set_cover_position": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entity_id",
+          "position"
+        ],
+        "type": "object"
+      }
+    },
+    "services_set_cover_tilt": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "tilt_position": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entity_id",
+          "tilt_position"
+        ],
+        "type": "object"
+      }
+    },
+    "services_set_light_color": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "brightness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "color_temp": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "color_temp_kelvin": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "rgb_color": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "services_set_volume": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "volume": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "entity_id",
+          "volume"
+        ],
+        "type": "object"
+      }
+    },
+    "snapshot_get_area_snapshot": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "area_id": {
+            "type": "string"
+          },
+          "summary": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "area_id"
+        ],
+        "type": "object"
+      }
+    },
+    "snapshot_get_snapshot": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "area_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "include": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "offset": {
+            "default": 0,
+            "type": "integer"
+          },
+          "state_fields": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "summary": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "statistics_get_energy_statistics": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "days": {
+            "default": 30,
+            "type": "integer"
+          },
+          "period": {
+            "default": "day",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "statistics_get_statistics": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "period": {
+            "default": "day",
+            "type": "string"
+          },
+          "start": {
+            "type": "string"
+          },
+          "statistic_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "statistic_ids",
+          "start"
+        ],
+        "type": "object"
+      }
+    },
+    "statistics_get_statistics_metadata": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "statistic_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "statistic_ids"
+        ],
+        "type": "object"
+      }
+    },
+    "statistics_list_statistic_ids": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "statistic_type": {
+            "default": "sum",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "supervisor_create_backup": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "addons": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "folders": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "type": "string"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "supervisor_delete_backup": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "supervisor_get_addon": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "supervisor_get_addon_logs": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "lines": {
+            "default": 100,
+            "type": "integer"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "supervisor_get_addon_stats": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "supervisor_get_core_info": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "supervisor_get_host_info": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "supervisor_get_supervisor_info": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "supervisor_install_addon": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "supervisor_list_addons": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "supervisor_list_backups": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "supervisor_restart_addon": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "supervisor_restart_core": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "supervisor_restart_host": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "supervisor_restore_backup": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "supervisor_set_addon_options": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "options": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "options"
+        ],
+        "type": "object"
+      }
+    },
+    "supervisor_start_addon": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "supervisor_stop_addon": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "supervisor_uninstall_addon": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "supervisor_update_addon": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "type": "object"
+      }
+    },
+    "system_check_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "system_create_backup": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "system_get_all_integrations": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "system_get_repairs": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "system_get_system_health": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "system_get_updates": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "pending_only": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "system_list_integrations": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "system_ping_ha": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "system_reload_all": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "system_reload_integration": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "type": "object"
+      }
+    },
+    "system_restart_ha": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "system_stop_ha": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "themes_create_theme": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "overwrite": {
+            "default": false,
+            "type": "boolean"
+          },
+          "reload": {
+            "default": true,
+            "type": "boolean"
+          },
+          "variables": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "variables"
+        ],
+        "type": "object"
+      }
+    },
+    "themes_delete_theme": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "reload": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "themes_get_theme": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "themes_list_theme_files": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "themes_list_themes": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "themes_reload_themes": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "themes_set_active_theme": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "default": "default",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "themes_update_theme": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "merge": {
+            "default": true,
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "reload": {
+            "default": true,
+            "type": "boolean"
+          },
+          "variables": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "variables"
+        ],
+        "type": "object"
+      }
+    },
+    "todo_add_item": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "due_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "item"
+        ],
+        "type": "object"
+      }
+    },
+    "todo_list_items": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "status": {
+            "default": "needs_action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "todo_list_todo_lists": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "todo_remove_item": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "uid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "uid"
+        ],
+        "type": "object"
+      }
+    },
+    "todo_update_item": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "item": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "uid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "uid"
+        ],
+        "type": "object"
+      }
+    },
+    "voice_create_pipeline": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_engine": {
+            "default": "homeassistant",
+            "type": "string"
+          },
+          "conversation_language": {
+            "default": "en",
+            "type": "string"
+          },
+          "language": {
+            "default": "en",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "stt_engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "stt_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tts_engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tts_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tts_voice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "wake_word_entity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "wake_word_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "voice_delete_pipeline": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "pipeline_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pipeline_id"
+        ],
+        "type": "object"
+      }
+    },
+    "voice_get_pipeline": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "pipeline_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "voice_list_conversation_agents": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "voice_list_pipelines": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "voice_list_stt_engines": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "voice_list_tts_engines": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "voice_list_wake_word_engines": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "voice_set_preferred_pipeline": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "pipeline_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pipeline_id"
+        ],
+        "type": "object"
+      }
+    },
+    "voice_update_pipeline": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "conversation_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "stt_engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "stt_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tts_engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tts_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tts_voice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "wake_word_entity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "wake_word_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "pipeline_id"
+        ],
+        "type": "object"
+      }
+    },
+    "ws_call_service": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "domain": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain",
+          "service"
+        ],
+        "type": "object"
+      }
+    },
+    "ws_get_config": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "ws_get_states": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "ws_listen_events": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "default": 10,
+            "type": "integer"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "timeout": {
+            "default": 15.0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "event_type"
+        ],
+        "type": "object"
+      }
+    },
+    "ws_listen_state_changes": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "default": 5,
+            "type": "integer"
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "timeout": {
+            "default": 30.0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "ws_render_template": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "template": {
+            "type": "string"
+          },
+          "timeout": {
+            "default": 10.0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "template"
+        ],
+        "type": "object"
+      }
+    },
+    "ws_subscribe_trigger": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "timeout": {
+            "default": 30.0,
+            "type": "number"
+          },
+          "trigger": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "trigger"
+        ],
+        "type": "object"
+      }
+    },
+    "zones_create_zone": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "passive": {
+            "default": false,
+            "type": "boolean"
+          },
+          "radius": {
+            "default": 100,
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "latitude",
+          "longitude"
+        ],
+        "type": "object"
+      }
+    },
+    "zones_delete_zone": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "zone_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "zone_id"
+        ],
+        "type": "object"
+      }
+    },
+    "zones_get_user_location": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "person_entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "zones_get_zone": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "zones_list_persons_in_zone": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "zone_entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "zone_entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "zones_list_zones": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "zones_reload_zones": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "zones_update_zone": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "passive": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "radius": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    }
+  }
+}

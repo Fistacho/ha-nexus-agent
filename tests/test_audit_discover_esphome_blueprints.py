@@ -28,6 +28,7 @@ F26 `tools/blueprints.py` import_blueprint: docstring claimed it saves to
 from __future__ import annotations
 
 import json
+import re
 
 import httpx
 import pytest
@@ -379,9 +380,23 @@ def test_validate_config_docstring_documents_protocol_change():
 
 
 def test_clean_mqtt_docstring_flags_open_risk_after_device_builder_migration():
+    """Checks the SEMANTICS of the caveat, not one exact phrasing (ADR-0002 T3j bans
+    ALL-CAPS emphasis outside WARNING/DANGEROUS, so the docstring now opens the
+    caveat with "WARNING:" instead of the literal string "OPEN RISK" this test used
+    to require) — must still (1) carry an explicit WARNING-level caveat, (2) name
+    ESPHome Device Builder, and (3) state the legacy endpoint has no confirmed
+    equivalent there."""
     doc = _unwrap(esphome_tools.clean_mqtt).__doc__
-    assert "OPEN RISK" in doc
-    assert "device-builder" in doc.lower()
+
+    assert re.search(r"\bWARNING\b", doc), "docstring must carry an explicit WARNING-level caveat"
+    assert re.search(r"device[ -]builder", doc, re.IGNORECASE), (
+        "docstring must name the ESPHome Device Builder add-on"
+    )
+    assert re.search(
+        r"(no equivalent|does not exist|doesn't exist|not exist|no confirmed equivalent|open risk)",
+        doc,
+        re.IGNORECASE,
+    ), "docstring must state the legacy endpoint is missing/unconfirmed in Device Builder"
 
 
 # --- ESPHome add-on slug: discover dynamically instead of hard-coded guesses --------

@@ -1,13 +1,22 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import os
 from collections.abc import Callable
-from fastmcp import FastMCP
+from typing import Annotated
+
 from dotenv import load_dotenv
+from fastmcp import FastMCP
+from pydantic import Field
+
+from tools._contract import destructive, read
 
 load_dotenv()
 
 mcp = FastMCP("websocket")
+
+TOOL_CONTRACT = {"version": 1, "long_ok": {}, "heuristic_exceptions": {}}
 
 _HA_URL = os.getenv("HA_URL", "http://homeassistant.local:8123").rstrip("/")
 
@@ -75,7 +84,7 @@ async def _ws_send_recv(
                             break
                 if collect_events == 0 and data.get("type") == "result":
                     break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break
 
     return results
@@ -94,9 +103,23 @@ def _run(coro):
         return asyncio.run(coro)
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("Get all entity states via WebSocket"))
 def get_states() -> list[dict]:
-    """Get all entity states via WebSocket (faster than REST for large installs)."""
+    """Get all entity states over the WebSocket API in one call.
+
+    Sends `get_states` and waits (up to a fixed 10 second internal timeout)
+    for the matching `result` message; this can be faster than the HTTP
+    `/api/states` endpoint on large installs since it avoids per-entity HTTP
+    overhead.
+
+    Use when: fetching every entity's state on a large installation.
+    Not for: a filtered or paginated state list — use
+    `entities_list_entities`.
+    Returns: the list of state dicts from HA's `result.result`.
+    Errors: raises `RuntimeError` when no successful `result` message is
+    received.
+    Limits: blocks for up to 10 seconds waiting for the WebSocket response.
+    """
     results = _run(_ws_send_recv([{"type": "get_states"}]))
     for r in results:
         if r.get("type") == "result" and r.get("success"):
@@ -104,14 +127,38 @@ def get_states() -> list[dict]:
     raise RuntimeError("get_states failed")
 
 
-@mcp.tool()
-def call_service(domain: str, service: str, data: dict | None = None) -> dict:
-    """Call a Home Assistant action that returns response data (e.g. weather.get_forecasts,
-    calendar.get_events, todo.get_items) and return that response. Always sends
-    return_response=true, so actions without responses (light.turn_on, switch.toggle, most control
-    actions) fail with a validation error — use services_call_service for those. `data` is the
-    service data including targets. Returns the raw WS result {success, result: {context, response}}
-    or {success: false, error}.
+@mcp.tool(annotations=destructive("Call a service and return its response", idempotent=False, open_world=True))
+def call_service(
+    domain: Annotated[str, Field(description="Service domain to call, e.g. 'weather' or 'calendar'.")],
+    service: Annotated[
+        str, Field(description="Service name within the domain, e.g. 'get_forecasts' or 'get_events'.")
+    ],
+    data: Annotated[
+        dict | None,
+        Field(
+            description=(
+                "Service data: fields plus targets (entity_id/area_id/device_id). "
+                "Omit for a call that needs no data."
+            )
+        ),
+    ] = None,
+) -> dict:
+    """Call a Home Assistant action over WebSocket and return its response data.
+
+    Sends `call_service` with `return_response=True` always set, so actions
+    that support a response (e.g. `weather.get_forecasts`,
+    `calendar.get_events`, `todo.get_items`) return it; actions without a
+    response (`light.turn_on`, `switch.toggle`, most control actions) fail
+    with a validation error under `return_response=True`.
+
+    Use when: the action's response payload is needed, not just the changed
+    states.
+    Not for: a plain control action with no response data — use
+    `services_call_service`.
+    Returns: the raw WS result: `{success, result: {context, response}}` on
+    success, or a failure dict from HA on failure; `{"success": False}` with
+    no other keys if no `result` message arrives at all.
+    Limits: blocks for up to the internal 10 second WebSocket timeout.
     """
     payload = {
         "type": "call_service",
@@ -127,14 +174,26 @@ def call_service(domain: str, service: str, data: dict | None = None) -> dict:
     return {"success": False}
 
 
-@mcp.tool()
-def render_template(template: str, timeout: float = 10.0) -> str:
-    """Render a Jinja2 template through HA's WebSocket `render_template` subscription and return the
-    rendered value. HA acks the subscription with a null `result`, then streams the rendered value in
-    a follow-up `event`; this waits (up to `timeout` seconds) for that event and returns its `result`.
-    Raises RuntimeError if the template itself errors (e.g. undefined variable) or if no event arrives
-    within `timeout`. For a one-shot render, prefer services_render_template (plain REST call, no
-    subscription semantics) — use this one only when you specifically need the WS transport.
+@mcp.tool(annotations=read("Render a Jinja2 template via subscription"))
+def render_template(
+    template: Annotated[str, Field(description="Jinja2 template string to render, e.g. '{{ states(\"sensor.temp\") }}'.")],
+    timeout: Annotated[
+        float, Field(description="Maximum seconds to wait for the rendered value before raising an error.")
+    ] = 10.0,
+) -> str:
+    """Render a Jinja2 template through HA's WebSocket render_template subscription.
+
+    Sends `render_template`; HA acknowledges the subscription with a null
+    `result`, then streams the rendered value in a follow-up `event`. This
+    waits up to `timeout` seconds for that event and returns its `result`.
+
+    Use when: the WebSocket transport itself is specifically required.
+    Not for: a one-shot render — use `services_render_template`, a plain
+    HTTP call with no subscription semantics.
+    Returns: the rendered template value from the `event`'s `result` field.
+    Errors: raises `RuntimeError` when the template itself errors (e.g. an
+    undefined variable) or when no event arrives within `timeout`.
+    Limits: blocks for up to `timeout` seconds (default 10).
     """
     payload = {"type": "render_template", "template": template}
     results = _run(_ws_send_recv([payload], collect_events=1, timeout=timeout))
@@ -147,12 +206,35 @@ def render_template(template: str, timeout: float = 10.0) -> str:
     raise RuntimeError("Template render timed out waiting for a result event")
 
 
-@mcp.tool()
-def listen_state_changes(entity_id: str, count: int = 5, timeout: float = 30.0) -> list[dict]:
-    """Listen for state change events for one specific entity. Returns up to `count` events for
-    `entity_id` within `timeout` seconds. HA has no server-side entity filter for the `state_changed`
-    event type, so this subscribes to all of them and counts only the ones matching `entity_id` toward
-    `count` — on a busy instance, unrelated entities' events no longer displace the target's.
+@mcp.tool(annotations=read("Listen for one entity's state changes"))
+def listen_state_changes(
+    entity_id: Annotated[
+        str, Field(description="Full entity ID to watch for state changes, e.g. 'binary_sensor.motion'.")
+    ],
+    count: Annotated[
+        int, Field(description="Maximum number of matching events to collect before returning early.")
+    ] = 5,
+    timeout: Annotated[
+        float, Field(description="Maximum seconds to wait for `count` matching events before returning what arrived.")
+    ] = 30.0,
+) -> list[dict]:
+    """Passively wait for and collect state_changed events for one entity.
+
+    Subscribes to HA's `state_changed` event type, which has no server-side
+    per-entity filter, and counts only events matching `entity_id` toward
+    `count`, so unrelated entities' events do not displace the target's.
+    Returns early once `count` matching events arrive, or whatever arrived
+    once `timeout` elapses.
+
+    Use when: waiting for a specific entity to change state, e.g. to confirm
+    an action took effect.
+    Not for: any entity's events — use `ws_listen_events` with
+    event_type='state_changed'; a one-shot trigger condition — use
+    `ws_subscribe_trigger`.
+    Returns: list of dicts with `entity_id`, `old_state`, `new_state`,
+    `last_changed`.
+    Limits: blocks for up to `timeout` seconds; collects at most `count`
+    events.
     """
     def _is_target_entity(data: dict) -> bool:
         return data.get("event", {}).get("data", {}).get("entity_id") == entity_id
@@ -178,10 +260,29 @@ def listen_state_changes(entity_id: str, count: int = 5, timeout: float = 30.0) 
     return events
 
 
-@mcp.tool()
-def listen_events(event_type: str, count: int = 10, timeout: float = 15.0) -> list[dict]:
-    """Listen for any HA event type (e.g. 'zha_event', 'mobile_app_notification_action', 'call_service').
-    Returns up to `count` events within `timeout` seconds.
+@mcp.tool(annotations=read("Listen for a HA event type"))
+def listen_events(
+    event_type: Annotated[str, Field(description="HA event type to subscribe to, e.g. 'zha_event' or 'call_service'.")],
+    count: Annotated[
+        int, Field(description="Maximum number of events to collect before returning early.")
+    ] = 10,
+    timeout: Annotated[
+        float, Field(description="Maximum seconds to wait for `count` events before returning what arrived.")
+    ] = 15.0,
+) -> list[dict]:
+    """Passively wait for and collect events of one HA event type.
+
+    Subscribes to `event_type` via `subscribe_events` and collects up to
+    `count` events, returning early once that many arrive or whatever
+    arrived once `timeout` elapses.
+
+    Use when: observing any event type, e.g. integration or automation
+    events not tied to a single entity's state.
+    Not for: state changes on one specific entity — use
+    `ws_listen_state_changes`.
+    Returns: list of raw `event` payloads as HA sent them.
+    Limits: blocks for up to `timeout` seconds; collects at most `count`
+    events.
     """
     payload = {"type": "subscribe_events", "event_type": event_type}
     results = _run(_ws_send_recv([payload], collect_events=count, timeout=timeout))
@@ -192,9 +293,22 @@ def listen_events(event_type: str, count: int = 10, timeout: float = 15.0) -> li
     ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("Get HA config via WebSocket"))
 def get_config() -> dict:
-    """Get HA config via WebSocket."""
+    """Get Home Assistant's own configuration over WebSocket.
+
+    Sends `get_config` and waits (up to a fixed 10 second internal timeout)
+    for the matching `result` message.
+
+    Use when: reading HA's location, unit system, version and component
+    list over the WebSocket transport.
+    Not for: the same data over HTTP — use `history_get_ha_config`.
+    Returns: HA's config dict from `result.result` (location, unit_system,
+    version, components, ...).
+    Errors: raises `RuntimeError` when no successful `result` message is
+    received.
+    Limits: blocks for up to 10 seconds waiting for the WebSocket response.
+    """
     results = _run(_ws_send_recv([{"type": "get_config"}]))
     for r in results:
         if r.get("type") == "result" and r.get("success"):
@@ -202,10 +316,33 @@ def get_config() -> dict:
     raise RuntimeError("get_config failed")
 
 
-@mcp.tool()
-def subscribe_trigger(trigger: dict, timeout: float = 30.0) -> dict | None:
-    """Wait for a HA trigger to fire. Returns the trigger context when it fires.
-    Example trigger: {"platform": "state", "entity_id": "binary_sensor.motion", "to": "on"}
+@mcp.tool(annotations=read("Wait for a HA trigger to fire"))
+def subscribe_trigger(
+    trigger: Annotated[
+        dict,
+        Field(
+            description=(
+                "HA trigger definition dict, e.g. {'platform': 'state', "
+                "'entity_id': 'binary_sensor.motion', 'to': 'on'}."
+            )
+        ),
+    ],
+    timeout: Annotated[
+        float, Field(description="Maximum seconds to wait for the trigger to fire before returning None.")
+    ] = 30.0,
+) -> dict | None:
+    """Passively wait for a Home Assistant trigger definition to fire once.
+
+    Sends `subscribe_trigger` with the given `trigger` and waits up to
+    `timeout` seconds for the matching `event`.
+
+    Use when: waiting for a specific trigger condition (state, time, numeric
+    state, ...) rather than polling.
+    Not for: raw state_changed events on one entity — use
+    `ws_listen_state_changes`.
+    Returns: the trigger's `event` context dict when it fires, or `None` if
+    `timeout` elapses first.
+    Limits: blocks for up to `timeout` seconds.
     """
     payload = {"type": "subscribe_trigger", "trigger": trigger}
     results = _run(_ws_send_recv([payload], collect_events=1, timeout=timeout))

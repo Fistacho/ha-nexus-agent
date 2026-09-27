@@ -6,11 +6,17 @@ filtered payload. Saves a lot of tokens on larger setups.
 """
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastmcp import FastMCP
+from pydantic import Field
 
 import ha_client as ha
+from tools._contract import read
 
 mcp = FastMCP("snapshot")
+
+TOOL_CONTRACT = {"version": 1, "long_ok": {}, "heuristic_exceptions": {}}
 
 
 _DEFAULT_INCLUDE = ("states", "areas", "devices", "entities", "integrations")
@@ -91,32 +97,95 @@ def _filter_states(
     return states
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("Get filtered HA snapshot"))
 def get_snapshot(
-    include: list[str] | None = None,
-    domains: list[str] | None = None,
-    area_id: str | None = None,
-    summary: bool = True,
-    limit: int | None = None,
-    offset: int = 0,
-    state_fields: list[str] | None = None,
+    include: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Sections to return. Omit for the default "
+                "states/areas/devices/entities/integrations set. Valid values: "
+                "states, areas, floors, devices, entities, integrations, config."
+            )
+        ),
+    ] = None,
+    domains: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Entity domain filter applied to the states/entities sections, "
+                "e.g. ['light', 'climate']. Omit to include every domain."
+            )
+        ),
+    ] = None,
+    area_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Area registry ID; keeps only states/devices/entities assigned to "
+                "this area, directly or via their device. Omit for no area filter."
+            )
+        ),
+    ] = None,
+    summary: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true, each state is reduced to entity_id/state/friendly_name. "
+                "Set false for full attributes; ignored when state_fields is given."
+            )
+        ),
+    ] = True,
+    limit: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Maximum number of states to return after filtering, for "
+                "pagination on large setups. Omit for no limit."
+            )
+        ),
+    ] = None,
+    offset: Annotated[
+        int,
+        Field(
+            description=(
+                "Number of filtered states to skip before applying limit, for "
+                "pagination. 0 starts from the first matching state."
+            )
+        ),
+    ] = 0,
+    state_fields: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Explicit per-state keys to return, overriding summary. Valid: "
+                "entity_id, state, friendly_name, attributes, last_changed, "
+                "last_updated. Omit to use summary instead."
+            )
+        ),
+    ] = None,
 ) -> dict:
-    """One-shot aggregated view of HA state, filtered.
+    """Return a single filtered snapshot combining HA states, registries and config.
 
-    `include` controls which sections appear (defaults to
-    states/areas/devices/entities/integrations). Valid values:
-    states, areas, floors, devices, entities, integrations, config.
+    Reads live states via `ha.get_states()` and, depending on `include`, the
+    area/floor/device/entity registries and config entries over HTTP in one
+    call, applies `domains`/`area_id` filtering and `limit`/`offset`
+    pagination to the states list, and returns one dict keyed by section
+    name. Every call in this path is a read; nothing here writes to HA.
 
-    `domains` restricts the states list (e.g. ["light", "climate"]).
-    `area_id` keeps only states whose entity/device belongs to that area.
-    `summary` strips state objects to entity_id/state/friendly_name
-    (set False for full attributes).
-
-    `limit` / `offset` paginate the states list (useful for large setups).
-    `state_fields` overrides summary — return only these keys per state.
-    Valid: entity_id, state, friendly_name, attributes, last_changed, last_updated.
-
-    Returns: {"section_name": [...], ..., "_meta": {...}}.
+    Use when: a client needs several registries and/or states together and
+    should not spend several round-trips assembling that context.
+    Not for: a single registry without filtering — use `entities_list_entities`
+    or `ws_get_states` for a plain state list, or `areas_list_devices`/
+    `devices_list_devices` for a plain device list.
+    Returns: dict keyed by requested section (`states`, `areas`, `floors`,
+    `devices`, `entities`, `integrations`, `config`), plus `_meta` (echoed
+    filters and per-section counts) and `_states_total` (pre-pagination
+    count) when `states` is included.
+    Errors: `{"error": "unknown_include", "unknown": [...], "valid": [...]}`
+    when `include` names a section outside the valid set.
+    Limits: `limit`/`offset` paginate only the `states` section; every other
+    section is always returned in full.
     """
     sections = list(include) if include else list(_DEFAULT_INCLUDE)
     unknown = [s for s in sections if s not in _ALL_INCLUDES]
@@ -182,9 +251,45 @@ def get_snapshot(
     return out
 
 
-@mcp.tool()
-def get_area_snapshot(area_id: str, summary: bool = True) -> dict:
-    """Convenience: full snapshot scoped to one area (states + devices + entities)."""
+@mcp.tool(annotations=read("Get area-scoped HA snapshot"))
+def get_area_snapshot(
+    area_id: Annotated[
+        str,
+        Field(
+            description=(
+                "Area registry ID to scope the snapshot to; states, devices and "
+                "entities outside this area are excluded."
+            )
+        ),
+    ],
+    summary: Annotated[
+        bool,
+        Field(
+            description=(
+                "If true, each state is reduced to entity_id/state/friendly_name. "
+                "Set false for full attributes."
+            )
+        ),
+    ] = True,
+) -> dict:
+    """Return states, devices and entities for one area in a single call.
+
+    Convenience wrapper that calls `snapshot_get_snapshot` with
+    `include=["states", "devices", "entities", "areas"]` and `area_id` fixed
+    to the given area; it adds no filtering beyond `summary`.
+
+    Use when: exploring or controlling everything in one physical area
+    without composing `snapshot_get_snapshot`'s `include`/`area_id`
+    arguments by hand.
+    Not for: a snapshot spanning several areas or other sections — call
+    `snapshot_get_snapshot` directly; entity registry rows without state
+    values — use `areas_get_area_entities`; live state values without
+    registry context — use `areas_get_area_states`.
+    Returns: same dict shape as `snapshot_get_snapshot` with
+    `include=["states", "devices", "entities", "areas"]`.
+    Limits: no pagination; every state/device/entity in the area is
+    returned.
+    """
     return get_snapshot(
         include=["states", "devices", "entities", "areas"],
         area_id=area_id,

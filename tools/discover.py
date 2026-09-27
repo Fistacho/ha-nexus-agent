@@ -17,11 +17,16 @@ import math
 import re
 from collections import Counter
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Annotated, Any, Iterable
 
 from fastmcp import FastMCP
+from pydantic import Field
+
+from tools._contract import read
 
 mcp = FastMCP("discover")
+
+TOOL_CONTRACT = {"version": 1, "long_ok": {}, "heuristic_exceptions": {}}
 
 # Filled by `bind_root` from server.py once all modules are mounted.
 _ROOT: FastMCP | None = None
@@ -121,6 +126,8 @@ def _build_index(tools: Iterable[Any]) -> list[dict[str, Any]]:
                 "summary": _summarise(desc),
                 "_tokens": Counter(tokens),
                 "_full_description": desc,
+                "_input_schema": getattr(t, "parameters", None),
+                "_annotations": getattr(t, "annotations", None),
             }
         )
     return index
@@ -173,16 +180,39 @@ def _score(query_tokens: list[str], entry: dict[str, Any], avgdl: float, df: Cou
 
 # --- Public tools --------------------------------------------------------
 
-@mcp.tool()
-def tool_search(query: str, top_k: int = 10, namespace: str | None = None) -> list[dict]:
-    """Fuzzy search the Nexus tool catalogue.
+@mcp.tool(annotations=read("Search the tool catalogue"))
+def tool_search(
+    query: Annotated[
+        str,
+        Field(description="Free-text search query, e.g. 'turn on light' or 'backup'."),
+    ],
+    top_k: Annotated[
+        int,
+        Field(description="Maximum number of ranked hits to return, e.g. 10."),
+    ] = 10,
+    namespace: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Restrict results to one namespace, e.g. 'card_builder'. "
+                "Omit to search every namespace."
+            )
+        ),
+    ] = None,
+) -> list[dict]:
+    """Fuzzy search the Nexus tool catalogue by name and description.
 
-    Returns the top `top_k` tools matching `query`, scored by BM25-lite over
-    name + description. Pass `namespace` (e.g. "card_builder") to restrict
-    matches. Each hit: `{name, namespace, summary, score}`.
+    Scores every mounted tool's name + description against `query` with a
+    BM25-lite ranking (term frequency/inverse document frequency plus a
+    small boost when a query word appears in the tool name itself) and
+    returns the top `top_k` matches.
 
-    Use this to discover the right tool name before calling it — instead of
+    Use when: finding the right tool name before calling it, instead of
     keeping the whole tool surface in working memory.
+    Not for: a single tool's full documentation once you have its name —
+    use `discover_get_tool_doc`.
+    Returns: list of `{"name", "namespace", "summary", "score"}` dicts,
+    highest score first; empty list if nothing scores above zero.
     """
     index = _ensure_index()
     if namespace:
@@ -221,31 +251,76 @@ def tool_search(query: str, top_k: int = 10, namespace: str | None = None) -> li
     ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("List tool namespaces"))
 def list_namespaces() -> list[dict]:
-    """Compact map of every Nexus tool namespace and its tool count."""
+    """List every mounted Nexus tool namespace with its tool count.
+
+    Groups the current tool index by namespace (the mount prefix parsed
+    from `server.py`, e.g. "card_builder", "entities") and counts entries.
+
+    Use when: getting an overview of which domains exist before narrowing a
+    `discover_tool_search` call with its `namespace` parameter.
+    Not for: the tools within one namespace — use `discover_tool_search`
+    with that `namespace`.
+    Returns: list of `{"namespace", "count"}`, most populated first.
+    """
     index = _ensure_index()
     counts: Counter = Counter(e["namespace"] for e in index)
     return [{"namespace": ns, "count": c} for ns, c in counts.most_common()]
 
 
-@mcp.tool()
-def get_tool_doc(name: str) -> dict:
-    """Full description (docstring) of a single tool — call after `tool_search` to read details."""
+@mcp.tool(annotations=read("Get full documentation for one tool"))
+def get_tool_doc(
+    name: Annotated[
+        str,
+        Field(description="Full tool name including namespace, e.g. 'entities_get_entity', from `discover_tool_search`."),
+    ],
+) -> dict:
+    """Get one tool's full description, parameter schema and MCP annotations.
+
+    Looks the tool up by exact name in the current index and returns its
+    full (un-truncated) docstring alongside the same `inputSchema` and
+    `annotations` an MCP client sees from `tools/list`.
+
+    Use when: reading a specific tool's full contract after finding its
+    name with `discover_tool_search`.
+    Not for: searching by keyword — use `discover_tool_search`.
+    Returns: `{"name", "namespace", "description", "input_schema",
+    "annotations"}`. `input_schema` is the tool's JSON-schema parameter
+    dict; `annotations` is the four MCP hints plus `title` as a plain dict,
+    or `None` for a tool whose module has not yet declared them.
+    Errors: `{"error": "not_found", "name": name}` when no tool with that
+    exact name is in the index.
+    """
     index = _ensure_index()
     for e in index:
         if e["name"] == name:
+            annotations = e["_annotations"]
             return {
                 "name": e["name"],
                 "namespace": e["namespace"],
                 "description": e["_full_description"],
+                "input_schema": e["_input_schema"],
+                "annotations": annotations.model_dump() if annotations is not None else None,
             }
     return {"error": "not_found", "name": name}
 
 
-@mcp.tool()
+@mcp.tool(annotations=read("Rebuild the tool search index"))
 def refresh_index() -> dict:
-    """Force-rebuild the search index (run after dynamically adding tools at runtime)."""
+    """Force-rebuild the in-memory tool search index.
+
+    Drops the cached index and rebuilds it from `_ROOT.list_tools()`. Only
+    nexus's own in-process cache is affected — nothing in HA changes.
+
+    Use when: tools were mounted or changed at runtime after the index was
+    first built (normally only relevant during development, since
+    `server.py` mounts every namespace once at startup).
+    Not for: routine searches — `discover_tool_search`/
+    `discover_list_namespaces`/`discover_get_tool_doc` already rebuild the
+    index lazily on first use.
+    Returns: `{"status": "rebuilt", "tools": <count>}`.
+    """
     global _INDEX
     _INDEX = None
     idx = _ensure_index()

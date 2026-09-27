@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ha-nexus-agent"
-version = "0.20.0"
+version = "0.21.0"
 description = "Nexus — MCP server for Home Assistant; 323 tools across 29 domains for AI control of your smart home"
 authors = [{ name = "Łukasz Żochowski" }]
 license = { text = "MIT" }
@@ -20,14 +20,16 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "fastmcp>=2.0.0",
-    "httpx>=0.27.0",
-    "websockets>=12.0",
-    "pyyaml>=6.0",
-    "python-dotenv>=1.0.0",
-    "gitpython>=3.1.40",
-    "fastapi>=0.115.0",
-    "uvicorn>=0.30.0",
+    "fastmcp>=3.2.4,<4",
+    "mcp>=1.27,<2",
+    "pydantic>=2,<3",
+    "httpx>=0.27.0,<1",
+    "websockets>=12.0,<17",
+    "pyyaml>=6.0,<7",
+    "python-dotenv>=1.0.0,<2",
+    "gitpython>=3.1.40,<4",
+    "fastapi>=0.115.0,<1",
+    "uvicorn>=0.30.0,<1",
 ]
 
 [project.optional-dependencies]

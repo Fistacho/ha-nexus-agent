@@ -347,17 +347,6 @@ def ping() -> bool:
         return False
 
 
-# --- File operations (via HA REST - requires config access) ---
-
-def read_config_file(path: str) -> str:
-    """path relative to /config, e.g. 'automations.yaml'"""
-    with _client() as c:
-        r = c.get(f"/api/config/core/check_config")
-        # File read via SSH/direct. Here we use HA file editor add-on style.
-        # Falls back to direct filesystem read if HA_CONFIG_PATH is set.
-        raise NotImplementedError("Use tools/files.py for file operations")
-
-
 # --- Statistics ---
 
 def get_statistics_metadata(statistic_ids: list[str] | None = None) -> list[dict]:
