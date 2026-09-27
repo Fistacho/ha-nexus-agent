@@ -65,6 +65,79 @@ def test_ping_dashboard_unreachable_reports_port_not_mapped(monkeypatch):
     assert "6052" in diag["advice"]
 
 
+def test_ping_dashboard_unreachable_host_network_null_port_not_mapped(monkeypatch):
+    """Live fact (2026-09-27, Supervisor 2026.09.2): `GET /addons/<slug>/info`
+    for the ESPHome add-on returned `"network": {"6052/tcp": null}`,
+    `"host_network": true`, `"ingress": true`, `"ingress_port": 65490`. Port
+    6052 is disabled (`null` = the user hasn't published it via the add-on's
+    Network settings) — previously confirmed empirically that
+    `homeassistant.local:6052` does not respond. The pre-fix code checked
+    only the *key* `6052/tcp` (present regardless of its value) and reported
+    `port_6052_mapped: True` here, which is wrong."""
+    monkeypatch.setattr(
+        esphome_tools, "_dash",
+        lambda method, path, timeout=5: {"error": f"Cannot connect to ESPHome dashboard at {esphome_tools._DASH_URL}."},
+    )
+
+    def fake_sup_json(method, path, body=None, timeout=30):
+        if path == "/addons":
+            return {"data": {"addons": [{"slug": "5c53de3b_esphome", "state": "started"}]}}
+        assert path == "/addons/5c53de3b_esphome/info"
+        return {
+            "data": {
+                "network": {"6052/tcp": None},
+                "host_network": True,
+                "ingress": True,
+                "ingress_port": 65490,
+            }
+        }
+
+    monkeypatch.setattr(esphome_tools, "_sup_json", fake_sup_json)
+
+    result = _unwrap(esphome_tools.ping_dashboard)()
+
+    assert result["reachable"] is False
+    diag = result["diagnosis"]
+    assert diag["slug"] == "5c53de3b_esphome"
+    assert diag["port_6052_mapped"] is False
+    assert diag["ingress_only"] is True
+    assert "6052" in diag["advice"]
+    assert "map" in diag["advice"].lower()
+
+
+def test_ping_dashboard_unreachable_host_network_int_port_is_mapped(monkeypatch):
+    """`host_network: true` does not flip the meaning of a published port:
+    per `supervisor/apps/app.py::App.ports` (tag 2026.09.2), the persisted
+    `network` dict is merged from user overrides / config defaults the same
+    way regardless of `host_network` — only Docker's own port-publish step
+    (`supervisor/docker/app.py::DockerApp.ports`, which returns `None` when
+    `host_network` is True) ignores it. An `int` value here still means the
+    user enabled/published the port."""
+    monkeypatch.setattr(
+        esphome_tools, "_dash",
+        lambda method, path, timeout=5: {"error": f"Cannot connect to ESPHome dashboard at {esphome_tools._DASH_URL}."},
+    )
+
+    def fake_sup_json(method, path, body=None, timeout=30):
+        if path == "/addons":
+            return {"data": {"addons": [{"slug": "5c53de3b_esphome", "state": "started"}]}}
+        return {
+            "data": {
+                "network": {"6052/tcp": 6052},
+                "host_network": True,
+                "ingress": True,
+            }
+        }
+
+    monkeypatch.setattr(esphome_tools, "_sup_json", fake_sup_json)
+
+    result = _unwrap(esphome_tools.ping_dashboard)()
+
+    diag = result["diagnosis"]
+    assert diag["port_6052_mapped"] is True
+    assert diag["ingress_only"] is False
+
+
 def test_ping_dashboard_unreachable_reports_port_mapped_but_still_unreachable(monkeypatch):
     monkeypatch.setattr(
         esphome_tools, "_dash",

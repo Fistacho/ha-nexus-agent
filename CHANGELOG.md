@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.22.2
+
+**Fixed**
+
+- `esphome_ping_dashboard` reported `port_6052_mapped: true` (and advised checking
+  the firewall) when the Supervisor's add-on info returned `"network": {"6052/tcp":
+  null}` — port 6052 declared but not published. The check now only counts the port
+  as mapped when its value is an `int`, and when it isn't (ingress-only), the advice
+  points at publishing port 6052 in the add-on's own Network settings with
+  authentication enabled. Found on a live HA instance, 2026-09-27.
+
 ## 0.22.1
 
 Includes everything in 0.22.0 below — 0.22.0 was never installable under the real

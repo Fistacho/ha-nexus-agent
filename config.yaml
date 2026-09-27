@@ -1,5 +1,5 @@
 name: Nexus Agent
-version: "0.22.1"
+version: "0.22.2"
 slug: nexus_agent
 description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.22.1 (includes 0.22.0): read-only mode and per-namespace disabling, confirm gates on backup/config-file deletion, safer section-by-section dashboard edits, and a fix for the add-on image failing to build under the Supervisor"
 url: https://github.com/Fistacho/ha-nexus-agent

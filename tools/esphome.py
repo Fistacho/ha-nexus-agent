@@ -348,12 +348,26 @@ def _dashboard_unreachable_diagnosis() -> dict:
 
     `GET /addons/<slug>/info` (developers.home-assistant.io/docs/api/
     supervisor/endpoints, confirmed 2026-09-27) exposes `network` — a dict of
-    published `"<container_port>/<proto>": <host_port>` mappings, empty when
-    nothing is published — and `ingress` (bool). Nexus never uses Supervisor
-    ingress (a session isn't scoped to one add-on; rejected by Panel
-    Security), so a dashboard only reachable through ingress is, from here,
-    indistinguishable from one not reachable at all — the fix is the same
-    either way: publish port 6052 on the add-on's own network settings.
+    `"<container_port>/<proto>": <host_port>` entries for every port the
+    add-on's `config.yaml` declares, where the value is the published host
+    port (`int`) or `None` when the user has left that port unpublished (the
+    key is always present; only its value tells you whether it's mapped) —
+    and `ingress` (bool). Confirmed against `home-assistant/supervisor`
+    tag 2026.09.2: `App.ports` (`supervisor/apps/app.py`) merges the user's
+    persisted per-port override over the `config.yaml` default the same way
+    regardless of `host_network`, so `None` means "not published" whether or
+    not `host_network` is set — `host_network` only changes how that
+    publishing is *enforced*: `DockerApp.ports` (`supervisor/docker/app.py`)
+    returns `None` (no `-p` mapping passed to Docker at all) whenever
+    `self.app.host_network` is true, because `network_mode` is `"host"` and
+    the container already shares the host's network stack, so an `int` value
+    there does not correspond to a distinct Docker port-publish step the way
+    it does for a bridge-network add-on — the port still isn't reachable
+    unless the add-on's own process is listening on it. Nexus never uses
+    Supervisor ingress (a session isn't scoped to one add-on; rejected by
+    Panel Security), so a dashboard only reachable through ingress is, from
+    here, indistinguishable from one not reachable at all — the fix is the
+    same either way: publish port 6052 on the add-on's own network settings.
     """
     candidates = _esphome_slug_candidates()
     for slug in candidates:
@@ -362,7 +376,7 @@ def _dashboard_unreachable_diagnosis() -> dict:
             continue
         data = result.get("data", {})
         network = data.get("network") or {}
-        port_mapped = any(str(k).startswith("6052") for k in network)
+        port_mapped = isinstance(network.get("6052/tcp"), int)
         ingress_only = bool(data.get("ingress")) and not port_mapped
         if port_mapped:
             advice = (
