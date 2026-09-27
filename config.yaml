@@ -1,7 +1,7 @@
 name: Nexus Agent
-version: "0.23.0"
+version: "0.24.0"
 slug: nexus_agent
-description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.23.0: ESPHome compile/validate/OTA upload work in the add-on via the Device Builder's trusted ingress site (add-on now uses host network)"
+description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.24.0: optional tool_mode=search, secret redaction in supervisor_get_addon, self-protection of the add-on, bounded WebSocket timeouts"
 url: https://github.com/Fistacho/ha-nexus-agent
 arch:
   - aarch64
@@ -34,6 +34,7 @@ options:
   api_key: ""
   read_only: false
   disabled_namespaces: []
+  tool_mode: full
 
 schema:
   port: int
@@ -44,6 +45,7 @@ schema:
   read_only: bool
   disabled_namespaces:
     - str
+  tool_mode: list(full|search)
 
 ports:
   7123/tcp: 7123

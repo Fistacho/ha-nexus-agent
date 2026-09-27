@@ -1,9 +1,10 @@
-"""Static, per-process tool-exposure policy (ADR-0003 P1 + P2).
+"""Static, per-process tool-exposure policy (ADR-0003 P1 + P2 + P3).
 
-Two add-on options gate which MCP tools and prompts a client can see or
-call, enforced through FastMCP's own Visibility mechanism
-(`FastMCP.disable()`) so a hidden tool is also *refused* at `tools/call`,
-not merely omitted from `tools/list`:
+Three add-on options gate what an MCP client can see or call. The first two
+are enforced through FastMCP's own Visibility mechanism (`FastMCP.disable()`)
+so a hidden tool is also *refused* at `tools/call`, not merely omitted from
+`tools/list`; the third replaces the *shape* of `tools/list` itself, on top
+of whatever the first two already hid:
 
 - **`read_only`** (`NEXUS_READ_ONLY`): hides and blocks every tool whose MCP
   annotations do not declare `readOnlyHint=True` — i.e. everything except
@@ -14,8 +15,20 @@ not merely omitted from `tools/list`:
   hides and blocks every tool/prompt whose mount namespace (the prefix
   parsed from `server.py`'s `mcp.mount(..., namespace="...")` calls) is in
   the list.
+- **`tool_mode`** (`NEXUS_TOOL_MODE`, `full` default or `search`): `full`
+  leaves `tools/list` as everything `read_only`/`disabled_namespaces` didn't
+  already hide. `search` additionally replaces that list with
+  `tools.discover`'s three lookup tools plus one call-by-name proxy per
+  ADR-0002 annotation class (read/write/destructive) — see
+  `tools.discover.build_tool_search_transform`. Unlike the other two options,
+  this is a context-budget feature, not a security boundary: every tool
+  `tool_mode=search` hides from `tools/list` stays directly callable by name
+  (P1/P2 remain the only enforcement layer). `discover` itself can never be
+  in `disabled_namespaces` while `tool_mode=search` — it would leave
+  `tools/list` empty — checked in both `ToolPolicy.from_env()` and
+  `apply_policy()`.
 
-Both are evaluated **once**, by `apply_policy()`, called from `server.main()`
+All three are evaluated **once**, by `apply_policy()`, called from `server.main()`
 after every `tools/<ns>.py` module has been mounted onto the root server
 (and after `discover.bind_root()` has run, so the snapshot this module reads
 sees every namespace, `discover` included). `import server` on its own
@@ -50,8 +63,11 @@ from fastmcp.server.middleware import Middleware
 # driftable copy of "which mount() calls in server.py define which
 # namespace". discover.py already justifies reading server.py's source
 # directly (to avoid a circular import); this borrows that same parsing,
-# not a second implementation of it.
-from tools.discover import _known_namespaces, _namespace_for
+# not a second implementation of it. `build_tool_search_transform` is P3's
+# own factory (ADR-0003) — kept in `tools/discover.py`, not here, because it
+# builds on that module's tool-catalogue/index machinery; `policy.py` only
+# decides *whether* to add it, from the already-computed visible-tool set.
+from tools.discover import _known_namespaces, _namespace_for, build_tool_search_transform
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +90,12 @@ class ToolPolicy:
 
     read_only: bool = False
     disabled_namespaces: frozenset[str] = field(default_factory=frozenset)
-    # Reserved for ADR-0003 P3 (0.24.0, tool-search mode). Fixed at "full"
-    # until that partition wires a `NEXUS_TOOL_MODE` option through
-    # `config.yaml`/`run.sh` — `from_env()` never reads an env var for it.
+    # ADR-0003 P3 (tool-search mode), parsed from `NEXUS_TOOL_MODE` by
+    # `from_env()`. "full" (default) leaves `tools/list` exactly as today
+    # (T1/T2's 323-tool/29-namespace catalogue is unaffected — see
+    # `apply_policy()`). "search" replaces it with `tools.discover`'s three
+    # lookup tools plus one call-by-name proxy per ADR-0002 annotation class
+    # (read/write/destructive) — see `tools.discover.build_tool_search_transform`.
     tool_mode: Literal["full", "search"] = "full"
 
     @classmethod
@@ -102,8 +121,10 @@ class ToolPolicy:
 
         read_only = _parse_bool(env.get("NEXUS_READ_ONLY", "false"), option="read_only")
         disabled = _parse_namespaces(env.get("NEXUS_DISABLED_NAMESPACES", ""), known=known)
+        tool_mode = _parse_tool_mode(env.get("NEXUS_TOOL_MODE", "full"))
+        _check_search_mode_keeps_discover_enabled(tool_mode, disabled)
 
-        return cls(read_only=read_only, disabled_namespaces=disabled)
+        return cls(read_only=read_only, disabled_namespaces=disabled, tool_mode=tool_mode)
 
 
 def _parse_bool(raw: str, *, option: str) -> bool:
@@ -128,6 +149,37 @@ def _parse_namespaces(raw: str, *, known: frozenset[str]) -> frozenset[str]:
             f"add-on's Configuration tab."
         )
     return names
+
+
+_VALID_TOOL_MODES = {"full", "search"}
+
+
+def _parse_tool_mode(raw: str) -> Literal["full", "search"]:
+    value = (raw or "full").strip().lower()
+    if value not in _VALID_TOOL_MODES:
+        raise PolicyConfigError(
+            f"Add-on option 'tool_mode' must be one of {sorted(_VALID_TOOL_MODES)}, "
+            f"got {raw!r}. Fix it in the add-on's Configuration tab."
+        )
+    return value  # type: ignore[return-value]
+
+
+def _check_search_mode_keeps_discover_enabled(
+    tool_mode: str, disabled_namespaces: frozenset[str]
+) -> None:
+    """Fail closed: `tool_mode=search` without a working `discover` namespace
+    would leave `tools/list` showing nothing at all — the three lookup tools
+    and all three call proxies live there. Checked both in `from_env()` (the
+    add-on's own startup path) and again in `apply_policy()` (so the
+    invariant holds for any caller that builds a `ToolPolicy` directly,
+    e.g. tests)."""
+    if tool_mode == "search" and "discover" in disabled_namespaces:
+        raise PolicyConfigError(
+            "tool_mode='search' requires the 'discover' namespace to stay "
+            "enabled -- it hosts the search and call-proxy tools this mode "
+            "exposes instead of the full catalogue. Remove 'discover' from "
+            "disabled_namespaces, or set tool_mode back to 'full'."
+        )
 
 
 def _is_read_only_tool(tool: object) -> bool:
@@ -204,6 +256,8 @@ def apply_policy(server: FastMCP, policy: ToolPolicy) -> PolicyApplication:
     `discover.bind_root()`) so the snapshot taken here includes every
     namespace — `import server` alone never calls this function.
     """
+    _check_search_mode_keeps_discover_enabled(policy.tool_mode, policy.disabled_namespaces)
+
     tools, prompts = _run_snapshot(server)
 
     disabled_tools: set[str] = set()
@@ -228,6 +282,18 @@ def apply_policy(server: FastMCP, policy: ToolPolicy) -> PolicyApplication:
         server.add_middleware(PolicyDeniedMiddleware(frozenset(disabled_tools), policy))
     if disabled_prompts:
         server.disable(names=disabled_prompts, components={"prompt"})
+
+    if policy.tool_mode == "search":
+        # Added *after* the `server.disable()` calls above so the transform
+        # pipeline order matches ADR-0003 P3: Visibility (P1/P2) marks tools
+        # disabled first, `NexusToolSearch` reads that already-filtered set
+        # next. `tools - disabled_tools` mirrors that ordering without a
+        # second async round-trip through `server.list_tools()` — the
+        # snapshot in `tools` predates any of today's `.disable()` calls, so
+        # subtracting the *names* just computed is equivalent to re-fetching
+        # a filtered list.
+        visible_tools = [t for t in tools if t.name not in disabled_tools]
+        server.add_transform(build_tool_search_transform(visible_tools))
 
     return PolicyApplication(
         policy=policy,

@@ -36,23 +36,67 @@ def _ws_url() -> str:
     return _HA_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
 
 
+# `websockets.connect(...)` defaults `close_timeout` to 10s. Both `async with
+# websockets.connect(...) as ws:` blocks below run `ws.close()` on every
+# exit — including a `TimeoutError`/`RuntimeError` raised by an already-
+# bounded receive — so against a peer that never completes the closing
+# handshake, the unbounded default silently adds ~10s on top of whatever
+# timeout the caller already waited for (see `tools/websocket.py`'s
+# `_WS_CLOSE_TIMEOUT` for the full analysis). Capping it here bounds that
+# teardown cost instead.
+_WS_CLOSE_TIMEOUT = 1.0
+
+# `_ws_call_async` has no caller-facing `timeout` parameter (its `_ws_call`
+# wrapper is used by ~30 `tools/*.py` modules purely as `(msg_type, **kwargs)`
+# with `kwargs` forwarded verbatim as the WS command's payload fields — adding
+# a `timeout` keyword risks colliding with a future HA command that happens to
+# have a field of that name). `_WS_HANDSHAKE_TIMEOUT` is the reasonable
+# constant used instead, bounding the *entire* call, matching the value
+# already hardcoded for the post-auth response wait before this fix.
+_WS_HANDSHAKE_TIMEOUT = 10.0
+
+
+async def _ws_recv_within(ws, deadline: float, waiting_for: str) -> dict:
+    """`ws.recv()` bounded by `deadline` (an `asyncio` loop-clock time).
+
+    Raises `RuntimeError` naming `waiting_for` when the deadline is already
+    passed or is reached before a message arrives, instead of blocking
+    forever. Shared by `_ws_call_async` and `_ws_collect_events_async` so the
+    `auth_required` -> `auth` -> `auth_ok` handshake in both honours the same
+    single deadline as the rest of the call — mirrors
+    `tools/websocket.py`'s `_ws_recv_within`, which fixed the same gap for
+    `ws_*` MCP tools (ADR-0003 #7); this is `ha_client`'s own WS layer, used
+    directly by ~30 `tools/*.py` modules via `_ws_call`/`_ws_collect_events`,
+    so it needed the identical fix independently.
+    """
+    remaining = deadline - asyncio.get_event_loop().time()
+    if remaining <= 0:
+        raise RuntimeError(f"HA WebSocket handshake timed out waiting for {waiting_for}")
+    try:
+        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+    except TimeoutError:
+        raise RuntimeError(f"HA WebSocket handshake timed out waiting for {waiting_for}") from None
+    return json.loads(raw)
+
+
 async def _ws_call_async(msg_type: str, **kwargs) -> Any:
     import websockets
     token = _HA_TOKEN
     # max_size=None disables the 1 MB frame cap — HACS repository lists,
     # large registries and full traces routinely exceed that.
-    async with websockets.connect(_ws_url(), max_size=None) as ws:
-        greeting = json.loads(await ws.recv())
+    async with websockets.connect(_ws_url(), max_size=None, close_timeout=_WS_CLOSE_TIMEOUT) as ws:
+        deadline = asyncio.get_event_loop().time() + _WS_HANDSHAKE_TIMEOUT
+        greeting = await _ws_recv_within(ws, deadline, "auth_required")
         if greeting.get("type") != "auth_required":
             raise RuntimeError(f"Unexpected WS greeting: {greeting}")
         await ws.send(json.dumps({"type": "auth", "access_token": token}))
-        auth_ok = json.loads(await ws.recv())
+        auth_ok = await _ws_recv_within(ws, deadline, "auth_ok")
         if auth_ok["type"] != "auth_ok":
             raise RuntimeError(f"WS auth failed: {auth_ok}")
         payload = {"id": 1, "type": msg_type, **kwargs}
         await ws.send(json.dumps(payload))
         while True:
-            data = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            data = await _ws_recv_within(ws, deadline, "result")
             if data.get("id") == 1 and data.get("type") == "result":
                 if not data.get("success"):
                     raise RuntimeError(f"WS error: {data.get('error')}")
@@ -83,16 +127,20 @@ async def _ws_collect_events_async(
 ) -> list[dict]:
     import websockets
     events: list[dict] = []
-    async with websockets.connect(_ws_url(), max_size=None) as ws:
-        greeting = json.loads(await ws.recv())
+    async with websockets.connect(_ws_url(), max_size=None, close_timeout=_WS_CLOSE_TIMEOUT) as ws:
+        # `deadline` is set once, before the handshake, so `timeout` bounds
+        # the *entire* call (handshake included) rather than only the event
+        # loop below — a peer that never sends `auth_required`/`auth_ok`
+        # would otherwise hang here forever regardless of `timeout`.
+        deadline = asyncio.get_running_loop().time() + timeout
+        greeting = await _ws_recv_within(ws, deadline, "auth_required")
         if greeting.get("type") != "auth_required":
             raise RuntimeError(f"Unexpected WS greeting: {greeting}")
         await ws.send(json.dumps({"type": "auth", "access_token": _HA_TOKEN}))
-        auth_ok = json.loads(await ws.recv())
+        auth_ok = await _ws_recv_within(ws, deadline, "auth_ok")
         if auth_ok["type"] != "auth_ok":
             raise RuntimeError(f"WS auth failed: {auth_ok}")
         await ws.send(json.dumps({"id": 1, "type": msg_type, **kwargs}))
-        deadline = asyncio.get_running_loop().time() + timeout
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:

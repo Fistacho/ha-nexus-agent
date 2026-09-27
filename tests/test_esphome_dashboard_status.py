@@ -46,6 +46,34 @@ def _reset_dashboard_singleton():
     esphome_tools._reset_dashboard_client()
 
 
+def _forbid_real_ha_io(*args, **kwargs):
+    raise AssertionError(
+        "real ha_client I/O attempted in a unit test — mock ha._ws_call/ha._client "
+        "(or the higher-level ha.get_* method the code path actually calls) explicitly"
+    )
+
+
+@pytest.fixture(autouse=True)
+def _block_real_ha_io(monkeypatch):
+    """Every test in this file gets a hard stop instead of a real network call.
+
+    `tools/esphome.py` reaches `ha_client` through two low-level chokepoints:
+    `ha._ws_call` (entity/device registry, config entries, MQTT debug info)
+    and `ha._client` (the httpx client behind `get_states`/`get_state`/etc.).
+    Without this, a test that forgets to mock one of these — or a higher-level
+    `ha.get_*` method that itself goes through them — doesn't fail; it just
+    hangs for the length of a real connection attempt/timeout against a
+    nonexistent `homeassistant.local:8123`. This was the actual cause of 7
+    slow tests in this file (see git history around nexus 0.24.0 W1).
+
+    Tests that need a call to succeed monkeypatch the specific `ha.*`
+    attribute themselves (overriding this fixture's patch for that attribute);
+    tests that don't touch these paths at all are unaffected either way.
+    """
+    monkeypatch.setattr(esphome_tools.ha, "_ws_call", _forbid_real_ha_io)
+    monkeypatch.setattr(esphome_tools.ha, "_client", _forbid_real_ha_io)
+
+
 class _StubClient:
     """Drop-in replacement for `DashboardClient` — one canned result/exception per method."""
 
@@ -593,6 +621,9 @@ def test_list_devices_excludes_secrets_yaml(tmp_path, monkeypatch):
     (tmp_path / "Secrets.yaml").write_text("api_password: hunter2\n", encoding="utf-8")
     (tmp_path / "kuchnia.yaml").write_text("esphome: {}\n", encoding="utf-8")
     monkeypatch.setattr(esphome_tools.ha, "get_device_registry", list)
+    monkeypatch.setattr(esphome_tools.ha, "_ws_call", lambda *a, **k: [])
+    monkeypatch.setattr(esphome_tools.ha, "get_entity_registry", list)
+    monkeypatch.setattr(esphome_tools.ha, "get_states", list)
 
     result = _unwrap(esphome_tools.list_devices)()
 
@@ -616,6 +647,7 @@ def _entity(entity_id, device_id, platform="esphome"):
 
 
 def test_list_devices_connected_true_when_an_entity_is_available(monkeypatch):
+    monkeypatch.setattr(esphome_tools.ha, "_ws_call", lambda *a, **k: [])
     monkeypatch.setattr(
         esphome_tools.ha, "get_device_registry",
         lambda: [{"id": "d1", "name": "Kitchen Sensor", "manufacturer": "espressif"}],
@@ -637,6 +669,7 @@ def test_list_devices_connected_true_when_an_entity_is_available(monkeypatch):
 
 
 def test_list_devices_connected_false_when_all_entities_unavailable(monkeypatch):
+    monkeypatch.setattr(esphome_tools.ha, "_ws_call", lambda *a, **k: [])
     monkeypatch.setattr(
         esphome_tools.ha, "get_device_registry",
         lambda: [{"id": "d1", "name": "Kitchen Sensor", "manufacturer": "espressif"}],
@@ -664,6 +697,7 @@ def test_list_devices_connected_false_when_all_entities_unavailable(monkeypatch)
 
 
 def test_list_devices_connected_none_when_device_has_no_known_entities(monkeypatch):
+    monkeypatch.setattr(esphome_tools.ha, "_ws_call", lambda *a, **k: [])
     monkeypatch.setattr(
         esphome_tools.ha, "get_device_registry",
         lambda: [{"id": "d1", "name": "Kitchen Sensor", "manufacturer": "espressif"}],
@@ -683,6 +717,7 @@ def test_list_devices_does_not_rely_on_api_connection_status_binary_sensor(monke
     entity that isn't linked to the device via `device_id` (e.g. it doesn't
     exist at all, matching the live fact) must not affect the result, and a
     real entity that IS linked must still correctly report connected."""
+    monkeypatch.setattr(esphome_tools.ha, "_ws_call", lambda *a, **k: [])
     monkeypatch.setattr(
         esphome_tools.ha, "get_device_registry",
         lambda: [{"id": "d1", "name": "Kitchen Sensor", "manufacturer": "espressif"}],
@@ -707,6 +742,7 @@ def test_list_devices_does_not_rely_on_api_connection_status_binary_sensor(monke
 def test_get_device_entities_matches_by_device_id_not_substring(monkeypatch):
     """RED against the pre-fix code: slug substring matching would also match
     'sensor' from an unrelated device whose slug happens to contain it."""
+    monkeypatch.setattr(esphome_tools.ha, "_ws_call", lambda *a, **k: [])
     monkeypatch.setattr(
         esphome_tools.ha, "get_device_registry",
         lambda: [
@@ -735,6 +771,7 @@ def test_get_device_entities_matches_by_device_id_not_substring(monkeypatch):
 
 
 def test_get_device_entities_falls_back_to_slug_match_without_device_registry(monkeypatch):
+    monkeypatch.setattr(esphome_tools.ha, "_ws_call", lambda *a, **k: [])
     monkeypatch.setattr(esphome_tools.ha, "get_device_registry", list)
     monkeypatch.setattr(
         esphome_tools.ha, "get_entity_registry",

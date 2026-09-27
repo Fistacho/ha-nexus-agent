@@ -239,31 +239,36 @@ def _build_app():
 
 
 def _apply_tool_policy_or_exit():
-    """Read and enforce the tool-exposure policy (ADR-0003 P1/P2).
+    """Read and enforce the tool-exposure policy (ADR-0003 P1/P2/P3).
 
     Runs once, here, after every `mcp.mount()` call above has already
     executed at import time — `import server` on its own never reaches this
     function, so tests/tooling that only need the full, unfiltered catalogue
     (T1/T2, `tests/contract/generate_tool_surface.py`) are unaffected.
 
-    A malformed option (unknown namespace, non-boolean `read_only`) aborts
-    startup with a readable message instead of silently applying a narrower
-    — or wider — policy than the operator configured.
+    A malformed option (unknown namespace, non-boolean `read_only`, invalid
+    `tool_mode`, or `tool_mode=search` with `disabled_namespaces` including
+    `discover`) aborts startup with a readable message instead of silently
+    applying a narrower — or wider — policy than the operator configured.
+    `apply_policy()` itself can raise the last of those (it re-checks the
+    `discover`/`tool_mode` invariant even for a `ToolPolicy` built outside
+    `from_env()`), so both calls share one try/except.
     """
     from policy import PolicyConfigError, ToolPolicy, apply_policy
 
     try:
         tool_policy = ToolPolicy.from_env()
+        application = apply_policy(mcp, tool_policy)
     except PolicyConfigError as exc:
         print(f"Nexus refused to start: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
-    application = apply_policy(mcp, tool_policy)
     logging.getLogger(__name__).info(
-        "Tool policy applied: read_only=%s disabled_namespaces=%s -> "
+        "Tool policy applied: read_only=%s disabled_namespaces=%s tool_mode=%s -> "
         "%d/%d tools visible, %d/%d prompts visible",
         tool_policy.read_only,
         sorted(tool_policy.disabled_namespaces),
+        tool_policy.tool_mode,
         application.tools_total - application.tools_disabled,
         application.tools_total,
         application.prompts_total - application.prompts_disabled,
@@ -305,6 +310,19 @@ def main():
             print(f"Nexus refused to start: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
 
+        # W3 Security review M4: record nexus's own add-on slug once, here,
+        # from the same self-info fetch `resolve_listen_plan()` already made
+        # (no second Supervisor call) — `self_protection.is_own_addon()`
+        # fails closed for every slug until this runs, so `tools/
+        # supervisor.py`/`tools/services.py`/`tools/websocket.py`'s D-2
+        # guards only ever see the inert default in a process that never
+        # reaches this line (standalone/`NEXUS_HTTP=1` without
+        # `SUPERVISOR_TOKEN` skips this whole branch's `if`, see below).
+        if os.getenv("SUPERVISOR_TOKEN"):
+            import self_protection
+
+            self_protection.set_own_slug(listen_plan.own_slug)
+
         for line in _startup_log_lines_for_plan(listen_plan):
             print(line)
 
@@ -337,8 +355,16 @@ def main():
         uvicorn.Server(uvicorn.Config(app, log_level="info")).run(sockets=sockets)
     else:
         # stdio mode for Claude Desktop / local MCP client
+        #
+        # Per the MCP spec ("Transports", 2025-11-25): "The server MUST NOT
+        # write anything to its stdout that is not a valid MCP message." A
+        # bare `print(line)` here used to land on stdout and corrupt the
+        # JSON-RPC stream for the stdio client reading it — stderr is the
+        # only safe destination for anything nexus prints itself in this
+        # branch, same as the two `print(..., file=sys.stderr)` startup-abort
+        # messages above.
         for line in _startup_log_lines(port, http_mode=False):
-            print(line)
+            print(line, file=sys.stderr)
         mcp.run()
 
 

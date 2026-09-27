@@ -1,10 +1,10 @@
-name: E2E (informational)
+name: E2E
 
-# Informational on purpose: this workflow is NOT required for merge yet. Add it as
-# a required status check in branch protection only once it has been observed
-# green a few times in a row (it depends on a real Home Assistant container
-# booting fully within CI, which is inherently less deterministic than the mocked
-# unit tests in tests/).
+# Required for merge: promoted out of "informational" once this workflow had
+# been observed green for several releases in a row (it depends on a real Home
+# Assistant container booting fully within CI, which is inherently less
+# deterministic than the mocked unit tests in tests/) — see branch protection
+# settings and W1 (nexus 0.24.0) for when this flipped.
 #
 # Third-party actions are pinned to a commit SHA (tag in a trailing comment),
 # verified the same way as ci.yml.
@@ -29,7 +29,6 @@ jobs:
   e2e-smoke:
     name: Smoke test against a real, freshly onboarded HA
     runs-on: ubuntu-latest
-    continue-on-error: true # informational — see header comment
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0

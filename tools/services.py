@@ -13,6 +13,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 import ha_client as ha
+import self_protection
 from tools._contract import destructive, read, write
 
 mcp = FastMCP("services")
@@ -40,7 +41,13 @@ def call_service(
     body; `data` holds both service fields and targets (`entity_id`,
     `area_id`, `device_id`). The effect entirely depends on which
     domain/service is passed, from a harmless read-like call to a
-    disruptive one if such a service exists.
+    disruptive one if such a service exists. Refuses `hassio.addon_stop`/
+    `app_stop`/`addon_stdin`/`app_stdin` when the `addon`/`app` slug in
+    `data` is nexus's own add-on (`self_protection.is_own_addon`) — those
+    reach the same Supervisor operations `supervisor_stop_addon` already
+    blocks for the same reason, without going through that tool at all.
+    `hassio.addon_restart`/`app_restart` stay allowed, consistent with
+    `supervisor_restart_addon`.
 
     Use when: no dedicated tool exists for the action needed.
     Not for: an action that returns response data (e.g.
@@ -48,7 +55,12 @@ def call_service(
     returns only the list of changed states, not the action's response
     payload.
     Returns: the list of states changed during the call.
+    Errors: `{"error": "self_addon_hassio_service_blocked", "message": ...}`
+    for the blocked `hassio.*` cases above.
     """
+    blocked = self_protection.blocked_hassio_service_call(domain, service, data)
+    if blocked is not None:
+        return blocked
     return ha.call_service(domain, service, data or {})
 
 

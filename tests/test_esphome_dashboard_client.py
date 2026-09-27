@@ -94,6 +94,60 @@ def _addon_info(*, state="started", ingress=True, ingress_port=65490) -> dict:
     return {"data": {"state": state, "ingress": ingress, "ingress_port": ingress_port}}
 
 
+class _FakeDashboardConnection:
+    """In-process stand-in for the dashboard side of a WebSocket session.
+
+    Records every frame the client sends (`.sent`) and answers each
+    `recv()` from a pre-scripted queue — no real socket, no second event
+    loop/thread. Each item in `script` is either a `str` (returned as-is)
+    or a callable `(last_sent: str | None) -> str` (invoked lazily so a
+    reply can echo something from the client's own last frame, e.g. its
+    `message_id` — see `test_validate_success_result`).
+
+    Only usable for tests where send/recv ordering is entirely known
+    upfront (every happy-path test below). Tests that need genuine
+    concurrent client/server behaviour (a real timeout elapsing, an actual
+    TCP refusal) still drive a real local `websockets.serve`/socket — see
+    `_drive_ws_test`/`_client_for_ws_server` and their own docstrings.
+    """
+
+    def __init__(self, script: list) -> None:
+        self._script = list(script)
+        self.sent: list[str] = []
+
+    async def send(self, message: str) -> None:
+        self.sent.append(message)
+
+    async def recv(self):
+        if not self._script:
+            raise AssertionError(
+                "_FakeDashboardConnection script exhausted — recv() called more "
+                "times than scripted"
+            )
+        item = self._script.pop(0)
+        if callable(item):
+            return item(self.sent[-1] if self.sent else None)
+        return item
+
+    async def close(self) -> None:
+        return None
+
+
+def _fake_connect_returning(conn: "_FakeDashboardConnection"):
+    """A `dash.websockets.connect` replacement that hands back `conn` directly.
+
+    Matches `_ws_connect`'s own usage (`return await websockets.connect(...)`,
+    never `async with`) — same shape as the `fake_connect` already used by
+    `test_validate_http_401_or_403_at_handshake_is_auth_required` below, just
+    returning a connection instead of raising.
+    """
+
+    async def fake_connect(url, **kwargs):
+        return conn
+
+    return fake_connect
+
+
 class _CountingSupervisorGet:
     """Fake `supervisor_get` that counts calls and returns a fixed response."""
 
@@ -393,6 +447,7 @@ def test_no_retry_once_spawn_payload_already_sent(monkeypatch):
 # ── 3. error-code mapping over real local WS/HTTP servers ───────────────────
 
 
+@pytest.mark.slow
 def test_validate_connection_refused_is_unreachable():
     port = _free_port()  # nothing listens here
     client = _client_for_ws_server(port)
@@ -534,34 +589,32 @@ def test_validate_error_code_is_command_failed():
     assert exc_info.value.details == "boom"
 
 
-def test_validate_success_result():
+def test_validate_success_result(monkeypatch):
     """Also pins the exact shape of the frame `validate()` sends on the wire
     (module docstring: `{"command": "devices/validate", "message_id": ...,
     "args": {"configuration": ...}}`) — an assertion on `result["success"]`
     alone would pass even if the command name or args shape drifted, since
-    this fake server echoes back whatever `message_id` it was sent
+    this fake connection echoes back whatever `message_id` it was sent
     regardless of the rest of the frame."""
 
-    sent_frames: list[str] = []
+    conn = _FakeDashboardConnection([
+        json.dumps({"requires_auth": False}),
+        lambda sent: json.dumps({
+            "message_id": json.loads(sent)["message_id"],
+            "event": "result",
+            "data": {"success": True, "code": 0},
+        }),
+    ])
+    monkeypatch.setattr(dash.websockets, "connect", _fake_connect_returning(conn))
 
-    async def handler(ws):
-        await ws.send(json.dumps({"requires_auth": False}))
-        raw = await ws.recv()
-        sent_frames.append(raw)
-        req = json.loads(raw)
-        await ws.send(json.dumps({
-            "message_id": req["message_id"], "event": "result", "data": {"success": True, "code": 0},
-        }))
-        await ws.wait_closed()
+    locator = _make_locator(env={"ESPHOME_DASHBOARD_URL": "http://dashboard.invalid"})
+    client = dash.DashboardClient(locator)
 
-    def run_client(port):
-        return _client_for_ws_server(port).validate("device.yaml", timeout=3)
-
-    result = asyncio.run(_drive_ws_test(handler, run_client))
+    result = client.validate("device.yaml", timeout=3)
     assert result["success"] is True
 
-    assert len(sent_frames) == 1
-    sent = json.loads(sent_frames[0])
+    assert len(conn.sent) == 1
+    sent = json.loads(conn.sent[0])
     assert isinstance(sent.get("message_id"), str)
     assert sent == {
         "command": "devices/validate",
@@ -570,6 +623,7 @@ def test_validate_success_result():
     }
 
 
+@pytest.mark.slow
 def test_validate_times_out_within_deadline():
     async def handler(ws):
         await ws.send(json.dumps({"requires_auth": False}))
@@ -584,6 +638,7 @@ def test_validate_times_out_within_deadline():
     assert exc_info.value.job_may_still_be_running is False
 
 
+@pytest.mark.slow
 def test_compile_timeout_marks_job_may_still_be_running():
     async def handler(ws):
         await ws.recv()  # spawn message
@@ -597,37 +652,42 @@ def test_compile_timeout_marks_job_may_still_be_running():
     assert exc_info.value.job_may_still_be_running is True
 
 
-def test_compile_success_via_spawn_protocol():
-    async def handler(ws):
-        raw = await ws.recv()
-        msg = json.loads(raw)
-        assert msg["type"] == "spawn"
-        assert msg["configuration"] == "device.yaml"
-        await ws.send(json.dumps({"event": "line", "data": "building..."}))
-        await ws.send(json.dumps({"event": "exit", "code": 0}))
+def test_compile_success_via_spawn_protocol(monkeypatch):
+    conn = _FakeDashboardConnection([
+        json.dumps({"event": "line", "data": "building..."}),
+        json.dumps({"event": "exit", "code": 0}),
+    ])
+    monkeypatch.setattr(dash.websockets, "connect", _fake_connect_returning(conn))
 
-    def run_client(port):
-        return _client_for_ws_server(port).compile("device.yaml", timeout=5)
+    locator = _make_locator(env={"ESPHOME_DASHBOARD_URL": "http://dashboard.invalid"})
+    client = dash.DashboardClient(locator)
 
-    result = asyncio.run(_drive_ws_test(handler, run_client))
+    result = client.compile("device.yaml", timeout=5)
+
     assert result["success"] is True
     assert result["exit_code"] == 0
     assert "building..." in result["log_tail"]
 
+    assert len(conn.sent) == 1
+    msg = json.loads(conn.sent[0])
+    assert msg["type"] == "spawn"
+    assert msg["configuration"] == "device.yaml"
 
-def test_upload_sends_port_in_spawn_payload():
-    async def handler(ws):
-        raw = await ws.recv()
-        msg = json.loads(raw)
-        assert msg["configuration"] == "device.yaml"
-        assert msg["port"] == "OTA"
-        await ws.send(json.dumps({"event": "exit", "code": 0}))
 
-    def run_client(port):
-        return _client_for_ws_server(port).upload("device.yaml", "OTA", timeout=5)
+def test_upload_sends_port_in_spawn_payload(monkeypatch):
+    conn = _FakeDashboardConnection([json.dumps({"event": "exit", "code": 0})])
+    monkeypatch.setattr(dash.websockets, "connect", _fake_connect_returning(conn))
 
-    result = asyncio.run(_drive_ws_test(handler, run_client))
+    locator = _make_locator(env={"ESPHOME_DASHBOARD_URL": "http://dashboard.invalid"})
+    client = dash.DashboardClient(locator)
+
+    result = client.upload("device.yaml", "OTA", timeout=5)
+
     assert result["success"] is True
+    assert len(conn.sent) == 1
+    msg = json.loads(conn.sent[0])
+    assert msg["configuration"] == "device.yaml"
+    assert msg["port"] == "OTA"
 
 
 def test_compile_exit_code_1_is_a_failed_result_not_an_exception():
@@ -656,30 +716,33 @@ def test_compile_exit_code_1_is_a_failed_result_not_an_exception():
     assert result["log_lines"] == 1
 
 
-def test_upload_exit_code_1_is_a_failed_result_not_an_exception():
+def test_upload_exit_code_1_is_a_failed_result_not_an_exception(monkeypatch):
     """Same failed-result guarantee as `compile()`'s exit-code-1 case above,
     for `upload()` — and re-confirms (independent of the exit code) that
     `port` reaches the spawn payload, since `upload()`'s only difference
     from `compile()` is that extra field."""
 
-    async def handler(ws):
-        raw = await ws.recv()
-        msg = json.loads(raw)
-        assert msg["type"] == "spawn"
-        assert msg["configuration"] == "device.yaml"
-        assert msg["port"] == "OTA"
-        await ws.send(json.dumps({"event": "line", "data": "flash failed"}))
-        await ws.send(json.dumps({"event": "exit", "code": 1}))
+    conn = _FakeDashboardConnection([
+        json.dumps({"event": "line", "data": "flash failed"}),
+        json.dumps({"event": "exit", "code": 1}),
+    ])
+    monkeypatch.setattr(dash.websockets, "connect", _fake_connect_returning(conn))
 
-    def run_client(port):
-        return _client_for_ws_server(port).upload("device.yaml", "OTA", timeout=5)
+    locator = _make_locator(env={"ESPHOME_DASHBOARD_URL": "http://dashboard.invalid"})
+    client = dash.DashboardClient(locator)
 
-    result = asyncio.run(_drive_ws_test(handler, run_client))
+    result = client.upload("device.yaml", "OTA", timeout=5)
 
     assert result["success"] is False
     assert result["exit_code"] == 1
     assert "flash failed" in result["log_tail"]
     assert result["log_lines"] == 1
+
+    assert len(conn.sent) == 1
+    msg = json.loads(conn.sent[0])
+    assert msg["type"] == "spawn"
+    assert msg["configuration"] == "device.yaml"
+    assert msg["port"] == "OTA"
 
 
 # ── ping ──────────────────────────────────────────────────────────────────────
@@ -719,6 +782,7 @@ def test_ping_success(monkeypatch):
     assert result == {"device.yaml": True}
 
 
+@pytest.mark.slow
 def test_ping_connection_refused_is_unreachable():
     port = _free_port()
     locator = _make_locator(env={"ESPHOME_DASHBOARD_URL": f"http://127.0.0.1:{port}"})

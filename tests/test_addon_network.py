@@ -203,6 +203,60 @@ def test_resolve_listen_plan_succeeds_after_transient_failure():
     assert call_count == 2
 
 
+# --- ListenPlan.own_slug (W3 M4: feeds self_protection.set_own_slug at startup) --
+
+def test_from_self_info_exposes_own_slug():
+    data = {"network": {"7123/tcp": 7123}, "ip_address": "172.30.32.1", "slug": "5c53de3b_nexus"}
+
+    plan = an.ListenPlan.from_self_info(data)
+
+    assert plan.own_slug == "5c53de3b_nexus"
+
+
+def test_from_self_info_own_slug_is_none_when_slug_missing():
+    """Missing/malformed `slug` doesn't abort network resolution (S3's
+    fail-closed concern is about the LAN port, not slug availability) — it
+    surfaces as `own_slug=None` so `self_protection` can fail closed for D-2
+    specifically, without taking down the whole add-on over a missing field
+    that self_protection alone depends on."""
+    data = {"network": {"7123/tcp": 7123}, "ip_address": "172.30.32.1"}
+
+    plan = an.ListenPlan.from_self_info(data)
+
+    assert plan.own_slug is None
+
+
+def test_from_self_info_own_slug_is_none_for_non_string_slug():
+    data = {"network": {"7123/tcp": 7123}, "ip_address": "172.30.32.1", "slug": 12345}
+
+    plan = an.ListenPlan.from_self_info(data)
+
+    assert plan.own_slug is None
+
+
+def test_standalone_plan_has_no_own_slug():
+    plan = an.ListenPlan.standalone(7123)
+
+    assert plan.own_slug is None
+
+
+def test_resolve_listen_plan_addon_mode_exposes_own_slug():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "result": "ok",
+                "data": {"network": {"7123/tcp": 7123}, "ip_address": "172.30.32.1", "slug": "5c53de3b_nexus"},
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://supervisor")
+
+    plan = an.resolve_listen_plan(supervisor_token="fake-token", nexus_port=7123, client=client)
+
+    assert plan.own_slug == "5c53de3b_nexus"
+
+
 def test_resolve_listen_plan_fails_closed_on_malformed_response_body():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"result": "ok", "data": "not-a-dict"})

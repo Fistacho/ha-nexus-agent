@@ -49,6 +49,22 @@ configuration:
       unknown namespace name refuses to start the add-on with an error in
       the log instead of silently doing nothing. Requires an add-on restart
       to take effect.
+  tool_mode:
+    name: Tool exposure mode
+    description: >-
+      "full" (default) exposes every tool nexus mounts in tools/list,
+      unchanged from before this option existed. "search" instead shows only
+      three lookup tools (discover_tool_search, discover_get_tool_doc,
+      discover_list_namespaces) plus one call-by-name proxy per tool class
+      (discover_call_read_tool / discover_call_write_tool /
+      discover_call_destructive_tool) — a much smaller tools/list, useful for
+      clients with a tight context budget. Every tool this hides still works
+      if called directly by its own name, and is still gated by read_only /
+      disabled_namespaces exactly as in "full" mode — this option only
+      changes what tools/list shows, not what is reachable. "discover" must
+      stay out of disabled_namespaces while this is "search" (the add-on
+      refuses to start otherwise — it would leave tools/list empty).
+      Requires an add-on restart to take effect.
 
 network:
   7123/tcp: >-

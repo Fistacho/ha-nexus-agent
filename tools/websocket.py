@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 from pydantic import Field
 
+import self_protection
 from tools._contract import destructive, read
 
 load_dotenv()
@@ -19,6 +20,15 @@ mcp = FastMCP("websocket")
 TOOL_CONTRACT = {"version": 1, "long_ok": {}, "heuristic_exceptions": {}}
 
 _HA_URL = os.getenv("HA_URL", "http://homeassistant.local:8123").rstrip("/")
+
+# `websockets.connect(...)` defaults `close_timeout` to 10s. `_ws_send_recv`'s
+# `async with websockets.connect(...) as ws:` runs `ws.close()` on every exit
+# — including the `RuntimeError` raised by `_ws_recv_within` once `timeout`
+# elapses — so against a peer that never completes the closing handshake,
+# the unbounded default adds a further ~10s on top of the caller's `timeout`,
+# breaking every `ws_*` tool's documented "blocks for up to `timeout`
+# seconds" (ADR-0003 #7). Capping it here bounds that teardown cost instead.
+_WS_CLOSE_TIMEOUT = 1.0
 
 
 def _ws_url() -> str:
@@ -77,7 +87,7 @@ async def _ws_send_recv(
 
     deadline = asyncio.get_event_loop().time() + timeout
 
-    async with websockets.connect(ws_url) as ws:
+    async with websockets.connect(ws_url, close_timeout=_WS_CLOSE_TIMEOUT) as ws:
         # auth_required
         msg = await _ws_recv_within(ws, deadline, "auth_required")
         if msg.get("type") != "auth_required":
@@ -199,7 +209,12 @@ def call_service(
     that support a response (e.g. `weather.get_forecasts`,
     `calendar.get_events`, `todo.get_items`) return it; actions without a
     response (`light.turn_on`, `switch.toggle`, most control actions) fail
-    with a validation error under `return_response=True`.
+    with a validation error under `return_response=True`. Refuses
+    `hassio.addon_stop`/`app_stop`/`addon_stdin`/`app_stdin` when the
+    `addon`/`app` slug in `data` is nexus's own add-on
+    (`self_protection.is_own_addon`) — same block as `services_call_service`
+    and `supervisor_stop_addon`; `hassio.addon_restart`/`app_restart` stay
+    allowed.
 
     Use when: the action's response payload is needed, not just the changed
     states.
@@ -209,10 +224,15 @@ def call_service(
     success, or a failure dict from HA on failure; `{"success": False}` with
     no other keys if no `result` message arrives at all.
     Errors: raises `RuntimeError` when the WebSocket handshake does not
-    complete within `timeout`.
+    complete within `timeout`; `{"error":
+    "self_addon_hassio_service_blocked", "message": ...}` for the blocked
+    `hassio.*` cases above.
     Limits: blocks for up to `timeout` seconds (default 10), including the
     initial handshake.
     """
+    blocked = self_protection.blocked_hassio_service_call(domain, service, data)
+    if blocked is not None:
+        return blocked
     payload = {
         "type": "call_service",
         "domain": domain,

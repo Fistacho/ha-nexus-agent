@@ -1,5 +1,91 @@
 # Changelog
 
+## 0.24.0
+
+**Added**
+
+- Optional `tool_mode` add-on option (`full` default, `search`; env
+  `NEXUS_TOOL_MODE`) — ADR-0003 P3. `search` replaces `tools/list` with
+  `discover`'s three lookup tools (`discover_tool_search`,
+  `discover_get_tool_doc`, `discover_list_namespaces`) plus one call-by-name
+  proxy per ADR-0002 annotation class (`discover_call_read_tool` /
+  `_write_tool` / `_destructive_tool`) — a much smaller catalogue for
+  context-constrained clients. Every hidden tool still works if called
+  directly by name, and stays subject to `read_only`/`disabled_namespaces`
+  exactly as in `full` mode. `discover` can no longer be listed in
+  `disabled_namespaces` while `tool_mode=search` — the add-on refuses to
+  start rather than leave `tools/list` empty. Requires a restart to take
+  effect.
+- `discover_tool_search`/`discover_get_tool_doc` now also return an
+  `"access"` field (`"read"`/`"write"`/`"destructive"`, from the tool's own
+  MCP annotations) alongside the existing fields.
+
+**Security**
+
+- `supervisor_get_addon` now redacts secrets in `options` instead of
+  returning them in full to any caller with the `manager` `hassio_role`
+  (nexus's own): schema-declared `password`-typed fields, a key-name
+  heuristic (`password`/`passwd`/`pass`/`pwd`/`secret`/`token`/`api_key`/
+  `credential`/`private`/`key` — plural forms included, e.g. `credentials`,
+  `secrets`, `tokens`, `passwords`, `api_keys` — exact-token matched so
+  `passenger`/`bypass_cache` are not flagged), and an in-value scan for URLs
+  with inline credentials. Redacted fields are listed in a new
+  `redacted_fields: [{"path", "reason"}]` on the result.
+- `supervisor_set_addon_options` preserves previously-stored secrets when
+  the caller echoes the `**REDACTED**` placeholder back for a field, via a
+  read-modify-write round trip; a placeholder inside a list whose length no
+  longer matches the stored list is refused outright rather than guessed,
+  and a subsequent Supervisor error's `detail` is sanitized once any
+  placeholder was resolved this way (Supervisor can otherwise echo the
+  just-restored secret straight back in a rejected payload's `detail`).
+- Self-protection of the add-on (`self_protection.py`, ADR-0004 D-2):
+  `supervisor_set_addon_options`, `supervisor_uninstall_addon` and
+  `supervisor_stop_addon` refuse to target nexus's own add-on (fail-closed,
+  by the real slug resolved at startup, or the literal `"self"` alias
+  Supervisor itself resolves to the calling add-on). The same guard blocks
+  `hassio.addon_stop`/`app_stop`/`addon_stdin`/`app_stdin` in
+  `services_call_service` and `ws_call_service`, which reach the identical
+  Supervisor operations without ever calling `tools/supervisor.py`.
+  `supervisor_restart_addon` (and `hassio.addon_restart`/`app_restart`) stay
+  unblocked — restarting nexus with unchanged options is not privilege
+  escalation. This guard only covers *direct* invocation; a script,
+  automation, YAML file, blueprint or Jinja template that reaches the same
+  `hassio.*` service indirectly through HA Core's own engine is an accepted
+  residual risk (owner sign-off 2026-09-27) — the actual security boundary
+  is the add-on's own `read_only`/`disabled_namespaces` options, which none
+  of those indirect paths can change. See ADR-0004 "Zaakceptowane ryzyko
+  szczątkowe (0.24.0)".
+
+**Fixed**
+
+- `websockets.connect(...)`'s default 10s `close_timeout` no longer adds an
+  extra ~10s on top of a WebSocket call's own timeout when the peer never
+  completes the closing handshake — both `ha_client.py` and
+  `tools/websocket.py` now cap it at 1s.
+- The HA WebSocket auth handshake (`auth_required` -> `auth` -> `auth_ok`)
+  in `ha_client.py` is now bounded by the same deadline as the rest of the
+  call, instead of blocking forever against a peer that never completes it.
+- stdio mode no longer writes its startup log lines to stdout — only valid
+  MCP JSON-RPC messages belong there per the MCP transports spec; nexus's
+  own startup lines now go to stderr, same as its existing startup-abort
+  messages.
+
+**Changed**
+
+- E2E (`e2e.yml`) is now a required status check, promoted out of
+  "informational" after being observed green for several releases in a row.
+- `hacs.json` removed. Nexus is not, and was never validly, a HACS
+  integration (no `custom_components/`, would not pass HACS's "one
+  integration per repository" validation) — see ADR-0005: the add-on
+  channel plus a future OCI image and MCP Registry entry replace the
+  previously assumed HACS channel.
+
+**Internal**
+
+- CI's test job now runs under `pytest-xdist` (`-n auto`); `tests/
+  test_ws_timeouts.py` marks its real-socket cases `slow` so the fast dev
+  loop can exclude them.
+
 ## 0.23.0
 
 **Changed (important for operators)**

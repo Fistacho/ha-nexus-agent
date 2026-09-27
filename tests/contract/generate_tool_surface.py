@@ -24,12 +24,24 @@ regenerate silently as a side effect of an unrelated change.
 Usage (works from any cwd; paths are resolved relative to this file):
 
     python tests/contract/generate_tool_surface.py
+    python tests/contract/generate_tool_surface.py --mode search
+
+`--mode search` (ADR-0003 P3) regenerates `tool_surface_search.json` instead:
+the 6-tool surface a client sees when the add-on's `tool_mode` option is
+"search" (`NEXUS_TOOL_MODE=search`), with every other policy option at its
+default (`read_only=false`, `disabled_namespaces=[]`). Unlike `--mode full`
+(the default), this mutates the imported `server.mcp` singleton in place via
+`policy.apply_policy()` — harmless here because this script always exits
+right after, but exactly why `tests/test_tool_search_mode.py` never calls
+this function against `server.mcp` itself (it builds its own throwaway root
+instead; see that test module's docstring).
 
 Requires HA_URL / HA_TOKEN in the environment (or `.env`) purely so
 `import server` succeeds — no live HTTP call is made to build the tool list.
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
@@ -40,6 +52,7 @@ from typing import Any
 
 _ROOT = Path(__file__).resolve().parents[2]  # nexus/
 _GOLDEN_FILE = Path(__file__).resolve().parent / "tool_surface.json"
+_GOLDEN_FILE_SEARCH = Path(__file__).resolve().parent / "tool_surface_search.json"
 
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -94,38 +107,69 @@ def mount_call_count(server_py_text: str | None = None) -> int:
     return len(re.findall(r"^mcp\.mount\(", server_py_text, re.MULTILINE))
 
 
-async def _collect_server_tools_async() -> dict[str, Any]:
+async def _collect_server_tools_async(mode: str = "full") -> dict[str, Any]:
     import server  # local import: needs sys.path/env set up above first
+
+    if mode == "search":
+        import policy
+
+        # Isolated from the real process env on purpose: an explicit dict
+        # (not `None`) means `from_env()` never falls back to `os.environ`,
+        # so this is always "tool_mode=search, every other option default"
+        # regardless of what's in the local `.env`.
+        search_policy = policy.ToolPolicy.from_env({"NEXUS_TOOL_MODE": "search"})
+        policy.apply_policy(server.mcp, search_policy)
 
     tools = await server.mcp.list_tools()
     return {t.name: t.to_mcp_tool() for t in tools}
 
 
-def collect_server_tools() -> dict[str, Any]:
-    """Return {full tool name: mcp.types.Tool}, exactly what an MCP client sees."""
-    return asyncio.run(_collect_server_tools_async())
+def collect_server_tools(mode: str = "full") -> dict[str, Any]:
+    """Return {full tool name: mcp.types.Tool}, exactly what an MCP client sees.
+
+    `mode="search"` mutates the shared `server.mcp` singleton (see module
+    docstring) — only ever pass it from this script's own `main()`, never
+    from a test that shares `server.mcp` with other tests in the same
+    process.
+    """
+    return asyncio.run(_collect_server_tools_async(mode))
 
 
-def build_golden() -> dict[str, Any]:
-    tools = collect_server_tools()
-    namespaces = set(module_namespace_map().values())
-    return {
+def build_golden(mode: str = "full") -> dict[str, Any]:
+    tools = collect_server_tools(mode)
+    golden: dict[str, Any] = {
         "tool_count": len(tools),
-        "namespace_count": len(namespaces),
         "tools": {
             name: {"inputSchema": strip_descriptions(tool.inputSchema)}
             for name, tool in sorted(tools.items())
         },
     }
+    if mode == "full":
+        # Not meaningful for "search": only one namespace ("discover") is
+        # ever visible in `tools/list`, but tools are still mounted from all
+        # 29 underlying modules — "namespace_count" would be misleading
+        # either way, so the search golden file omits the key entirely.
+        golden["namespace_count"] = len(set(module_namespace_map().values()))
+    return golden
 
 
 def main() -> None:
-    golden = build_golden()
-    _GOLDEN_FILE.write_text(json.dumps(golden, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(
-        f"Wrote {_GOLDEN_FILE} "
-        f"({golden['tool_count']} tools, {golden['namespace_count']} namespaces)."
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--mode",
+        choices=("full", "search"),
+        default="full",
+        help="Which ADR-0003 tool_mode surface to snapshot (default: full).",
     )
+    args = parser.parse_args()
+
+    golden = build_golden(args.mode)
+    golden_file = _GOLDEN_FILE if args.mode == "full" else _GOLDEN_FILE_SEARCH
+    golden_file.write_text(json.dumps(golden, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    detail = (
+        f"{golden['namespace_count']} namespaces" if args.mode == "full" else "tool_mode=search"
+    )
+    print(f"Wrote {golden_file} ({golden['tool_count']} tools, {detail}).")
 
 
 if __name__ == "__main__":

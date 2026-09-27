@@ -27,6 +27,25 @@ Once connected, just talk to your AI assistant:
 
 ---
 
+## What's New in v0.24.0
+
+- **Optional `tool_mode=search` add-on option** — replaces `tools/list` with a
+  handful of lookup + call-by-name-proxy tools for context-constrained
+  clients; everything hidden this way still works if called directly by
+  name. See [Add-on Options](#add-on-options).
+- **`supervisor_get_addon` no longer leaks secrets** — schema-declared
+  password fields, secret-looking option keys (including plural forms like
+  `credentials`/`api_keys`), and URLs with inline credentials are now
+  redacted; `supervisor_set_addon_options` still lets you edit other fields
+  without re-typing the secret.
+- **Self-protection of the add-on** — nexus now refuses to stop, uninstall or
+  change its own add-on's options, whether asked directly or via
+  `hassio.addon_stop`/`app_stop`/`addon_stdin`/`app_stdin`.
+- **Bounded WebSocket timeouts** — a stuck HA WebSocket handshake or a slow
+  closing handshake can no longer make a call hang well past its documented
+  timeout.
+- Full details in [CHANGELOG.md](CHANGELOG.md#0240).
+
 ## What's New in v0.23.0
 
 - **ESPHome compile/validate/OTA upload work in the add-on** — routed through the
@@ -374,8 +393,9 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | `api_key` | *(auto-generated)* | Pin the MCP API key instead of letting nexus generate one |
 | `read_only` | `false` | Hide and refuse every tool that is not read-only (ADR-0003), and every MCP prompt. See [Security](#security) for what it does *not* restrict. Requires a restart. |
 | `disabled_namespaces` | `[]` | List of tool namespaces (e.g. `["supervisor", "git"]`) to hide and refuse entirely. An unknown namespace name refuses to start with a readable error in the add-on log. Requires a restart. |
+| `tool_mode` | `full` | `full` exposes every tool in `tools/list`, unchanged. `search` instead shows only 3 lookup tools (`discover_tool_search`, `discover_get_tool_doc`, `discover_list_namespaces`) plus 3 call-by-name proxies, one per tool class (`discover_call_read_tool` / `_write_tool` / `_destructive_tool`) — a much smaller catalogue for context-constrained clients. Every tool `search` hides still works if called directly by name, and stays subject to `read_only`/`disabled_namespaces` exactly as in `full` mode — this option only changes what `tools/list` shows. `discover` must stay out of `disabled_namespaces` while this is `search` (the add-on refuses to start otherwise — it would leave `tools/list` empty). Requires a restart. |
 
-`read_only` and `disabled_namespaces` combine as a union — a tool hidden by either one is hidden. Both are evaluated once at startup; there is no per-session or per-client variant.
+`read_only` and `disabled_namespaces` combine as a union — a tool hidden by either one is hidden. Both are evaluated once at startup; there is no per-session or per-client variant. `tool_mode` is a context-budget convenience, not a security boundary — it never widens or narrows what `read_only`/`disabled_namespaces` already decided.
 
 ## Network (add-on)
 
@@ -493,6 +513,7 @@ action:
 | `ESPHOME_DASHBOARD_URL` | Standalone only, for `esphome_*` compile/validate/upload | — | ESPHome Device Builder's trusted-peer ingress URL. The add-on discovers this automatically via the Supervisor and does not need it set; standalone installs must set it explicitly or those tools return `esphome_not_configured`. |
 | `NEXUS_READ_ONLY` | No | `false` | Standalone equivalent of the `read_only` add-on option — see [Add-on Options](#add-on-options) |
 | `NEXUS_DISABLED_NAMESPACES` | No | *(empty)* | Standalone equivalent of `disabled_namespaces`, comma-separated (e.g. `supervisor,git`) |
+| `NEXUS_TOOL_MODE` | No | `full` | Standalone equivalent of the `tool_mode` add-on option (`full`\|`search`) — see [Add-on Options](#add-on-options) |
 
 ---
 

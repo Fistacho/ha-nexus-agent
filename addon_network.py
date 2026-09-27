@@ -98,9 +98,18 @@ class AddonNetworkUnavailable(RuntimeError):
 class ListenPlan:
     """The (host, port) sockets uvicorn should bind, worked out from the
     add-on's Network-tab settings (ADR-0004 D1b). Always at least one socket.
+
+    `own_slug` (W3 Security review M4) is nexus's own add-on slug from the
+    same `GET /addons/self/info` call, exposed here so `server.main()` can
+    feed it to `self_protection.set_own_slug(...)` without a second fetch —
+    `None` in standalone mode (there is no "own add-on") or if the field is
+    ever missing/malformed in add-on mode (`self_protection` then fails
+    closed for D-2 specifically; this module's own fail-closed guarantee
+    stays scoped to the LAN-port/`ip_address` concerns it already covers).
     """
 
     sockets: tuple[tuple[str, int], ...]
+    own_slug: str | None = None
 
     @property
     def lan_port(self) -> int | None:
@@ -117,7 +126,7 @@ class ListenPlan:
         """Non-add-on deployment (`.env`, `NEXUS_HTTP=1` without
         `SUPERVISOR_TOKEN`): no Supervisor, no Network tab, so this is just
         today's single wildcard socket — unchanged from pre-0.23.0 nexus."""
-        return cls(sockets=((_LAN_WILDCARD_HOST, port),))
+        return cls(sockets=((_LAN_WILDCARD_HOST, port),), own_slug=None)
 
     @classmethod
     def from_self_info(cls, data: dict) -> ListenPlan:
@@ -167,7 +176,10 @@ class ListenPlan:
             # its own dedicated socket, separate from the new LAN port.
             sockets = ((ip_address_raw, INGRESS_CONTAINER_PORT), (_LAN_WILDCARD_HOST, port_value))
 
-        return cls(sockets=sockets)
+        own_slug_raw = data.get("slug")
+        own_slug = own_slug_raw if isinstance(own_slug_raw, str) and own_slug_raw else None
+
+        return cls(sockets=sockets, own_slug=own_slug)
 
 
 def _fetch_self_info(

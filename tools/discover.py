@@ -8,6 +8,16 @@ covers?" and get a ranked shortlist before invoking the right one.
 It's an *additive* helper, not a replacement: every tool stays accessible
 through its normal name. Mount this module last so its index sees every
 sibling already registered.
+
+ADR-0003 P3 (`tool_mode=search`) also lives here: `build_tool_search_transform()`
+and the `NexusToolSearch` transform it returns replace `tools/list` with this
+module's own three lookup tools (`tool_search`, `get_tool_doc`,
+`list_namespaces`) plus one call-by-name proxy per ADR-0002 annotation class
+(`discover_call_read_tool`/`_write_tool`/`_destructive_tool`). `policy.py` is
+the only caller — it decides *whether* `tool_mode=search` is active and
+passes the already-policy-filtered tool set; nothing here reads `NEXUS_*` env
+vars or imports `policy` (that import would be circular: `policy.py` already
+imports this module for its namespace parser).
 """
 from __future__ import annotations
 
@@ -16,13 +26,19 @@ import asyncio
 import math
 import re
 from collections import Counter
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Iterable
+from typing import Annotated, Any, Iterable, Literal
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
+from fastmcp.server.transforms.catalog import CatalogTransform
+from fastmcp.server.transforms.visibility import is_enabled
+from fastmcp.tools import Tool
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from tools._contract import read
+from tools._contract import destructive, read, write
 
 mcp = FastMCP("discover")
 
@@ -178,6 +194,25 @@ def _score(query_tokens: list[str], entry: dict[str, Any], avgdl: float, df: Cou
     return score
 
 
+def _tool_class(annotations: ToolAnnotations | None) -> Literal["read", "write", "destructive"]:
+    """Classify a tool by its MCP annotations (ADR-0003 P: "Klasyfikacja
+    pochodzi wyłącznie z adnotacji"): `read` iff `readOnlyHint is True`,
+    `destructive` iff `destructiveHint is True`, `write` otherwise.
+
+    Fail-closed the same way `policy._is_read_only_tool()` is: a tool with no
+    annotations at all classifies as `destructive`, matching the MCP spec's
+    own default (`destructiveHint` defaults to `True` when unset) rather than
+    a silent, more-permissive guess.
+    """
+    if annotations is None:
+        return "destructive"
+    if annotations.readOnlyHint is True:
+        return "read"
+    if annotations.destructiveHint is True:
+        return "destructive"
+    return "write"
+
+
 # --- Public tools --------------------------------------------------------
 
 @mcp.tool(annotations=read("Search the tool catalogue"))
@@ -211,8 +246,10 @@ def tool_search(
     keeping the whole tool surface in working memory.
     Not for: a single tool's full documentation once you have its name —
     use `discover_get_tool_doc`.
-    Returns: list of `{"name", "namespace", "summary", "score"}` dicts,
-    highest score first; empty list if nothing scores above zero.
+    Returns: list of `{"name", "namespace", "summary", "score", "access"}`
+    dicts, highest score first; empty list if nothing scores above zero.
+    `access` is `"read"`, `"write"` or `"destructive"` (ADR-0002/0003
+    annotation class).
     """
     index = _ensure_index()
     if namespace:
@@ -246,6 +283,7 @@ def tool_search(
             "namespace": e["namespace"],
             "summary": e["summary"],
             "score": round(s, 3),
+            "access": _tool_class(e["_annotations"]),
         }
         for s, e in scored[:top_k]
     ]
@@ -286,9 +324,12 @@ def get_tool_doc(
     name with `discover_tool_search`.
     Not for: searching by keyword — use `discover_tool_search`.
     Returns: `{"name", "namespace", "description", "input_schema",
-    "annotations"}`. `input_schema` is the tool's JSON-schema parameter
-    dict; `annotations` is the four MCP hints plus `title` as a plain dict,
-    or `None` for a tool whose module has not yet declared them.
+    "annotations", "access"}`. `input_schema` is the tool's JSON-schema
+    parameter dict; `annotations` is the four MCP hints plus `title` as a
+    plain dict, or `None` for a tool whose module has not yet declared them.
+    `access` is `"read"`, `"write"` or `"destructive"` (ADR-0002/0003
+    annotation class), computed fail-closed even when `annotations` is
+    `None`.
     Errors: `{"error": "not_found", "name": name}` when no tool with that
     exact name is in the index.
     """
@@ -302,6 +343,7 @@ def get_tool_doc(
                 "description": e["_full_description"],
                 "input_schema": e["_input_schema"],
                 "annotations": annotations.model_dump() if annotations is not None else None,
+                "access": _tool_class(annotations),
             }
     return {"error": "not_found", "name": name}
 
@@ -325,3 +367,197 @@ def refresh_index() -> dict:
     _INDEX = None
     idx = _ensure_index()
     return {"status": "rebuilt", "tools": len(idx)}
+
+
+# --- ADR-0003 P3: tool_mode=search -----------------------------------------
+
+# Full, namespace-prefixed names of the three lookup tools above, kept
+# visible (pinned) in `tools/list` under `tool_mode=search` — everything
+# else in this module (`refresh_index`) and in every other namespace is
+# hidden from the list but stays directly callable (see `NexusToolSearch`
+# docstring below).
+_PINNED_SEARCH_MODE_TOOLS = frozenset(
+    {"discover_tool_search", "discover_get_tool_doc", "discover_list_namespaces"}
+)
+
+# One call-by-name proxy per ADR-0002 annotation class, keyed by `_tool_class()`'s
+# own return values so a lookup never drifts out of sync with the classifier.
+_PROXY_TOOL_NAMES: dict[str, str] = {
+    "read": "discover_call_read_tool",
+    "write": "discover_call_write_tool",
+    "destructive": "discover_call_destructive_tool",
+}
+
+_PROXY_TITLES: dict[str, str] = {
+    "read": "Call a read-only tool by name",
+    "write": "Call a write tool by name",
+    "destructive": "Call a destructive tool by name",
+}
+
+_PROXY_DOCSTRINGS: dict[str, str] = {
+    "read": """Call any read-only Nexus tool by its full name, with arguments validated against its own schema.
+
+Resolves `name` through the live catalogue (any namespace, e.g. "entities_get_entity") and forwards `arguments` to it exactly as a direct call would, after validating them with that tool's own input schema — the target function itself never runs on a validation failure. Only reachable when the add-on's tool_mode option is "search", which replaces tools/list with discover's own lookup tools plus one call proxy per annotation class; the target tool's own name stays wired to the same handler and keeps working if called directly, and stays subject to the add-on's read_only/disabled_namespaces policy exactly as before.
+
+Use when: tool_mode is "search", discover_tool_search found a tool whose annotations classify it read-only, and you now want to call it by name.
+Not for: a tool classified write or destructive — this proxy refuses those; use discover_call_write_tool or discover_call_destructive_tool instead.
+Returns: the target tool's own result, unchanged.
+Errors: {"error": "not_found", "name": name} when no tool with that exact name exists or is currently enabled by the add-on's read_only/disabled_namespaces policy; {"error": "wrong_proxy", "message", "use"} when name resolves to a tool outside this proxy's class.""",
+    "write": """Call any write-class Nexus tool by its full name, with arguments validated against its own schema.
+
+Resolves `name` through the live catalogue and forwards `arguments` to it exactly as a direct call would, after validating them with that tool's own input schema. A write-class tool changes Home Assistant or add-on state but is additive, reversible, or supplies its own data (ADR-0002 R2/R5a/R5b/R6) — never a destructive one. Only reachable when tool_mode is "search"; the target tool's own name keeps working if called directly, and stays subject to the add-on's read_only/disabled_namespaces policy exactly as before.
+
+Use when: tool_mode is "search", discover_tool_search found a tool whose annotations classify it write, and you now want to call it by name.
+Not for: a read-only or destructive tool — this proxy refuses those; use discover_call_read_tool or discover_call_destructive_tool instead.
+Returns: the target tool's own result, unchanged.
+Errors: {"error": "not_found", "name": name} when no tool with that exact name exists or is currently enabled by the add-on's read_only/disabled_namespaces policy; {"error": "wrong_proxy", "message", "use"} when name resolves to a tool outside this proxy's class.""",
+    "destructive": """Call any destructive Nexus tool by its full name, with arguments validated against its own schema.
+
+Resolves `name` through the live catalogue and forwards `arguments` to it exactly as a direct call would, after validating them with that tool's own input schema. A destructive-class tool can interrupt availability, or lose/overwrite data the caller did not supply (ADR-0002 R2/R3/R4). Its own server-side safeguards (e.g. confirm=True) still apply unchanged — this proxy adds none of its own, it only forwards arguments. Only reachable when tool_mode is "search"; the target tool's own name keeps working if called directly, and stays subject to the add-on's read_only/disabled_namespaces policy exactly as before.
+
+Use when: tool_mode is "search", discover_tool_search found a tool whose annotations classify it destructive, and you now want to call it by name.
+Not for: a read-only or write tool — this proxy refuses those; use discover_call_read_tool or discover_call_write_tool instead.
+Returns: the target tool's own result, unchanged.
+Errors: {"error": "not_found", "name": name} when no tool with that exact name exists or is currently enabled by the add-on's read_only/disabled_namespaces policy; {"error": "wrong_proxy", "message", "use"} when name resolves to a tool outside this proxy's class.""",
+}
+
+
+@dataclass(frozen=True)
+class _ProxySpec:
+    """One class's worth of `NexusToolSearch` proxy: its full tool name,
+    which `_tool_class()` bucket it serves, and the `openWorldHint` to
+    advertise (OR'd across every currently-visible member of that class)."""
+
+    name: str
+    cls: Literal["read", "write", "destructive"]
+    open_world: bool
+
+
+def _proxy_annotations(cls: Literal["read", "write", "destructive"], *, open_world: bool) -> ToolAnnotations:
+    title = _PROXY_TITLES[cls]
+    if cls == "read":
+        return read(title, open_world=open_world)
+    if cls == "write":
+        return write(title, idempotent=False, open_world=open_world)
+    return destructive(title, idempotent=False, open_world=open_world)
+
+
+def build_tool_search_transform(visible_tools: Sequence[Tool]) -> "NexusToolSearch":
+    """Build the ADR-0003 P3 transform from the process's already
+    policy-filtered tool catalogue.
+
+    `visible_tools` must already exclude anything P1 (`read_only`) or P2
+    (`disabled_namespaces`) disabled — `policy.apply_policy()` is the only
+    caller, and passes it the same snapshot it just used to compute its own
+    `disabled_tools`, minus that set (see `apply_policy()`).
+
+    Which proxy classes exist and each one's `openWorldHint` are computed
+    **once, here** — matching ADR-0003's "wyliczony przy starcie" — because
+    `policy.py`'s own module docstring guarantees the policy, and therefore
+    this visible set, is static for the life of the process; there is no
+    later point where a class could gain or lose members.
+    """
+    by_class: dict[str, list[Tool]] = {"read": [], "write": [], "destructive": []}
+    for t in visible_tools:
+        by_class[_tool_class(t.annotations)].append(t)
+
+    specs: list[_ProxySpec] = []
+    for cls in ("read", "write", "destructive"):
+        members = by_class[cls]
+        if not members:
+            # ADR-0003: "Proxy klasy bez żadnego widocznego narzędzia... nie
+            # jest wystawiane" — e.g. write/destructive under read_only.
+            continue
+        open_world = any(bool(t.annotations and t.annotations.openWorldHint) for t in members)
+        specs.append(_ProxySpec(name=_PROXY_TOOL_NAMES[cls], cls=cls, open_world=open_world))
+    return NexusToolSearch(specs)
+
+
+class NexusToolSearch(CatalogTransform):
+    """ADR-0003 P3: replace `tools/list` with this module's 3 lookup tools
+    plus one call-by-name proxy per ADR-0002 annotation class.
+
+    Deliberately not FastMCP's own `BaseSearchTransform`/`BM25SearchTransform`:
+    those synthesize a single, annotation-less `call_tool` proxy which, per
+    `mcp.types.ToolAnnotations`' own defaults, a client honouring MCP hints
+    would see as destructive and open-world regardless of what it actually
+    calls — throwing away exactly the read/write/destructive distinction
+    ADR-0002 built. Splitting into three proxies, one per class, keeps a
+    client's consent scoped to the risk of what it is actually about to run.
+
+    `tool_mode` is a context-budget feature, not a security boundary: any
+    tool this transform hides from `tools/list` stays directly callable by
+    its own name (`get_tool()` below delegates every non-synthetic name to
+    `call_next`, i.e. whatever `policy.apply_policy()`'s own
+    `server.disable()` calls already decided). P1 (`read_only`) and P2
+    (`disabled_namespaces`) remain the only enforcement layer — this
+    transform is added to the server strictly *after* both, so the
+    `visible_tools` `build_tool_search_transform()` computed proxy classes
+    from already reflects every P1/P2 disable, and this transform's own
+    proxy dispatch re-resolves each call through `ctx.fastmcp.get_tool()` /
+    `call_tool()`, which apply the exact same Visibility filtering a direct
+    `tools/call` would.
+    """
+
+    def __init__(self, proxy_specs: Sequence[_ProxySpec]) -> None:
+        super().__init__()
+        self._specs: dict[str, _ProxySpec] = {s.name: s for s in proxy_specs}
+
+    async def transform_tools(self, tools: Sequence[Tool]) -> Sequence[Tool]:
+        # `tools` here has already passed through every transform registered
+        # before this one (Visibility included) but Visibility only *marks*
+        # disabled tools rather than removing them (see
+        # `fastmcp.server.transforms.visibility.Visibility`), so `is_enabled()`
+        # is still needed to actually drop them from what `tools/list` shows.
+        pinned = [t for t in tools if is_enabled(t) and t.name in _PINNED_SEARCH_MODE_TOOLS]
+        proxies = [self._build_proxy_tool(spec) for spec in self._specs.values()]
+        return [*pinned, *proxies]
+
+    async def get_tool(self, name, call_next, *, version=None):
+        spec = self._specs.get(name)
+        if spec is not None:
+            return self._build_proxy_tool(spec)
+        return await call_next(name, version=version)
+
+    def _build_proxy_tool(self, spec: _ProxySpec) -> Tool:
+        expected_cls = spec.cls
+
+        async def call_proxy(
+            name: Annotated[
+                str,
+                Field(
+                    description=(
+                        "Full tool name including namespace, e.g. 'entities_get_entity', "
+                        "from discover_tool_search."
+                    )
+                ),
+            ],
+            arguments: Annotated[
+                dict[str, Any] | None,
+                Field(
+                    description=(
+                        "Arguments for the target tool, matching its own input schema "
+                        "exactly. Omit for a tool with no required parameters."
+                    )
+                ),
+            ] = None,
+            ctx: Context = None,  # type: ignore[assignment]
+        ) -> Any:
+            target = await ctx.fastmcp.get_tool(name)
+            if target is None:
+                return {"error": "not_found", "name": name}
+            actual_cls = _tool_class(target.annotations)
+            if actual_cls != expected_cls:
+                return {
+                    "error": "wrong_proxy",
+                    "message": f"'{name}' is a {actual_cls} tool, not {expected_cls}.",
+                    "use": _PROXY_TOOL_NAMES[actual_cls],
+                }
+            return await ctx.fastmcp.call_tool(name, arguments or {})
+
+        call_proxy.__doc__ = _PROXY_DOCSTRINGS[expected_cls]
+        return Tool.from_function(
+            fn=call_proxy,
+            name=spec.name,
+            annotations=_proxy_annotations(expected_cls, open_world=spec.open_world),
+        )

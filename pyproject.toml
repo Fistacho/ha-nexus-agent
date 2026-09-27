@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ha-nexus-agent"
-version = "0.23.0"
+version = "0.24.0"
 description = "Nexus — MCP server for Home Assistant; 323 tools across 29 domains for AI control of your smart home"
 authors = [{ name = "Łukasz Żochowski" }]
 license = { text = "MIT" }
@@ -33,13 +33,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0", "ruff==0.16.1"]
+dev = ["pytest>=8.0.0", "pytest-xdist>=3.6.0,<4", "ruff==0.16.1"]
 
 [project.scripts]
 nexus = "server:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: exercises a real socket (connection-refused/timeout) instead of a fake transport; excluded by `-m \"not slow\"` in the fast dev loop.",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]

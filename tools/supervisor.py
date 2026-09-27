@@ -6,12 +6,14 @@ config.yaml must have `hassio_api: true` and `hassio_role: manager`.
 from __future__ import annotations
 
 import os
-from typing import Annotated
+import re
+from typing import Annotated, Any
 
 import httpx
 from fastmcp import FastMCP
 from pydantic import Field
 
+import self_protection
 from tools._contract import destructive, read, write
 
 mcp = FastMCP("supervisor")
@@ -19,6 +21,288 @@ mcp = FastMCP("supervisor")
 TOOL_CONTRACT = {"version": 1, "long_ok": {}, "heuristic_exceptions": {}}
 
 _BASE_URL = "http://supervisor"
+
+# --- Secret redaction (ADR-0004 "Powiazany dług" D-1) -----------------------
+#
+# `GET /addons/<slug>/info` (Supervisor `supervisor/api/apps.py::APIApps.info_data`)
+# returns `options` unredacted whenever the caller is the app itself or holds
+# the "manager"/"admin" hassio_role — nexus's own `config.yaml` declares
+# `hassio_role: manager`, so every installed add-on's options (this nexus
+# add-on's own API key, other add-ons' passwords/tokens) come back in full on
+# every call, regardless of which add-on is being inspected:
+#
+#     expose_options = (
+#         not isinstance(request_from, App)
+#         or request_from is app
+#         or request_from.hassio_role in (ROLE_MANAGER, ROLE_ADMIN)
+#     )
+#     ...
+#     ATTR_OPTIONS: app.options if expose_options else {},
+#     ATTR_SCHEMA: app.schema_ui,
+#
+# `app.schema_ui` (`supervisor/apps/options.py::UiOptions._single_ui_option`)
+# is a `list[dict]`, one entry per top-level option key, each with a `"name"`
+# and — for a `password(...)`-typed option — `"type": "string"` plus
+# `"format": "password"`:
+#
+#     elif value.startswith(_PASSWORD):
+#         ui_node["type"] = "string"
+#         ui_node["format"] = "password"
+#
+# A nested option group serializes as `{"name", "type": "schema", "schema":
+# [...]; "multiple": bool}` with its own list of child nodes, mirroring the
+# nested `options` dict/list one level down. `schema_ui` is `None` when the
+# add-on declares `schema: false` (`options.py::AppOptions.schema_ui` returns
+# `None` for a bool raw schema) — in that case there is no type information
+# at all and only the key-name heuristic below applies.
+#
+# Three independent redaction signals are combined, all recursively, since
+# none alone is reliable: the schema can be absent/stale, a key can be named
+# `mqtt_password` without the add-on ever declaring `password(...)` in its
+# own `config.yaml`, and a field named e.g. `broker` can still hold a
+# `scheme://user:pass@host` URL with the secret embedded in the value itself
+# rather than in a dedicated field (W3 Security review, M2/M3 — the first
+# pass covered only the schema and key-name signals).
+
+_REDACTED = "**REDACTED**"
+
+# Heuristic key-name tokens (case-insensitive, matched against
+# underscore/camelCase-split tokens of the option key): a whole-word or
+# suffix match on any of these flags the value as a likely secret even when
+# the schema says nothing about it. "key" is handled separately below so it
+# also catches a bare `key` field and a `..._key`/`apikey` suffix without
+# also flagging unrelated words that merely contain "key" mid-token. "pass"/
+# "pwd" (M2) are exact-token matches only (never substring), so
+# `mqtt_pass`/`db_pwd` are flagged while `passenger`/`bypass_cache` — neither
+# of which splits into a bare `pass` token — are not.
+_SECRET_KEY_TOKENS = {"password", "passwd", "pass", "pwd", "secret", "token", "credential", "private"}
+
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+
+# M3: a URL with inline credentials (`scheme://user:pass@host[...]`) redacts
+# the whole string value, regardless of the option's key name or schema —
+# neither signal above would catch e.g. `{"broker":
+# "mqtt://iot:s3cr3t@core-mosquitto:1883"}`, where "broker" looks like plain
+# connection config and the schema (if any) declares it a plain `url`/`str`,
+# not `password`. Deliberately conservative: any `scheme://user:pass@` prefix
+# redacts the entire value rather than trying to surgically cut out just the
+# credentials, since a same-shape false positive (a URL that merely contains
+# a literal "@" for an unrelated reason) is far cheaper than a missed secret.
+_CREDENTIALS_IN_URL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s/@]+:[^\s/@]+@")
+
+
+def _normalize_key(key: str) -> str:
+    """Split `key` into lowercase, underscore-joined tokens for the heuristic
+    below — handles both `snake_case` and `camelCase`/`PascalCase` option
+    names (Supervisor add-on schemas use either convention)."""
+    spaced = _CAMEL_BOUNDARY_RE.sub("_", str(key))
+    return _NON_ALNUM_RE.sub("_", spaced.lower()).strip("_")
+
+
+def _looks_like_secret_key(key: str) -> bool:
+    """True when `key`'s name alone (regardless of any schema) suggests a
+    secret value, per the token list/`key`-suffix rule above. Plural forms
+    (`credentials`, `secrets`, `tokens`, `passwords`, `api_keys`, ...) are
+    also matched via a trailing-`s` singularization, checked in addition to
+    (never instead of) the exact-token match so that `pass`/`pwd` themselves
+    stay exact-token matches and `passenger`/`bypass_cache` stay unflagged."""
+    normalized = _normalize_key(key)
+    if not normalized:
+        return False
+    for part in normalized.split("_"):
+        singular = part.rstrip("s") or part
+        if part in _SECRET_KEY_TOKENS or singular in _SECRET_KEY_TOKENS:
+            return True
+        if part in ("key", "keys") or part.endswith("key") or part.endswith("keys"):
+            return True
+    return False
+
+
+def _schema_name_map(schema: Any) -> dict[str, dict]:
+    """`{option name: its schema_ui node}` for one level of a Supervisor
+    add-on's UI schema, or `{}` when `schema` isn't the expected `list[dict]`
+    (missing, `None` from a `schema: false` add-on, or malformed)."""
+    if not isinstance(schema, list):
+        return {}
+    return {
+        node["name"]: node
+        for node in schema
+        if isinstance(node, dict) and isinstance(node.get("name"), str)
+    }
+
+
+def _classify_scalar(value: Any, node: dict, key_should_redact: bool) -> str | None:
+    """Which of the three M2/M3 redaction signals (if any) applies to one
+    scalar `options` leaf. Priority order when more than one could apply:
+    the add-on's own schema (most authoritative — the add-on itself declared
+    this a password field) beats the key-name heuristic, which beats the
+    in-value URL-credentials scan (the least specific signal, and the only
+    one that runs regardless of key name or schema at all)."""
+    if node.get("format") == "password":
+        return "schema_password"
+    if key_should_redact:
+        return "key_name_heuristic"
+    if isinstance(value, str) and _CREDENTIALS_IN_URL_RE.search(value):
+        return "credentials_in_url"
+    return None
+
+
+def _redact(
+    value: Any,
+    schema_by_name: dict[str, dict],
+    path: str,
+    key: str | None = None,
+    node: dict | None = None,
+) -> tuple[Any, list[dict[str, str]]]:
+    """Recursively redact one add-on's `options` value (or a piece of it).
+
+    `schema_by_name` is this level's `_schema_name_map(...)`; `key`/`node`
+    are the option key and its schema node one level up — carried down
+    unchanged through a `multiple` list so every scalar element gets the
+    same classification as its parent key (a nested dict's own keys are
+    always reclassified from its own `schema_by_name`, never inherited).
+    Returns the redacted copy and a list of `{"path", "reason"}` dicts (path
+    e.g. `"mqtt.password"`, `"tokens[0]"`; reason one of `_classify_scalar`'s
+    three signals) for every leaf actually redacted — empty/`None` values are
+    left as-is so a caller can still see a field is unset.
+    """
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        redacted_fields: list[dict[str, str]] = []
+        for child_key, val in value.items():
+            item_path = f"{path}.{child_key}" if path else str(child_key)
+            child_node = schema_by_name.get(child_key, {})
+            nested_schema = (
+                _schema_name_map(child_node.get("schema")) if child_node.get("type") == "schema" else {}
+            )
+            new_val, sub_fields = _redact(val, nested_schema, item_path, key=child_key, node=child_node)
+            result[child_key] = new_val
+            redacted_fields.extend(sub_fields)
+        return result, redacted_fields
+    if isinstance(value, list):
+        result_list: list[Any] = []
+        redacted_fields = []
+        for idx, item in enumerate(value):
+            item_path = f"{path}[{idx}]"
+            new_item, sub_fields = _redact(item, schema_by_name, item_path, key=key, node=node)
+            result_list.append(new_item)
+            redacted_fields.extend(sub_fields)
+        return result_list, redacted_fields
+    key_should_redact = _looks_like_secret_key(key) if key is not None else False
+    reason = _classify_scalar(value, node or {}, key_should_redact)
+    if reason and value not in (None, ""):
+        return _REDACTED, [{"path": path, "reason": reason}]
+    return value, []
+
+
+def _redact_addon_info_data(data: dict) -> tuple[dict, list[dict[str, str]]]:
+    """Redact the `options` of one `GET /addons/<slug>/info` `data` object,
+    using its own `schema` for the password-typed fields, the key-name
+    heuristic, and an in-value URL-credentials scan — all applied
+    recursively and independently of each other. Returns `data` unchanged
+    (with no redacted fields) when `options` isn't a `dict` (missing/
+    `None`)."""
+    options = data.get("options")
+    if not isinstance(options, dict):
+        return data, []
+    schema_by_name = _schema_name_map(data.get("schema"))
+    redacted_options, redacted_fields = _redact(options, schema_by_name, "")
+    new_data = dict(data)
+    new_data["options"] = redacted_options
+    return new_data, redacted_fields
+
+
+def _contains_redaction_marker(value: Any) -> bool:
+    """True when `value` (an options tree passed to `set_addon_options`)
+    contains the redaction placeholder anywhere, dict/list nesting included —
+    used to decide whether a read-modify-write round trip is needed at all."""
+    if value == _REDACTED:
+        return True
+    if isinstance(value, dict):
+        return any(_contains_redaction_marker(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_contains_redaction_marker(v) for v in value)
+    return False
+
+
+class RedactionMergeError(ValueError):
+    """Raised by `_merge_redaction_markers` (S1, W3 Security review) when a
+    placeholder in a list can't be safely resolved back to a real stored
+    value — currently only a list-length mismatch (see below)."""
+
+
+def _merge_redaction_markers(new_value: Any, old_value: Any, path: str = "") -> Any:
+    """Replace every redaction placeholder in `new_value` with the
+    corresponding leaf from `old_value` (the add-on's currently stored
+    options), preserving `new_value`'s own edits everywhere else.
+
+    S1 (W3 Security review): a list is merged strictly *by index* — item 0
+    against item 0, item 1 against item 1, and so on — since there is no
+    other way to tell which stored item an echoed-back placeholder refers
+    to. That only gives the right answer when the caller sent the list back
+    in the same order and length it was read in, so a list containing a
+    placeholder whose length doesn't match the currently stored list raises
+    `RedactionMergeError` instead of silently guessing (padding missing
+    positions with `None`, as a plain zip would) — the caller must re-read
+    the current value and either keep every item in the same order, or
+    replace the placeholder(s) with an explicit value instead of echoing
+    them back positionally-mismatched.
+    """
+    if new_value == _REDACTED:
+        return old_value
+    if isinstance(new_value, dict):
+        old_dict = old_value if isinstance(old_value, dict) else {}
+        return {
+            k: _merge_redaction_markers(v, old_dict.get(k), f"{path}.{k}" if path else str(k))
+            for k, v in new_value.items()
+        }
+    if isinstance(new_value, list):
+        old_list = old_value if isinstance(old_value, list) else []
+        if _contains_redaction_marker(new_value) and len(new_value) != len(old_list):
+            raise RedactionMergeError(
+                f"option {path or '<root>'!r}: the submitted list has {len(new_value)} "
+                f"item(s) and contains the redaction placeholder, but the currently stored "
+                f"list has {len(old_list)} item(s) — can't tell which stored item each "
+                "placeholder refers to. Read the current value again and resend every item "
+                "in the same order, or replace the placeholder(s) with an explicit value."
+            )
+        return [
+            _merge_redaction_markers(
+                item, old_list[i] if i < len(old_list) else None, f"{path}[{i}]"
+            )
+            for i, item in enumerate(new_value)
+        ]
+    return new_value
+
+
+# Own-add-on identity and the "is this slug nexus itself" check moved to
+# `self_protection.py` (W3 Security review M1/M4): a per-call `GET
+# /addons/self/info` here couldn't be shared with `tools/services.py`'s
+# generic `hassio.*` dispatch (M1's finding — that path reached the exact
+# same Supervisor operations without ever calling this module), and a
+# per-call fetch also couldn't fail closed the way M4 requires (nothing to
+# fail *to* if the fetch's own failure is what's being asked about). See
+# `self_protection.is_own_addon` and its module docstring for the resulting
+# three-state, fail-closed contract; `server.main()` feeds it nexus's own
+# slug once at startup from `addon_network.resolve_listen_plan()`'s own
+# fetch.
+
+
+def _sanitize_error_detail(resp: dict) -> dict:
+    """Strip Supervisor's raw `detail` text from an error response (S2, W3
+    Security review) — used only on the branch of `set_addon_options` that
+    already reconstituted a real secret into `options` via the
+    redaction-marker merge, so a Supervisor validation error that echoes the
+    submitted value back (a real, observed Supervisor behaviour on a
+    rejected options payload) can't leak that secret through this tool's own
+    error response. Leaves non-error responses, and error responses with no
+    `detail` field, untouched."""
+    if not isinstance(resp, dict) or "error" not in resp or "detail" not in resp:
+        return resp
+    sanitized = dict(resp)
+    sanitized["detail"] = "redacted — this request involved substituting a stored secret back in"
+    return sanitized
 
 
 def _supervisor_request(method: str, path: str, json: dict | None = None) -> dict:
@@ -105,22 +389,43 @@ def get_addon(
         Field(description="Add-on slug, e.g. from `supervisor_list_addons`."),
     ],
 ) -> dict:
-    """Get full Supervisor info for one add-on.
+    """Get full Supervisor info for one add-on, with secret option values redacted.
 
-    Calls `GET /addons/<slug>/info`, returning every field Supervisor stores
-    for that add-on (options schema, current options, ports, boot mode,
-    version, state and more).
+    Calls `GET /addons/<slug>/info`: every field Supervisor stores for that
+    add-on (options schema, current options, ports, boot mode, version,
+    state and more), except `options` values are replaced with a fixed
+    placeholder wherever the schema marks a field a password, the key name
+    looks like a secret (`password`/`pass`/`pwd`, `token`, `api_key`,
+    `secret`, `credential`, `private`, `key` as a word/suffix), or the value
+    is a URL with inline credentials (`scheme://user:pass@host`) — covers
+    nexus's own API key and other add-ons' secrets/connection strings
+    alike, recursively through nested groups and lists. An empty/unset
+    value stays empty. Adds `redacted_fields`: `{"path", "reason"}` dicts,
+    `reason` one of `schema_password`, `key_name_heuristic`,
+    `credentials_in_url`.
 
     Use when: the full add-on record is needed, e.g. before editing its
-    options.
+    options with `supervisor_set_addon_options`, which accepts the same
+    placeholder back for an unchanged secret field without overwriting it.
     Not for: a quick overview across all add-ons — use
     `supervisor_list_addons`.
-    Returns: Supervisor's raw add-on info payload.
+    Returns: Supervisor's add-on info payload with secret-looking `options`
+    values replaced by a placeholder, plus `redacted_fields`.
     Errors: `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
     add-on for Supervisor API"}` when the token env var is missing;
     `{"error": "HTTP <status>", "detail": ...}` if the slug does not exist.
     """
-    return _supervisor_request("GET", f"/addons/{slug}/info")
+    resp = _supervisor_request("GET", f"/addons/{slug}/info")
+    if "error" in resp:
+        return resp
+    data = resp.get("data")
+    if not isinstance(data, dict):
+        return resp
+    redacted_data, redacted_fields = _redact_addon_info_data(data)
+    result = dict(resp)
+    result["data"] = redacted_data
+    result["redacted_fields"] = redacted_fields
+    return result
 
 
 @mcp.tool(annotations=write("Install an add-on", idempotent=True, open_world=True))
@@ -175,19 +480,35 @@ def uninstall_addon(
 ) -> dict:
     """Uninstall an add-on and its persistent data after an explicit confirmation.
 
-    Calls `POST /addons/<slug>/uninstall`. Without `confirm=True` nothing is
-    removed; the call only returns an error asking for confirmation.
+    Calls `POST /addons/<slug>/uninstall`. Refuses to run at all against
+    nexus's own add-on (its real slug, or the alias Supervisor resolves to
+    the caller itself — see `self_protection.is_own_addon`) — checked first,
+    with no Supervisor request made either way, before even the
+    confirmation gate: nexus removing itself is never the right tool for
+    that regardless of `confirm`. Otherwise, without `confirm=True` nothing
+    is removed; the call only returns an error asking for confirmation
+    (ADR-0003 D1).
 
     Use when: permanently removing an add-on that is no longer needed.
     Not for: temporarily stopping it while keeping its data and config — use
     `supervisor_stop_addon`.
     Returns: Supervisor's uninstall-job result when confirmed.
-    Errors: returns `{"error": "confirmation_required", "message": ...,
-    "action": ...}` when `confirm` is false; `{"error": "HTTP <status>",
-    "detail": ...}` on a Supervisor API error.
+    Errors: `{"error": "self_addon_uninstall_blocked", "message": ...}` when
+    `slug` is nexus's own add-on; returns `{"error":
+    "confirmation_required", "message": ..., "action": ...}` when `confirm`
+    is false; `{"error": "HTTP <status>", "detail": ...}` on a Supervisor
+    API error.
     Limits: WARNING: deletes the add-on's data with no separate backup step;
     requires `confirm=True`.
     """
+    if self_protection.is_own_addon(slug):
+        return {
+            "error": "self_addon_uninstall_blocked",
+            "message": (
+                "Refusing to uninstall nexus's own add-on through this tool. Uninstall it "
+                "through the Home Assistant Supervisor UI instead if that is really intended."
+            ),
+        }
     if not confirm:
         return {
             "error": "confirmation_required",
@@ -232,20 +553,39 @@ def stop_addon(
 ) -> dict:
     """Stop a running add-on.
 
-    Calls `POST /addons/<slug>/stop`. The add-on — which could be this nexus
-    add-on itself, or e.g. an MQTT broker other integrations depend on —
-    becomes unavailable until started again.
+    Calls `POST /addons/<slug>/stop`. The add-on — e.g. an MQTT broker other
+    integrations depend on — becomes unavailable until started again.
+    Refuses to run at all against nexus's own add-on (by its real slug or
+    the literal alias Supervisor resolves to the caller itself): nexus
+    stopping itself would cut off the very connection carrying this call,
+    with no guarantee the response ever comes back, and — unlike
+    `supervisor_restart_addon` — leaves nexus down until someone starts it
+    again some other way.
 
     Use when: taking one add-on offline without uninstalling it.
     Not for: removing it entirely — use `supervisor_uninstall_addon`; for
-    bringing it back — use `supervisor_start_addon`.
+    bringing it back — use `supervisor_start_addon`; for a brief restart of
+    nexus itself — use `supervisor_restart_addon` instead, which is allowed.
     Returns: Supervisor's stop-job result.
-    Errors: `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
-    add-on for Supervisor API"}` when the token env var is missing;
-    `{"error": "HTTP <status>", "detail": ...}` if the slug is unknown.
+    Errors: `{"error": "self_addon_stop_blocked", "message": ...}` when
+    `slug` is nexus's own add-on; `{"error": "SUPERVISOR_TOKEN not set —
+    Nexus must run as HA add-on for Supervisor API"}` when the token env var
+    is missing; `{"error": "HTTP <status>", "detail": ...}` if the slug is
+    unknown.
     Limits: interrupts the add-on's availability, and anything depending on
     it, until it is started again.
     """
+    if self_protection.is_own_addon(slug):
+        return {
+            "error": "self_addon_stop_blocked",
+            "message": (
+                "Refusing to stop nexus's own add-on through this tool — nexus stopping "
+                "itself would sever this very call with no guarantee the response arrives, "
+                "and would need a separate action to start it again. Use "
+                "supervisor_restart_addon if the goal is to recover from a stuck state, or "
+                "stop it through the Home Assistant Supervisor UI instead."
+            ),
+        }
     return _supervisor_request("POST", f"/addons/{slug}/stop")
 
 
@@ -367,21 +707,57 @@ def set_addon_options(
 
     Calls `POST /addons/<slug>/options` as `{"options": options}`. Read
     current values via `supervisor_get_addon`, modify them, and send the
-    full dict back — this overwrites the previous options entirely, so
-    fields omitted here are lost. Takes effect after
-    `supervisor_restart_addon`.
+    full dict back — overwrites previous options entirely, so omitted
+    fields are lost. A value left as the placeholder for a secret field is
+    swapped for the real stored value first, so echoing it back unchanged
+    never overwrites the secret — a list containing it must keep every
+    item's order/count as read, or the call is refused rather than guessed.
+    Once a placeholder was resolved, any Supervisor error comes back with
+    `detail` stripped (it can otherwise echo the rejected payload, secret
+    included). Takes effect after `supervisor_restart_addon`. Refuses to
+    run against nexus's own add-on (real slug or the Supervisor
+    self-alias) — could otherwise lift this add-on's own restrictions.
 
-    Use when: changing an add-on's configuration programmatically instead
-    of through the HA UI.
+    Use when: changing an add-on's configuration programmatically.
     Not for: reading the current options first — use
-    `supervisor_get_addon`.
+    `supervisor_get_addon`; for changing nexus's own configuration — use the
+    Home Assistant Supervisor UI instead.
     Returns: Supervisor's options-update result.
-    Errors: `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
-    add-on for Supervisor API"}` when the token env var is missing;
-    `{"error": "HTTP <status>", "detail": ...}` if `options` fails schema
-    validation.
+    Errors: `self_addon_options_blocked` for nexus's own add-on;
+    `redaction_marker_list_length_mismatch` on a placeholder list-length
+    mismatch; `SUPERVISOR_TOKEN not set` when the token is missing;
+    `{"error": "HTTP <status>"}` on a schema-validation or placeholder
+    read-back failure.
     Limits: does not apply until the add-on is restarted.
     """
+    if self_protection.is_own_addon(slug):
+        return {
+            "error": "self_addon_options_blocked",
+            "message": (
+                "Refusing to change nexus's own add-on options through this tool — doing so "
+                "could lift this nexus add-on's own read_only/disabled_namespaces "
+                "restrictions. Change nexus's own configuration through the Home Assistant "
+                "Supervisor UI (Settings > Add-ons > Nexus > Configuration) instead."
+            ),
+        }
+    if _contains_redaction_marker(options):
+        current = _supervisor_request("GET", f"/addons/{slug}/info")
+        if "error" in current:
+            # Nothing has been reconstituted into `options` yet at this point
+            # (the merge below hasn't run) — this GET's own error detail is
+            # Supervisor's generic "no such add-on"/HTTP-failure text, not an
+            # echo of any payload, so S2's sanitization isn't needed here.
+            return current
+        current_data = current.get("data")
+        current_options = current_data.get("options") if isinstance(current_data, dict) else None
+        try:
+            options = _merge_redaction_markers(
+                options, current_options if isinstance(current_options, dict) else {}
+            )
+        except RedactionMergeError as exc:
+            return {"error": "redaction_marker_list_length_mismatch", "message": str(exc)}
+        result = _supervisor_request("POST", f"/addons/{slug}/options", json={"options": options})
+        return _sanitize_error_detail(result)
     return _supervisor_request("POST", f"/addons/{slug}/options", json={"options": options})
 
 

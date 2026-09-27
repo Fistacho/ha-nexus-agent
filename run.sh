@@ -10,6 +10,7 @@ if [ -f "$OPTIONS" ]; then
     API_KEY=$(jq -r '.api_key // ""' "$OPTIONS")
     READ_ONLY=$(jq -r '.read_only // false' "$OPTIONS")
     DISABLED_NAMESPACES=$(jq -r '(.disabled_namespaces // []) | join(",")' "$OPTIONS")
+    TOOL_MODE=$(jq -r '.tool_mode // "full"' "$OPTIONS")
 else
     PORT=${PORT:-7123}
     LOG_LEVEL=${LOG_LEVEL:-info}
@@ -18,6 +19,7 @@ else
     API_KEY=""
     READ_ONLY=${READ_ONLY:-false}
     DISABLED_NAMESPACES=${DISABLED_NAMESPACES:-}
+    TOOL_MODE=${TOOL_MODE:-full}
 fi
 
 export PORT LOG_LEVEL GIT_VERSIONING_AUTO MAX_BACKUPS
@@ -27,6 +29,7 @@ export HA_CONFIG_PATH="/config"
 export NEXUS_PORT="${PORT}"
 export NEXUS_READ_ONLY="${READ_ONLY}"
 export NEXUS_DISABLED_NAMESPACES="${DISABLED_NAMESPACES}"
+export NEXUS_TOOL_MODE="${TOOL_MODE}"
 
 if [ -n "${API_KEY}" ]; then
     export NEXUS_API_KEY="${API_KEY}"
