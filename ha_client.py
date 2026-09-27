@@ -43,7 +43,8 @@ async def _ws_call_async(msg_type: str, **kwargs) -> Any:
     # large registries and full traces routinely exceed that.
     async with websockets.connect(_ws_url(), max_size=None) as ws:
         greeting = json.loads(await ws.recv())
-        assert greeting["type"] == "auth_required"
+        if greeting.get("type") != "auth_required":
+            raise RuntimeError(f"Unexpected WS greeting: {greeting}")
         await ws.send(json.dumps({"type": "auth", "access_token": token}))
         auth_ok = json.loads(await ws.recv())
         if auth_ok["type"] != "auth_ok":
@@ -84,7 +85,8 @@ async def _ws_collect_events_async(
     events: list[dict] = []
     async with websockets.connect(_ws_url(), max_size=None) as ws:
         greeting = json.loads(await ws.recv())
-        assert greeting["type"] == "auth_required"
+        if greeting.get("type") != "auth_required":
+            raise RuntimeError(f"Unexpected WS greeting: {greeting}")
         await ws.send(json.dumps({"type": "auth", "access_token": _HA_TOKEN}))
         auth_ok = json.loads(await ws.recv())
         if auth_ok["type"] != "auth_ok":
@@ -118,7 +120,9 @@ def _ws_collect_events(
     timeout: float = 15.0,
     **kwargs,
 ) -> list[dict]:
-    coro_factory = lambda: _ws_collect_events_async(msg_type, is_last, timeout, **kwargs)
+    def coro_factory():
+        return _ws_collect_events_async(msg_type, is_last, timeout, **kwargs)
+
     try:
         asyncio.get_running_loop()
     except RuntimeError:

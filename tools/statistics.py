@@ -29,7 +29,16 @@ def _iso(dt: datetime.datetime) -> str:
 def _parse_dt(s: str) -> datetime.datetime:
     for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
         try:
-            dt = datetime.datetime.strptime(s, fmt)
+            # DTZ007: strptime() here is intentionally naive for the two formats
+            # with no %z -- the very next check backfills UTC on any naive
+            # result, so the function never returns a naive datetime (see
+            # tests/test_findings_ci_b.py::test_parse_dt_never_returns_naive_datetime).
+            # A caller-supplied offset (third format, %z/'Z') is preserved as-is
+            # instead of being overridden, matching this module's documented
+            # "parsed into UTC timestamps" contract (get_statistics docstring)
+            # and the same UTC-assumption convention already used by
+            # ha_client.get_history() for HA REST/WS calls.
+            dt = datetime.datetime.strptime(s, fmt)  # noqa: DTZ007
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=datetime.timezone.utc)
             return dt

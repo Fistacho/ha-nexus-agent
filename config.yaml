@@ -1,7 +1,7 @@
 name: Nexus Agent
-version: "0.21.0"
+version: "0.22.0"
 slug: nexus_agent
-description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.21.0: every tool now declares MCP annotations (read-only / destructive / idempotent / open-world) and fully documented parameters"
+description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.22.0: optional read-only mode and per-namespace disabling, confirm gates on backup/config-file deletion, and safer section-by-section dashboard edits"
 url: https://github.com/Fistacho/ha-nexus-agent
 arch:
   - aarch64
@@ -24,6 +24,8 @@ options:
   git_versioning_auto: true
   max_backups: 30
   api_key: ""
+  read_only: false
+  disabled_namespaces: []
 
 schema:
   port: int
@@ -31,6 +33,9 @@ schema:
   git_versioning_auto: bool
   max_backups: int
   api_key: str?
+  read_only: bool
+  disabled_namespaces:
+    - str
 
 ports:
   7123/tcp: 7123

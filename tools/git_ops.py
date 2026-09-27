@@ -46,15 +46,15 @@ def _repo():
     """Get or initialize git repo for HA config directory."""
     try:
         import git
-    except ImportError:
-        raise RuntimeError("gitpython not installed. Run: pip install gitpython")
+    except ImportError as err:
+        raise RuntimeError("gitpython not installed. Run: pip install gitpython") from err
 
     try:
         return git.Repo(_CONFIG_PATH)
-    except git.exc.InvalidGitRepositoryError:
+    except git.exc.InvalidGitRepositoryError as err:
         raise RuntimeError(
             f"No git repo at {_CONFIG_PATH}. Run git_init_config() first."
-        )
+        ) from err
 
 
 @mcp.tool(annotations=write("Initialize the config git repository", idempotent=True))
@@ -202,7 +202,7 @@ def git_diff(
     """
     repo = _repo()
     if sha:
-        commit = repo.commit(sha)
+        repo.commit(sha)  # validates sha resolves to a commit before the git-show call
         return repo.git.show(sha, stat=True)
     return repo.git.diff()
 

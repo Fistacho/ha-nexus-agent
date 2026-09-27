@@ -209,7 +209,7 @@ def remove_label_from_entity(
     "ok": false, "error": "<message>"}`."""
     try:
         labels = _entity_labels(entity_id)
-        labels = [l for l in labels if l != label_id]
+        labels = [lbl for lbl in labels if lbl != label_id]
         result = ha._ws_call(
             "config/entity_registry/update",
             entity_id=entity_id,
@@ -273,7 +273,7 @@ def remove_label_from_device(
     "ok": false, "error": "<message>"}`."""
     try:
         labels = _device_labels(device_id)
-        labels = [l for l in labels if l != label_id]
+        labels = [lbl for lbl in labels if lbl != label_id]
         result = ha._ws_call(
             "config/device_registry/update",
             device_id=device_id,

@@ -297,7 +297,7 @@ def _parse_iso(ts: str | None):
     if not ts:
         return None
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return datetime.fromisoformat(ts)
     except Exception:
         return None
 

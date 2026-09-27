@@ -1,0 +1,47 @@
+configuration:
+  port:
+    name: Port
+    description: >-
+      TCP port for the MCP endpoint and Setup UI. Only change this if 7123
+      conflicts with another add-on.
+  log_level:
+    name: Log level
+    description: >-
+      Verbosity of the add-on's own log output. Does not affect what a
+      connected MCP client sees.
+  git_versioning_auto:
+    name: Auto git versioning
+    description: >-
+      Automatically commit /config changes made through nexus's file/git
+      tools, so every edit has a rollback point.
+  max_backups:
+    name: Max backups
+    description: >-
+      Number of Supervisor backups nexus keeps before pruning the oldest.
+  api_key:
+    name: API key
+    description: >-
+      Pin the MCP API key to a fixed value instead of the auto-generated
+      one. Leave empty unless you have a specific reason to fix it (e.g.
+      restoring a previous key after a config migration).
+  read_only:
+    name: Read-only mode
+    description: >-
+      When enabled, every tool that is not read-only (ADR-0003: read()
+      preset — no state, config, host or add-on changes) is hidden from
+      tools/list and refused if called directly; every MCP prompt is hidden
+      too. Does not restrict what a still-visible read tool can read (e.g.
+      config files, git history, add-on logs) — combine with
+      disabled_namespaces to also narrow that. Requires an add-on restart to
+      take effect.
+  disabled_namespaces:
+    name: Disabled namespaces
+    description: >-
+      Tool namespaces (e.g. "supervisor", "git", "card_builder") to hide and
+      block entirely, in addition to whatever read_only already hides. An
+      unknown namespace name refuses to start the add-on with an error in
+      the log instead of silently doing nothing. Requires an add-on restart
+      to take effect.
+
+network:
+  7123/tcp: Nexus Agent — MCP + Setup UI

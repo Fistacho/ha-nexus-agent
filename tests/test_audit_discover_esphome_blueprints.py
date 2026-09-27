@@ -379,24 +379,25 @@ def test_validate_config_docstring_documents_protocol_change():
     assert "/ws" in doc
 
 
-def test_clean_mqtt_docstring_flags_open_risk_after_device_builder_migration():
-    """Checks the SEMANTICS of the caveat, not one exact phrasing (ADR-0002 T3j bans
-    ALL-CAPS emphasis outside WARNING/DANGEROUS, so the docstring now opens the
-    caveat with "WARNING:" instead of the literal string "OPEN RISK" this test used
-    to require) — must still (1) carry an explicit WARNING-level caveat, (2) name
-    ESPHome Device Builder, and (3) state the legacy endpoint has no confirmed
-    equivalent there."""
+def test_clean_mqtt_docstring_documents_ha_mqtt_mechanism_not_dashboard():
+    """Superseded by nexus 0.22.0 D3 (see coordinator decision + ADR follow-up):
+    clean_mqtt no longer calls the ESPHome dashboard at all (Device Builder's
+    `/ws` API has no MQTT-topic-clearing command, confirmed against
+    docs/API.md) — it goes through HA's own `mqtt` integration instead
+    (`mqtt/device/debug_info` WS command when a matching HA device exists,
+    else a short `mqtt/subscribe` wildcard window; `mqtt.publish` with an
+    empty retained payload to clear each topic). This replaces the prior
+    "WARNING: unverified / likely broken" caveat, which described the
+    pre-D3 state where clean_mqtt still (uselessly) called the dashboard's
+    removed `/clean-mqtt` route."""
     doc = _unwrap(esphome_tools.clean_mqtt).__doc__
 
-    assert re.search(r"\bWARNING\b", doc), "docstring must carry an explicit WARNING-level caveat"
-    assert re.search(r"device[ -]builder", doc, re.IGNORECASE), (
-        "docstring must name the ESPHome Device Builder add-on"
+    assert "mqtt/device/debug_info" in doc
+    assert re.search(r"mqtt/subscribe|wildcard_subscribe", doc)
+    assert "mqtt.publish" in doc
+    assert re.search(r"no.{0,15}mqtt.{0,15}section", doc, re.IGNORECASE), (
+        "docstring must state the no-mqtt-section skip path"
     )
-    assert re.search(
-        r"(no equivalent|does not exist|doesn't exist|not exist|no confirmed equivalent|open risk)",
-        doc,
-        re.IGNORECASE,
-    ), "docstring must state the legacy endpoint is missing/unconfirmed in Device Builder"
 
 
 # --- ESPHome add-on slug: discover dynamically instead of hard-coded guesses --------

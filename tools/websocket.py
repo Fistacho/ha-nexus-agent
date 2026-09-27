@@ -30,6 +30,25 @@ def _get_token() -> str:
     return get_ha_token()
 
 
+async def _ws_recv_within(ws, deadline: float, waiting_for: str) -> dict:
+    """`ws.recv()` bounded by `deadline` (an `asyncio` loop-clock time).
+
+    Raises `RuntimeError` naming `waiting_for` when the deadline is already
+    passed or is reached before a message arrives, instead of blocking
+    forever — this is what makes the `auth_required`/`auth_ok` handshake in
+    `_ws_send_recv` honour the caller's `timeout` the same way the
+    post-handshake response loop already does.
+    """
+    remaining = deadline - asyncio.get_event_loop().time()
+    if remaining <= 0:
+        raise RuntimeError(f"HA WebSocket handshake timed out waiting for {waiting_for}")
+    try:
+        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+    except TimeoutError:
+        raise RuntimeError(f"HA WebSocket handshake timed out waiting for {waiting_for}") from None
+    return json.loads(raw)
+
+
 async def _ws_send_recv(
     messages: list[dict],
     collect_events: int = 0,
@@ -44,6 +63,11 @@ async def _ws_send_recv(
     `state_changed` (which HA never filters server-side by entity) stop only
     once the events a caller actually cares about have arrived, instead of
     being displaced by unrelated traffic.
+
+    The entire call, including the `auth_required` -> `auth` -> `auth_ok`
+    handshake, is bounded by `timeout`: a HA instance that sends
+    `auth_required` and then never answers (or never sends anything at all)
+    raises `RuntimeError` once `timeout` elapses instead of blocking forever.
     """
     import websockets
 
@@ -51,13 +75,16 @@ async def _ws_send_recv(
     ws_url = _ws_url()
     token = _get_token()
 
+    deadline = asyncio.get_event_loop().time() + timeout
+
     async with websockets.connect(ws_url) as ws:
         # auth_required
-        msg = json.loads(await ws.recv())
-        assert msg["type"] == "auth_required"
+        msg = await _ws_recv_within(ws, deadline, "auth_required")
+        if msg.get("type") != "auth_required":
+            raise RuntimeError(f"Unexpected HA WebSocket greeting: {msg}")
 
         await ws.send(json.dumps({"type": "auth", "access_token": token}))
-        auth_ok = json.loads(await ws.recv())
+        auth_ok = await _ws_recv_within(ws, deadline, "auth_ok")
         if auth_ok["type"] != "auth_ok":
             raise RuntimeError(f"HA WebSocket auth failed: {auth_ok}")
 
@@ -67,7 +94,6 @@ async def _ws_send_recv(
             await ws.send(json.dumps(payload))
             msg_id += 1
 
-        deadline = asyncio.get_event_loop().time() + timeout
         collected = 0
         while True:
             remaining = deadline - asyncio.get_event_loop().time()
@@ -77,11 +103,10 @@ async def _ws_send_recv(
                 raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
                 data = json.loads(raw)
                 results.append(data)
-                if data.get("type") == "event":
-                    if event_filter is None or event_filter(data):
-                        collected += 1
-                        if collect_events > 0 and collected >= collect_events:
-                            break
+                if data.get("type") == "event" and (event_filter is None or event_filter(data)):
+                    collected += 1
+                    if collect_events > 0 and collected >= collect_events:
+                        break
                 if collect_events == 0 and data.get("type") == "result":
                     break
             except TimeoutError:
@@ -104,23 +129,37 @@ def _run(coro):
 
 
 @mcp.tool(annotations=read("Get all entity states via WebSocket"))
-def get_states() -> list[dict]:
+def get_states(
+    timeout: Annotated[
+        float,
+        Field(
+            ge=1,
+            le=300,
+            description=(
+                "Maximum seconds to wait for the WebSocket handshake and the "
+                "result message before raising an error; must be between 1 "
+                "and 300."
+            ),
+        ),
+    ] = 10.0,
+) -> list[dict]:
     """Get all entity states over the WebSocket API in one call.
 
-    Sends `get_states` and waits (up to a fixed 10 second internal timeout)
-    for the matching `result` message; this can be faster than the HTTP
-    `/api/states` endpoint on large installs since it avoids per-entity HTTP
-    overhead.
+    Sends `get_states` and waits up to `timeout` seconds for the matching
+    `result` message; this can be faster than the HTTP `/api/states`
+    endpoint on large installs since it avoids per-entity HTTP overhead.
 
     Use when: fetching every entity's state on a large installation.
     Not for: a filtered or paginated state list — use
     `entities_list_entities`.
     Returns: the list of state dicts from HA's `result.result`.
-    Errors: raises `RuntimeError` when no successful `result` message is
-    received.
-    Limits: blocks for up to 10 seconds waiting for the WebSocket response.
+    Errors: raises `RuntimeError` when the WebSocket handshake or the
+    `result` message does not arrive within `timeout`, or when a `result`
+    message arrives but is not successful.
+    Limits: blocks for up to `timeout` seconds (default 10), including the
+    initial handshake.
     """
-    results = _run(_ws_send_recv([{"type": "get_states"}]))
+    results = _run(_ws_send_recv([{"type": "get_states"}], timeout=timeout))
     for r in results:
         if r.get("type") == "result" and r.get("success"):
             return r["result"]
@@ -142,6 +181,17 @@ def call_service(
             )
         ),
     ] = None,
+    timeout: Annotated[
+        float,
+        Field(
+            ge=1,
+            le=300,
+            description=(
+                "Maximum seconds to wait for the WebSocket handshake and the "
+                "result message before giving up; must be between 1 and 300."
+            ),
+        ),
+    ] = 10.0,
 ) -> dict:
     """Call a Home Assistant action over WebSocket and return its response data.
 
@@ -158,7 +208,10 @@ def call_service(
     Returns: the raw WS result: `{success, result: {context, response}}` on
     success, or a failure dict from HA on failure; `{"success": False}` with
     no other keys if no `result` message arrives at all.
-    Limits: blocks for up to the internal 10 second WebSocket timeout.
+    Errors: raises `RuntimeError` when the WebSocket handshake does not
+    complete within `timeout`.
+    Limits: blocks for up to `timeout` seconds (default 10), including the
+    initial handshake.
     """
     payload = {
         "type": "call_service",
@@ -167,7 +220,7 @@ def call_service(
         "service_data": data or {},
         "return_response": True,
     }
-    results = _run(_ws_send_recv([payload]))
+    results = _run(_ws_send_recv([payload], timeout=timeout))
     for r in results:
         if r.get("type") == "result":
             return r
@@ -178,7 +231,15 @@ def call_service(
 def render_template(
     template: Annotated[str, Field(description="Jinja2 template string to render, e.g. '{{ states(\"sensor.temp\") }}'.")],
     timeout: Annotated[
-        float, Field(description="Maximum seconds to wait for the rendered value before raising an error.")
+        float,
+        Field(
+            ge=1,
+            le=300,
+            description=(
+                "Maximum seconds to wait for the rendered value before "
+                "raising an error; must be between 1 and 300."
+            ),
+        ),
     ] = 10.0,
 ) -> str:
     """Render a Jinja2 template through HA's WebSocket render_template subscription.
@@ -192,8 +253,10 @@ def render_template(
     HTTP call with no subscription semantics.
     Returns: the rendered template value from the `event`'s `result` field.
     Errors: raises `RuntimeError` when the template itself errors (e.g. an
-    undefined variable) or when no event arrives within `timeout`.
-    Limits: blocks for up to `timeout` seconds (default 10).
+    undefined variable), when the WebSocket handshake does not complete
+    within `timeout`, or when no event arrives within `timeout`.
+    Limits: blocks for up to `timeout` seconds (default 10), including the
+    initial handshake.
     """
     payload = {"type": "render_template", "template": template}
     results = _run(_ws_send_recv([payload], collect_events=1, timeout=timeout))
@@ -215,7 +278,15 @@ def listen_state_changes(
         int, Field(description="Maximum number of matching events to collect before returning early.")
     ] = 5,
     timeout: Annotated[
-        float, Field(description="Maximum seconds to wait for `count` matching events before returning what arrived.")
+        float,
+        Field(
+            ge=1,
+            le=300,
+            description=(
+                "Maximum seconds to wait for `count` matching events before "
+                "returning what arrived; must be between 1 and 300."
+            ),
+        ),
     ] = 30.0,
 ) -> list[dict]:
     """Passively wait for and collect state_changed events for one entity.
@@ -233,8 +304,10 @@ def listen_state_changes(
     `ws_subscribe_trigger`.
     Returns: list of dicts with `entity_id`, `old_state`, `new_state`,
     `last_changed`.
-    Limits: blocks for up to `timeout` seconds; collects at most `count`
-    events.
+    Errors: raises `RuntimeError` when the WebSocket handshake does not
+    complete within `timeout`.
+    Limits: blocks for up to `timeout` seconds, including the initial
+    handshake; collects at most `count` events.
     """
     def _is_target_entity(data: dict) -> bool:
         return data.get("event", {}).get("data", {}).get("entity_id") == entity_id
@@ -267,7 +340,15 @@ def listen_events(
         int, Field(description="Maximum number of events to collect before returning early.")
     ] = 10,
     timeout: Annotated[
-        float, Field(description="Maximum seconds to wait for `count` events before returning what arrived.")
+        float,
+        Field(
+            ge=1,
+            le=300,
+            description=(
+                "Maximum seconds to wait for `count` events before returning "
+                "what arrived; must be between 1 and 300."
+            ),
+        ),
     ] = 15.0,
 ) -> list[dict]:
     """Passively wait for and collect events of one HA event type.
@@ -281,8 +362,10 @@ def listen_events(
     Not for: state changes on one specific entity — use
     `ws_listen_state_changes`.
     Returns: list of raw `event` payloads as HA sent them.
-    Limits: blocks for up to `timeout` seconds; collects at most `count`
-    events.
+    Errors: raises `RuntimeError` when the WebSocket handshake does not
+    complete within `timeout`.
+    Limits: blocks for up to `timeout` seconds, including the initial
+    handshake; collects at most `count` events.
     """
     payload = {"type": "subscribe_events", "event_type": event_type}
     results = _run(_ws_send_recv([payload], collect_events=count, timeout=timeout))
@@ -294,22 +377,37 @@ def listen_events(
 
 
 @mcp.tool(annotations=read("Get HA config via WebSocket"))
-def get_config() -> dict:
+def get_config(
+    timeout: Annotated[
+        float,
+        Field(
+            ge=1,
+            le=300,
+            description=(
+                "Maximum seconds to wait for the WebSocket handshake and the "
+                "result message before raising an error; must be between 1 "
+                "and 300."
+            ),
+        ),
+    ] = 10.0,
+) -> dict:
     """Get Home Assistant's own configuration over WebSocket.
 
-    Sends `get_config` and waits (up to a fixed 10 second internal timeout)
-    for the matching `result` message.
+    Sends `get_config` and waits up to `timeout` seconds for the matching
+    `result` message.
 
     Use when: reading HA's location, unit system, version and component
     list over the WebSocket transport.
     Not for: the same data over HTTP — use `history_get_ha_config`.
     Returns: HA's config dict from `result.result` (location, unit_system,
     version, components, ...).
-    Errors: raises `RuntimeError` when no successful `result` message is
-    received.
-    Limits: blocks for up to 10 seconds waiting for the WebSocket response.
+    Errors: raises `RuntimeError` when the WebSocket handshake or the
+    `result` message does not arrive within `timeout`, or when a `result`
+    message arrives but is not successful.
+    Limits: blocks for up to `timeout` seconds (default 10), including the
+    initial handshake.
     """
-    results = _run(_ws_send_recv([{"type": "get_config"}]))
+    results = _run(_ws_send_recv([{"type": "get_config"}], timeout=timeout))
     for r in results:
         if r.get("type") == "result" and r.get("success"):
             return r["result"]
@@ -328,7 +426,15 @@ def subscribe_trigger(
         ),
     ],
     timeout: Annotated[
-        float, Field(description="Maximum seconds to wait for the trigger to fire before returning None.")
+        float,
+        Field(
+            ge=1,
+            le=300,
+            description=(
+                "Maximum seconds to wait for the trigger to fire before "
+                "returning None; must be between 1 and 300."
+            ),
+        ),
     ] = 30.0,
 ) -> dict | None:
     """Passively wait for a Home Assistant trigger definition to fire once.
@@ -342,7 +448,10 @@ def subscribe_trigger(
     `ws_listen_state_changes`.
     Returns: the trigger's `event` context dict when it fires, or `None` if
     `timeout` elapses first.
-    Limits: blocks for up to `timeout` seconds.
+    Errors: raises `RuntimeError` when the WebSocket handshake does not
+    complete within `timeout`.
+    Limits: blocks for up to `timeout` seconds, including the initial
+    handshake.
     """
     payload = {"type": "subscribe_trigger", "trigger": trigger}
     results = _run(_ws_send_recv([payload], collect_events=1, timeout=timeout))

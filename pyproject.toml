@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ha-nexus-agent"
-version = "0.21.0"
+version = "0.22.0"
 description = "Nexus — MCP server for Home Assistant; 323 tools across 29 domains for AI control of your smart home"
 authors = [{ name = "Łukasz Żochowski" }]
 license = { text = "MIT" }
@@ -33,7 +33,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0"]
+dev = ["pytest>=8.0.0", "ruff==0.16.1"]
 
 [project.scripts]
 nexus = "server:main"
@@ -43,3 +43,44 @@ testpaths = ["tests"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
+
+[tool.ruff]
+target-version = "py312"
+# Newly introduced (CI-A): scaffolding only. `ruff check .` is NOT clean yet — a
+# broad `select` (below) surfaces ~600 pre-existing findings across tools/*.py,
+# ha_client.py etc. that are out of scope for this batch to touch. CI-B is the
+# planned follow-up that runs `ruff --fix` + manual review and flips the CI lint
+# job from informational to required. See ci.yml for the current (non-blocking)
+# wiring.
+#
+# tests/ and tests_e2e/ are excluded from lint entirely rather than folded into
+# `ignore` below: 541 of 592 raw findings are S101 ("assert used") inside
+# tests/*.py, which is idiomatic pytest, not a defect — `ignore` would suppress
+# S101 repo-wide (including production code, where an unguarded `assert` *is*
+# worth flagging), so per-directory `extend-exclude` is the narrower fix.
+extend-exclude = ["tests", "tests_e2e"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "S", "BLE"]
+ignore = [
+    # BLE001 "blind except Exception" — used deliberately throughout ha_client.py
+    # and tools/*.py to turn best-effort HA/websocket calls (e.g. optional
+    # diagnostics, cleanup) into soft failures instead of crashing an entire MCP
+    # tool call chain; each call site already returns/logs a structured result.
+    # Verified: ha_client.py:346,381,394,417,430; tools/automations.py,
+    # tools/esphome.py, tools/git_ops.py, tools/search.py, tools/snapshot.py,
+    # tools/statistics.py all follow the same pattern.
+    "BLE001",
+    # S110 "try/except/pass" — a handful of genuinely-inert cleanup paths:
+    # auth.py (best-effort API key file chmod/delete), tools/automations.py,
+    # tools/esphome.py, tools/snapshot.py (best-effort optional lookups where a
+    # miss is expected and already handled by the surrounding logic).
+    "S110",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI's dependency-injection idiom requires a function call
+# (`Security(_bearer)`) as a parameter default — that's the framework's own
+# documented pattern (see fastapi.security usage across the ecosystem), not the
+# mutable-default-argument bug B008 exists to catch.
+"auth.py" = ["B008"]

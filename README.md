@@ -27,6 +27,25 @@ Once connected, just talk to your AI assistant:
 
 ---
 
+## What's New in v0.22.0
+
+- **`read_only` and `disabled_namespaces` add-on options** — a serverside policy that hides
+  *and refuses* non-read-only tools (or whole namespaces) at the MCP protocol level, not
+  just from `tools/list`. See [Add-on Options](#add-on-options) / [Security](#security).
+- **`confirm` gate on `supervisor_delete_backup` and `files_delete_config_file`** — the
+  first call without `confirm=True` now does no I/O and returns a confirmation prompt
+  instead of deleting immediately.
+- **Safer section-by-section dashboard edits** — `expected_config_hash`/`config_hash` on
+  the dashboard section tools detect a stale read before a write can land on the wrong
+  card.
+- **`GET /health` trimmed to `{"status": "ok"}`** — it no longer leaks `ha_url`, the tool
+  count or the active policy to unauthenticated LAN callers.
+- **ESPHome fixes** — `esphome_clean_mqtt` now works through HA's own `mqtt` integration;
+  device online/offline status no longer depends on a `binary_sensor.*_api_connection_status`
+  entity that isn't guaranteed to exist; an unreachable dashboard now comes with a
+  Supervisor-based diagnosis instead of a bare connection error.
+- Full details in [CHANGELOG.md](CHANGELOG.md#0220).
+
 ## What's New in v0.20.0
 
 - **Section-aware Lovelace editing** — `dashboards_get_view_sections`, `dashboards_add_card_to_section`,
@@ -118,7 +137,7 @@ Open <http://localhost:7123> to get your API key and MCP client configs.
 
 ## Connecting MCP Clients
 
-Open Nexus from the **Home Assistant sidebar panel (ingress)** after starting the add-on — that page shows your real API key and the exact, ready-to-paste config for every client below. Outside of ingress (or without a valid `Authorization: Bearer` header), the same page hides the key.
+Open Nexus with the **Open Web UI** button on the add-on's page (Settings → Add-ons → Nexus Agent) after starting it — that page shows your real API key and the exact, ready-to-paste config for every client below. This works over HA's ingress proxy whether or not you've also enabled **Show in sidebar** on that same add-on page — the sidebar entry is just a shortcut to the same URL. Outside of ingress (or without a valid `Authorization: Bearer` header), the same page hides the key.
 
 The MCP endpoint is a **Streamable HTTP** transport (not SSE) at:
 
@@ -126,7 +145,7 @@ The MCP endpoint is a **Streamable HTTP** transport (not SSE) at:
 http://your-ha-ip:7123/mcp
 ```
 
-Authenticate with an `Authorization: Bearer YOUR_API_KEY` header wherever the client supports it — **prefer this over the `?token=` query string**, which is kept only for backward compatibility and ends up in plaintext in HTTP access logs and shell history.
+Authenticate with an `Authorization: Bearer YOUR_API_KEY` header wherever the client supports it — **prefer this over the `?token=` query string**, which is kept only for backward compatibility, ends up in plaintext in HTTP access logs and shell history, and will be removed entirely in nexus **1.0.0** (using it logs a one-time deprecation warning per add-on start, without ever logging the key itself).
 
 ### Claude Code CLI
 
@@ -230,7 +249,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 }
 ```
 
-> **Tip:** Copy the exact config with your real key from the Nexus panel in the Home Assistant sidebar (ingress). The same URL outside of ingress hides the key — see [Security](#security).
+> **Tip:** Copy the exact config with your real key from the **Open Web UI** button on the add-on's page (ingress). The same URL outside of ingress hides the key — see [Security](#security).
 
 ---
 
@@ -296,17 +315,34 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 ## Security
 
 - **Setup UI (`GET /`) and `POST /regenerate`** only reveal the API key / accept a key reset from callers Home Assistant has already authenticated:
-  - via the **HA ingress proxy** (the Nexus panel in the HA sidebar) — this is the intended way to open Nexus;
+  - via the **HA ingress proxy** (the **Open Web UI** button on the add-on's page, or the Nexus sidebar entry if you've enabled **Show in sidebar**) — this is the intended way to open Nexus;
   - via a valid `Authorization: Bearer <API_KEY>` header — for scripted/CLI access;
   - in **standalone mode only** (no Supervisor, e.g. `.env` deployment) — from `localhost`, since there is no ingress proxy to authenticate the caller there.
 
-  Any other caller gets the page with the key omitted (or `403` for `/regenerate`).
-- **`/mcp` accepts `Authorization: Bearer <API_KEY>`** (recommended) or `?token=<API_KEY>` in the query string (kept for backward compatibility only — it ends up in HTTP access logs and shell/browser history; prefer the header wherever your client supports it, see [Connecting MCP Clients](#connecting-mcp-clients)).
+  Any other caller gets the page with the key, tool count and active policy omitted (or `403` for `/regenerate`).
+- **`GET /health` is intentionally unauthenticated and minimal** — it returns only `{"status": "ok"}`, nothing else, because the Supervisor watchdog that polls it only needs a 200 response. The tool count, `ha_url` and active `read_only`/`disabled_namespaces` policy used to leak here to anyone on the LAN; they now live only on the ingress-gated Setup UI page above.
+  - The Supervisor **Watchdog** itself is **off by default** and must be turned on with the **Watchdog** toggle on the add-on's **Info** tab — listing `watchdog:` in the add-on's own manifest does not enable it by itself.
+- **`/mcp` accepts `Authorization: Bearer <API_KEY>`** (recommended) or `?token=<API_KEY>` in the query string (kept for backward compatibility only, **removed in nexus 1.0.0** — it ends up in HTTP access logs and shell/browser history; prefer the header wherever your client supports it, see [Connecting MCP Clients](#connecting-mcp-clients)). Using the query-string form logs one deprecation warning per add-on start (never the key itself).
 - **Access logs never contain the raw key** — the add-on redacts `?token=...` in uvicorn's access log before it's written.
 - **Startup logs never print the raw key** — only the path of the file it's stored in (`/config/.nexus_api_key`).
+- **Tool-exposure policy** (`read_only`, `disabled_namespaces`) — see [Add-on Options](#add-on-options) — narrows what a client can see/call at the MCP protocol level itself: a hidden tool is refused at `tools/call`, not merely omitted from `tools/list`. `read_only` does not restrict what an already-visible read tool can read (e.g. `files_read_config_file`, `git_log`, `supervisor_get_addon_logs`); combine with `disabled_namespaces` to also narrow that.
 - Found a vulnerability? See [SECURITY.md](SECURITY.md) for how to report it privately.
 
 ---
+
+## Add-on Options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `port` | `7123` | TCP port for the MCP endpoint and Setup UI |
+| `log_level` | `info` | Add-on's own log verbosity (`debug`\|`info`\|`warning`\|`error`) |
+| `git_versioning_auto` | `true` | Auto-commit `/config` changes made through nexus's file/git tools |
+| `max_backups` | `30` | Supervisor backups nexus keeps before pruning the oldest |
+| `api_key` | *(auto-generated)* | Pin the MCP API key instead of letting nexus generate one |
+| `read_only` | `false` | Hide and refuse every tool that is not read-only (ADR-0003), and every MCP prompt. See [Security](#security) for what it does *not* restrict. Requires a restart. |
+| `disabled_namespaces` | `[]` | List of tool namespaces (e.g. `["supervisor", "git"]`) to hide and refuse entirely. An unknown namespace name refuses to start with a readable error in the add-on log. Requires a restart. |
+
+`read_only` and `disabled_namespaces` combine as a union — a tool hidden by either one is hidden. Both are evaluated once at startup; there is no per-session or per-client variant.
 
 ## Dashboard Screenshots
 
@@ -396,6 +432,8 @@ action:
 | `NEXUS_PORT` | No | `7123` | HTTP server port |
 | `NEXUS_SCREENSHOT_ENGINE_URL` | No | auto-discovered | Explicit URL to Puppet engine (Docker/standalone) |
 | `ESPHOME_DASHBOARD_URL` | No | `http://homeassistant.local:6052` | ESPHome dashboard URL for compile/OTA tools |
+| `NEXUS_READ_ONLY` | No | `false` | Standalone equivalent of the `read_only` add-on option — see [Add-on Options](#add-on-options) |
+| `NEXUS_DISABLED_NAMESPACES` | No | *(empty)* | Standalone equivalent of `disabled_namespaces`, comma-separated (e.g. `supervisor,git`) |
 
 ---
 

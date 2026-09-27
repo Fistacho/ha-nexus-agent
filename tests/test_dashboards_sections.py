@@ -74,6 +74,11 @@ def ws(monkeypatch):
             if msg_type == "lovelace/config/save":
                 self.saved = kwargs["config"]
                 self.save_kwargs = kwargs
+                # Mirrors HA: subsequent reads see what was just persisted —
+                # required so `_save_and_hash`'s post-save re-read (ADR-0003
+                # D2) reflects the mutation instead of the fixture's original
+                # snapshot.
+                self.config = copy.deepcopy(kwargs["config"])
                 return None
             raise AssertionError(f"unexpected WS command: {msg_type}")
 
@@ -192,3 +197,140 @@ def test_get_view_sections_reports_indexes_and_headings(ws):
         {"section_index": 1, "heading": "Nowa sekcja", "card_count": 2},
     ]
     assert ws.saved is None
+
+
+# --- config_hash / expected_config_hash (ADR-0003 D2) ------------------------
+
+
+def test_config_hash_is_stable_regardless_of_key_order():
+    """Canonical JSON (sort_keys=True) means dict key order never changes the hash."""
+    a = {"views": [{"b": 1, "a": 2}]}
+    b = {"views": [{"a": 2, "b": 1}]}
+    assert dash._config_hash(a) == dash._config_hash(b)
+
+
+def test_config_hash_changes_when_content_changes():
+    assert dash._config_hash({"a": 1}) != dash._config_hash({"a": 2})
+
+
+def test_get_view_sections_returns_a_config_hash(ws):
+    result = _unwrap(dash.get_view_sections)("lukasz2")
+
+    assert result["config_hash"] == dash._config_hash(ws.config)
+    assert ws.saved is None
+
+
+def test_add_card_to_section_accepts_a_matching_expected_config_hash(ws):
+    current_hash = _unwrap(dash.get_view_sections)(None, view_index=0)["config_hash"]
+
+    result = _unwrap(dash.add_card_to_section)(
+        None, 1, {"type": "tile"}, view_index=0, expected_config_hash=current_hash
+    )
+
+    assert result["status"] == "added"
+    assert ws.saved is not None
+    assert result["config_hash"] != current_hash
+
+
+def test_add_card_to_section_rejects_a_mismatched_expected_config_hash(ws):
+    result = _unwrap(dash.add_card_to_section)(
+        None, 1, {"type": "tile"}, view_index=0, expected_config_hash="0" * 16
+    )
+
+    assert result == {
+        "error": "config_changed",
+        "message": (
+            "The dashboard changed since expected_config_hash was read; "
+            "section_index/card_index positions may now point at different cards."
+        ),
+        "expected_config_hash": "0" * 16,
+        "current_config_hash": dash._config_hash(ws.config),
+        "action": "Call dashboards_get_view_sections again and re-derive indexes.",
+    }
+    # No save was attempted — the fixture's config is untouched.
+    assert ws.saved is None
+
+
+def test_update_card_in_section_rejects_a_mismatched_expected_config_hash(ws):
+    result = _unwrap(dash.update_card_in_section)(
+        None, 1, 1, {"name": "Grzałka"}, view_index=0, expected_config_hash="0" * 16
+    )
+
+    assert result["error"] == "config_changed"
+    assert ws.saved is None
+
+
+def test_add_section_to_view_rejects_a_mismatched_expected_config_hash(ws):
+    result = _unwrap(dash.add_section_to_view)(
+        None, {}, view_index=0, expected_config_hash="0" * 16
+    )
+
+    assert result["error"] == "config_changed"
+    assert ws.saved is None
+
+
+def test_remove_card_from_section_rejects_a_repeat_with_the_same_stale_hash(ws, monkeypatch):
+    """ADR-0003 D2 regression: get_view_sections -> remove_card_from_section
+    (expected_config_hash=h) -> repeating with the SAME h must be rejected,
+    not silently remove whatever card shifted into that position next."""
+    stale_hash = _unwrap(dash.get_view_sections)("lukasz2")["config_hash"]
+
+    first = _unwrap(dash.remove_card_from_section)(
+        None, 1, 1, view_index=0, expected_config_hash=stale_hash
+    )
+    assert first["status"] == "removed"
+    assert first["config_hash"] != stale_hash
+    assert len(ws.saved["views"][0]["sections"][1]["cards"]) == 1
+
+    def _no_write(msg_type, **kwargs):
+        if msg_type == "lovelace/config/save":
+            raise AssertionError("must not save when expected_config_hash is stale")
+        return ws(msg_type, **kwargs)
+
+    monkeypatch.setattr(ha, "_ws_call", _no_write)
+
+    second = _unwrap(dash.remove_card_from_section)(
+        None, 1, 1, view_index=0, expected_config_hash=stale_hash
+    )
+
+    assert second == {
+        "error": "config_changed",
+        "message": (
+            "The dashboard changed since expected_config_hash was read; "
+            "section_index/card_index positions may now point at different cards."
+        ),
+        "expected_config_hash": stale_hash,
+        "current_config_hash": first["config_hash"],
+        "action": "Call dashboards_get_view_sections again and re-derive indexes.",
+    }
+    # The repeat touched nothing — still just the one card the first call left.
+    assert len(ws.saved["views"][0]["sections"][1]["cards"]) == 1
+
+
+def test_add_card_to_section_hash_reflects_a_fresh_read_not_the_local_copy(monkeypatch):
+    """If HA normalizes what it persists (e.g. adds/reorders a field), the
+    returned config_hash must come from re-reading lovelace/config after the
+    save, not from hashing the dict this process built locally (ADR-0003 D2,
+    the "HA may normalize the saved config" acceptance criterion)."""
+    state = {"config": _dashboard()}
+
+    def fake_ws_call(msg_type, **kwargs):
+        if msg_type == "lovelace/config":
+            if kwargs.get("url_path"):
+                raise RuntimeError("config_not_found: unknown dashboard")
+            return copy.deepcopy(state["config"])
+        if msg_type == "lovelace/config/save":
+            normalized = copy.deepcopy(kwargs["config"])
+            normalized["_ha_normalized"] = True  # simulates HA-side normalization
+            state["config"] = normalized
+            return None
+        raise AssertionError(f"unexpected WS command: {msg_type}")
+
+    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+
+    result = _unwrap(dash.add_card_to_section)(None, 1, {"type": "tile"}, view_index=0)
+
+    assert result["config_hash"] == dash._config_hash(state["config"])
+    local_only = copy.deepcopy(state["config"])
+    del local_only["_ha_normalized"]
+    assert result["config_hash"] != dash._config_hash(local_only)

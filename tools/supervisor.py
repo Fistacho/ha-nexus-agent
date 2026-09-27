@@ -699,22 +699,43 @@ def delete_backup(
         str,
         Field(description="Backup slug to delete, from `supervisor_list_backups`."),
     ],
+    confirm: Annotated[
+        bool,
+        Field(
+            description=(
+                "Set true to actually delete the backup. False (default) "
+                "performs no action and instead returns a confirmation "
+                "prompt; the backup is not looked up or touched in that "
+                "case."
+            )
+        ),
+    ] = False,
 ) -> dict:
-    """Permanently delete one backup.
+    """Permanently delete one backup after an explicit confirmation.
 
-    Calls `DELETE /backups/<slug>`. Unlike most other destructive tools in
-    this module, this call has no `confirm` parameter — there is no
-    confirmation step and no undo once the backup file is gone.
+    Calls `DELETE /backups/<slug>`. Without `confirm=True` nothing is
+    deleted; the call only returns a confirmation prompt. There is no undo
+    once the backup file is gone — a backup is itself the undo mechanism
+    for every other change in this add-on.
 
     Use when: cleaning up a backup that is confirmed to be no longer
     needed.
     Not for: any situation where the backup might still be needed — there
-    is no recovery after this call.
-    Returns: Supervisor's delete result.
-    Errors: `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
-    add-on for Supervisor API"}` when the token env var is missing;
-    `{"error": "HTTP <status>", "detail": ...}` if the slug does not exist.
-    Limits: WARNING: no `confirm` parameter and no undo — the backup is gone
-    immediately.
+    is no recovery after this call, even with `confirm=True`.
+    Returns: Supervisor's delete result when confirmed, otherwise a
+    confirmation prompt.
+    Errors: returns `{"error": "confirmation_required", "message": ...,
+    "action": ...}` when `confirm` is false; `{"error": "SUPERVISOR_TOKEN
+    not set — Nexus must run as HA add-on for Supervisor API"}` when the
+    token env var is missing; `{"error": "HTTP <status>", "detail": ...}`
+    if the slug does not exist.
+    Limits: requires `confirm=True`; deletion is immediate and permanent
+    with no undo once confirmed.
     """
+    if not confirm:
+        return {
+            "error": "confirmation_required",
+            "message": f"This will permanently delete backup '{slug}'. Call again with confirm=True.",
+            "action": f"delete_backup(slug={slug!r}, confirm=True)",
+        }
     return _supervisor_request("DELETE", f"/backups/{slug}")

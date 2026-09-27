@@ -283,7 +283,7 @@ def test_turn_on_converts_deprecated_mireds_to_kelvin(monkeypatch):
 
     _unwrap(entities_tools.turn_on)("light.kitchen", color_temp=370)
 
-    domain, service, data = calls[0]
+    _domain, _service, data = calls[0]
     assert "color_temp" not in data
     assert data["color_temp_kelvin"] == round(1_000_000 / 370)
 
@@ -323,7 +323,7 @@ def test_set_light_color_converts_deprecated_mireds_to_kelvin(monkeypatch):
 
     _unwrap(services_tools.set_light_color)("light.kitchen", color_temp=250)
 
-    domain, service, data = calls[0]
+    _domain, _service, data = calls[0]
     assert "color_temp" not in data
     assert data["color_temp_kelvin"] == round(1_000_000 / 250)
 

@@ -307,7 +307,7 @@ def sanitize_svg(svg_text: str) -> tuple[str | None, dict | None]:
         }
 
     try:
-        root = ET.fromstring(text)
+        root = ET.fromstring(text)  # noqa: S314 -- DOCTYPE/ENTITY rejected above; see design note ~line 193
     except ET.ParseError as err:
         return None, {"error": "invalid_svg", "detail": str(err)}
 
@@ -1587,8 +1587,8 @@ def upload_image_from_url(
         final_name = parsed.path.rsplit("/", 1)[-1] or "image"
 
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Nexus/0.20"})
-        with urllib.request.urlopen(req, timeout=30) as r:
+        req = urllib.request.Request(url, headers={"User-Agent": "Nexus/0.20"})  # noqa: S310 -- scheme checked above
+        with urllib.request.urlopen(req, timeout=30) as r:  # noqa: S310 -- scheme checked above
             content_type = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             if not content_type.startswith(_ALLOWED_MEDIA_CONTENT_TYPE_PREFIX):
                 return {"error": "content_type_not_allowed", "url": url, "content_type": content_type or None}
@@ -1971,7 +1971,7 @@ def check_schema_sync() -> dict:
     manifest_url = f"{base_url}/custom_components/card_builder/manifest.json"
     loader_url = f"{base_url}/frontend/src/common/blocks/loader.ts"
     try:
-        with urllib.request.urlopen(manifest_url, timeout=10) as r:
+        with urllib.request.urlopen(manifest_url, timeout=10) as r:  # noqa: S310 -- hardcoded https URL, not user input
             upstream = json.load(r)
     except Exception as err:
         return {"status": "fetch_failed", "error": str(err), "embedded": UPSTREAM_SCHEMA_SYNC}
@@ -1979,7 +1979,7 @@ def check_schema_sync() -> dict:
     loader_error = None
     upstream_block_types: list[str] = []
     try:
-        with urllib.request.urlopen(loader_url, timeout=10) as r:
+        with urllib.request.urlopen(loader_url, timeout=10) as r:  # noqa: S310 -- hardcoded https URL, not user input
             loader_text = r.read().decode("utf-8", errors="replace")
         upstream_block_types = sorted(set(re.findall(r"\{type:\s*['\"]([^'\"]+)['\"]", loader_text)))
     except Exception as err:
@@ -2538,9 +2538,11 @@ DESIGN_PATTERNS: dict[str, dict[str, Any]] = {
             "the bottom-left cell. coverControl: auto handles position vs tilt detection."
         ),
         "ux_notes": [
-            "Slider works only if cover supports SET_POSITION (bit 4 of supported_features). "
-            "For Supla/Netatmo without it, the slider reads state (open=100, closed=0) and "
-            "tap-toggles open/close instead.",
+            (
+                "Slider works only if cover supports SET_POSITION (bit 4 of supported_features). "
+                "For Supla/Netatmo without it, the slider reads state (open=100, closed=0) and "
+                "tap-toggles open/close instead."
+            ),
             "Show position % in the slider value label.",
         ],
         "recommended_template": "compact_cover recipe.",

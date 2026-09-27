@@ -53,7 +53,11 @@ for _tag in (
 
 
 def _ha_yaml_load(content: str):
-    return yaml.load(content, Loader=_HALoader)
+    # _HALoader subclasses yaml.SafeLoader (not yaml.Loader/UnsafeLoader) and only
+    # adds passthrough constructors for HA's own tags (!include, !secret, ...) that
+    # return plain dict markers -- it cannot construct arbitrary Python objects, so
+    # this is not the S506 vulnerability.
+    return yaml.load(content, Loader=_HALoader)  # noqa: S506
 
 _CONFIG_PATH = Path(os.getenv("HA_CONFIG_PATH", "/config"))
 
@@ -266,24 +270,47 @@ def delete_config_file(
             )
         ),
     ],
+    confirm: Annotated[
+        bool,
+        Field(
+            description=(
+                "Set true to actually delete the file. False (default) "
+                "performs no action and instead returns a confirmation "
+                "prompt; `relative_path` is not resolved or touched in that "
+                "case."
+            )
+        ),
+    ] = False,
 ) -> dict:
-    """Permanently delete one config file under /config.
+    """Permanently delete one config file under /config after an explicit confirmation.
 
-    Resolves `relative_path` via `_safe_path` and calls `Path.unlink()`;
-    there is no confirmation prompt, backup or trash in this tool —
-    deletion is immediate and irreversible from here alone.
+    Without `confirm=True` returns a confirmation prompt and does not
+    resolve or touch `relative_path` at all. With `confirm=True`, resolves
+    `relative_path` via `_safe_path` and calls `Path.unlink()`; there is no
+    backup or trash in this tool — deletion is immediate and irreversible
+    from here alone.
 
-    Use when: removing a YAML/JSON/txt file that HA no longer needs.
+    Use when: removing a YAML/JSON/txt file that HA no longer needs, once
+    that removal is confirmed.
     Not for: keeping the ability to undo — commit the config to git first
     (`git_git_commit_all`) or write through
     `git_safe_write_with_checkpoint` so a rollback stays possible.
-    Returns: dict `{"success": True, "deleted": ...}`.
-    Errors: raises `FileNotFoundError` when the file does not exist, and
-    raises `PermissionError` (from `_safe_path`) for a path outside the
-    config directory, a disallowed extension, or secrets.yaml/.storage.
-    Limits: no `confirm` parameter guards this call, unlike most other
-    destructive tools in this add-on; the deletion runs immediately.
+    Returns: dict `{"success": True, "deleted": ...}` when confirmed,
+    otherwise a confirmation prompt.
+    Errors: returns `{"error": "confirmation_required", "message": ...,
+    "action": ...}` when `confirm` is false; raises `FileNotFoundError`
+    when the file does not exist, and raises `PermissionError` (from
+    `_safe_path`) for a path outside the config directory, a disallowed
+    extension, or secrets.yaml/.storage.
+    Limits: requires `confirm=True`; the deletion runs immediately with no
+    undo once confirmed.
     """
+    if not confirm:
+        return {
+            "error": "confirmation_required",
+            "message": f"This will permanently delete '{relative_path}'. Call again with confirm=True.",
+            "action": f"delete_config_file(relative_path={relative_path!r}, confirm=True)",
+        }
     path = _safe_path(relative_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")

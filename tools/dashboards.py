@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import os
 from typing import Annotated
 
@@ -67,7 +69,7 @@ def _resolve_screenshot_engine() -> str:
     except RuntimeError:
         raise
     except Exception as e:
-        raise RuntimeError(f"Could not discover screenshot engine via Supervisor: {e}")
+        raise RuntimeError(f"Could not discover screenshot engine via Supervisor: {e}") from e
 
 
 @mcp.tool(annotations=read("List Lovelace dashboards"))
@@ -466,6 +468,66 @@ def _save(config: dict, save_url_path: str | None) -> None:
     ha._ws_call("lovelace/config/save", **kwargs)
 
 
+def _config_hash(config: dict) -> str:
+    """Stable short hash of a whole dashboard config (ADR-0003 D2).
+
+    Canonical JSON (`sort_keys=True`, `separators=(",", ":")`,
+    `ensure_ascii=False`) so key order/whitespace never change the hash,
+    then the first 16 hex chars of its sha256. Shared by every reader/
+    writer below — never computed ad hoc elsewhere.
+    """
+    canonical = json.dumps(config, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _read_config(save_url_path: str | None) -> dict:
+    """Fetch the dashboard config HA currently stores, the same way `_load_view` does.
+
+    Used to re-read after a save (see `_save_and_hash`) — HA may normalize
+    what it persists, so the post-save hash must come from a fresh read,
+    never from the locally mutated dict.
+    """
+    if save_url_path:
+        return ha._ws_call("lovelace/config", url_path=save_url_path)
+    return ha._ws_call("lovelace/config")
+
+
+def _save_and_hash(config: dict, save_url_path: str | None) -> str:
+    """Save `config`, then return `_config_hash` of what HA actually stored.
+
+    Re-reads via `_read_config` after the save instead of hashing the local
+    `config` dict, so the returned hash matches what the next
+    `dashboards_get_view_sections` call will report even if HA normalizes
+    the saved data.
+    """
+    _save(config, save_url_path)
+    return _config_hash(_read_config(save_url_path))
+
+
+def _check_expected_hash(config: dict, expected_config_hash: str | None) -> dict | None:
+    """Return a `config_changed` error dict if `expected_config_hash` is stale, else None.
+
+    Hashes `config` as loaded, before any local mutation — call this right
+    after `_load_view()` and before touching `sections`/`cards`, and return
+    its result immediately (no save) when it isn't None.
+    """
+    if expected_config_hash is None:
+        return None
+    current = _config_hash(config)
+    if current == expected_config_hash:
+        return None
+    return {
+        "error": "config_changed",
+        "message": (
+            "The dashboard changed since expected_config_hash was read; "
+            "section_index/card_index positions may now point at different cards."
+        ),
+        "expected_config_hash": expected_config_hash,
+        "current_config_hash": current,
+        "action": "Call dashboards_get_view_sections again and re-derive indexes.",
+    }
+
+
 def _result(status: str, save_url_path: str | None, view_index: int, view: dict, **extra) -> dict:
     return {
         "status": status,
@@ -496,13 +558,20 @@ def get_view_sections(
 
     Use when: reading current section indexes before calling
     `dashboards_add_card_to_section` / `dashboards_update_card_in_section`
-    / `dashboards_remove_card_from_section`.
+    / `dashboards_remove_card_from_section`, or before re-sending
+    `expected_config_hash` to one of them after their previous call
+    changed it.
     Returns: `{status, url_path, view_index, view_title, view_path,
-    sections: [{section_index, heading, card_count}, ...]}`.
+    sections: [{section_index, heading, card_count}, ...], config_hash}` —
+    pass `config_hash` back as `expected_config_hash` to
+    `dashboards_add_card_to_section` / `_update_card_in_section` /
+    `_remove_card_from_section` / `_add_section_to_view` to detect a
+    dashboard change before your write lands.
     Errors: raises `ValueError` when the view can't be resolved (bad
     index/path) or is not a `type: sections` view.
     """
-    _config, save_url_path, idx, view = _load_view(url_path, view_index)
+    config, save_url_path, idx, view = _load_view(url_path, view_index)
+    config_hash = _config_hash(config)
     sections = _require_sections(view, idx)
     return _result(
         "ok",
@@ -518,6 +587,7 @@ def get_view_sections(
             }
             for i, s in enumerate(sections)
         ],
+        config_hash=config_hash,
     )
 
 
@@ -540,6 +610,18 @@ def add_card_to_section(
         int | None,
         Field(description="Zero-based index within the section to insert at. Omit to append at the end."),
     ] = None,
+    expected_config_hash: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional guard: the config_hash from a recent dashboards_get_view_sections "
+                "or section-tool response. If the dashboard's current hash differs, this call "
+                "returns 'config_changed' and saves nothing, since section_index/position are "
+                "positions, not stable ids, and a change since your read may target the wrong "
+                "section. Omit to skip the check (today's behaviour)."
+            )
+        ),
+    ] = None,
 ) -> dict:
     """Insert a card into one section of a `type: sections` view, leaving every other view intact.
 
@@ -548,28 +630,40 @@ def add_card_to_section(
     `position` (or the end), and saves the whole dashboard back. This is
     the only way to make a card visible on a sections view —
     `dashboards_add_card_to_view` writes to `view.cards`, which such a
-    view renders only in edit mode.
+    view renders only in edit mode. When `expected_config_hash` is given,
+    it is checked against the dashboard's hash right after the read and
+    before any change, so a stale caller never overwrites the wrong
+    section.
 
     Use when: adding a card to a specific section of a `sections` view.
+    Pass `expected_config_hash` whenever `section_index`/`position` came
+    from an earlier read that might now be stale.
     Not for: a `masonry`/`panel` view — use
     `dashboards_add_card_to_view`.
     Returns: `{status: "added", url_path, view_index, view_title,
-    section_index, card_index, cards_in_section}`.
+    section_index, card_index, cards_in_section, config_hash}` —
+    `config_hash` is re-read from HA after the save (not the locally built
+    dict), ready to chain into the next call's `expected_config_hash`.
     Errors: raises `ValueError` when `card_config` has no `type` key, the
     view can't be resolved, isn't a `sections` view, or `section_index` is
-    out of range.
+    out of range. Returns `{"error": "config_changed", "expected_config_hash",
+    "current_config_hash", "action"}` without saving when
+    `expected_config_hash` doesn't match.
     """
     if not isinstance(card_config, dict) or not card_config.get("type"):
         raise ValueError("card_config must be a dict with a 'type' key, e.g. {'type': 'tile', ...}")
 
     config, save_url_path, idx, view = _load_view(url_path, view_index)
+    mismatch = _check_expected_hash(config, expected_config_hash)
+    if mismatch is not None:
+        return mismatch
     sections = _require_sections(view, idx)
     section = _require_section(sections, section_index, idx)
 
     cards = section["cards"]
     at = len(cards) if position is None else max(0, min(position, len(cards)))
     cards.insert(at, card_config)
-    _save(config, save_url_path)
+    new_hash = _save_and_hash(config, save_url_path)
 
     return _result(
         "added",
@@ -579,6 +673,7 @@ def add_card_to_section(
         section_index=section_index,
         card_index=at,
         cards_in_section=len(cards),
+        config_hash=new_hash,
     )
 
 
@@ -602,26 +697,44 @@ def update_card_in_section(
         bool,
         Field(description="If true (default), merge card_config's keys into the existing card. If false, replace the card wholesale."),
     ] = True,
+    expected_config_hash: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional guard: the config_hash from a recent dashboards_get_view_sections "
+                "or section-tool response. If the dashboard's current hash differs, this call "
+                "returns 'config_changed' and saves nothing, since section_index/card_index are "
+                "positions, not stable ids, and a change since your read may target the wrong "
+                "card. Omit to skip the check (today's behaviour)."
+            )
+        ),
+    ] = None,
 ) -> dict:
     """Change one existing card inside a section of a `type: sections` view.
 
     Resolves the view and target card via `_load_view`/`_require_card`,
-    then either merges `card_config`'s keys into the existing card dict
-    (`merge=True`, the default — fields not named in `card_config` keep
-    their prior value) or replaces it outright (`merge=False`), and saves
-    the whole dashboard back. Either way the previous card is only
-    recoverable via the `card_before` value in this call's own response —
-    the dashboard storage itself keeps no history.
+    then merges `card_config`'s keys into the existing card (`merge=True`,
+    the default) or replaces it outright (`merge=False`), and saves the
+    whole dashboard back. The previous card is only recoverable via
+    `card_before` in this call's own response — storage itself keeps no
+    history. With `expected_config_hash`, the dashboard's hash is checked
+    right after the read and before any change, so a stale caller can't
+    edit the wrong card.
 
     Use when: tweaking or replacing one card already placed in a section.
+    Pass `expected_config_hash` when `section_index`/`card_index` came
+    from a read that might now be stale.
     Not for: adding a new card — use
     `dashboards_add_card_to_section`; removing one — use
     `dashboards_remove_card_from_section`.
     Returns: `{status: "updated", url_path, view_index, view_title,
-    section_index, card_index, card_before, card_after}`.
-    Errors: raises `ValueError` when `card_config` is empty, when
-    `merge=False` and it has no `type` key, or when the view/section/card
-    can't be resolved.
+    section_index, card_index, card_before, card_after, config_hash}` —
+    `config_hash` is re-read from HA after the save, for the next call's
+    `expected_config_hash`.
+    Errors: raises `ValueError` when `card_config` is empty, `merge=False`
+    lacks a `type` key, or the view/section/card can't be resolved.
+    Returns `{"error": "config_changed", ...}` without saving when
+    `expected_config_hash` doesn't match.
     """
     if not isinstance(card_config, dict) or not card_config:
         raise ValueError("card_config must be a non-empty dict")
@@ -629,6 +742,9 @@ def update_card_in_section(
         raise ValueError("A replacement card_config needs a 'type' key")
 
     config, save_url_path, idx, view = _load_view(url_path, view_index)
+    mismatch = _check_expected_hash(config, expected_config_hash)
+    if mismatch is not None:
+        return mismatch
     sections = _require_sections(view, idx)
     section = _require_section(sections, section_index, idx)
     existing = _require_card(section, card_index, section_index)
@@ -640,7 +756,7 @@ def update_card_in_section(
     else:
         new_card = card_config
         section["cards"][card_index] = new_card
-    _save(config, save_url_path)
+    new_hash = _save_and_hash(config, save_url_path)
 
     return _result(
         "updated",
@@ -651,6 +767,7 @@ def update_card_in_section(
         card_index=card_index,
         card_before=before,
         card_after=new_card,
+        config_hash=new_hash,
     )
 
 
@@ -666,6 +783,18 @@ def remove_card_from_section(
         int | None,
         Field(description="Zero-based view index; needed only when url_path names a dashboard rather than a view path."),
     ] = None,
+    expected_config_hash: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional guard: the config_hash from a recent dashboards_get_view_sections "
+                "or section-tool response. If the dashboard's current hash differs, this call "
+                "returns 'config_changed' and removes nothing — this is what makes a repeated "
+                "call with a now-stale hash safe instead of deleting whatever shifted into that "
+                "position. Omit to skip the check (today's behaviour)."
+            )
+        ),
+    ] = None,
 ) -> dict:
     """Delete one card from a section of a `type: sections` view.
 
@@ -674,23 +803,35 @@ def remove_card_from_section(
     saves the whole dashboard back. `card_index` is a **position**, not a
     stable id — repeating this call with the same `section_index`/
     `card_index` after a first successful removal deletes whatever card
-    has shifted into that position next, not a no-op.
+    has shifted into that position next, not a no-op, unless
+    `expected_config_hash` is also passed and now points at the pre-removal
+    hash, in which case the repeat is rejected with `config_changed`
+    instead of deleting the wrong card.
 
     Use when: removing a card that's no longer wanted on a sections view.
+    Pass `expected_config_hash` whenever `section_index`/`card_index` came
+    from an earlier read that might now be stale.
     Returns: `{status: "removed", url_path, view_index, view_title,
-    section_index, card_index, removed_card, cards_in_section}` —
-    `removed_card` can be passed back to
-    `dashboards_add_card_to_section` to restore it.
+    section_index, card_index, removed_card, cards_in_section,
+    config_hash}` — `removed_card` can be passed back to
+    `dashboards_add_card_to_section` to restore it; `config_hash` is
+    re-read from HA after the save, ready to chain into the next call's
+    `expected_config_hash`.
     Errors: raises `ValueError` when the view/section/card can't be
-    resolved (bad index/path).
+    resolved (bad index/path). Returns `{"error": "config_changed",
+    "expected_config_hash", "current_config_hash", "action"}` without
+    saving when `expected_config_hash` doesn't match.
     """
     config, save_url_path, idx, view = _load_view(url_path, view_index)
+    mismatch = _check_expected_hash(config, expected_config_hash)
+    if mismatch is not None:
+        return mismatch
     sections = _require_sections(view, idx)
     section = _require_section(sections, section_index, idx)
     _require_card(section, card_index, section_index)
 
     removed = section["cards"].pop(card_index)
-    _save(config, save_url_path)
+    new_hash = _save_and_hash(config, save_url_path)
 
     return _result(
         "removed",
@@ -701,6 +842,7 @@ def remove_card_from_section(
         card_index=card_index,
         removed_card=removed,
         cards_in_section=len(section["cards"]),
+        config_hash=new_hash,
     )
 
 
@@ -722,34 +864,62 @@ def add_section_to_view(
         int | None,
         Field(description="Zero-based index within the view to insert the section at. Omit to append at the end."),
     ] = None,
+    expected_config_hash: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional guard: the config_hash from a recent dashboards_get_view_sections "
+                "or section-tool response. If the dashboard's current hash differs, this call "
+                "returns 'config_changed' and saves nothing, since position is a plain index "
+                "and a change since your read may insert the new section somewhere unintended. "
+                "Omit to skip the check (today's behaviour)."
+            )
+        ),
+    ] = None,
 ) -> dict:
     """Insert a new section into a `type: sections` view.
 
     Resolves the view via `_load_view`, requires it to be a `sections`
     view, defaults `section_config` to `{"type": "grid", "cards": []}`
     when omitted, inserts it into that view's `sections` list at
-    `position` (or the end), and saves the whole dashboard back.
+    `position` (or the end), and saves the whole dashboard back. When
+    `expected_config_hash` is given, it is checked against the dashboard's
+    hash right after the read and before any change.
 
     Use when: adding a whole new section (a card group with its own grid)
     to a sections view, before populating it with
-    `dashboards_add_card_to_section`.
+    `dashboards_add_card_to_section`. Pass `expected_config_hash` whenever
+    `position` came from an earlier read that might now be stale.
     Returns: `{status: "added", url_path, view_index, view_title,
-    section_index, sections_in_view}`.
+    section_index, sections_in_view, config_hash}` — `config_hash` is
+    re-read from HA after the save, ready to chain into the next call's
+    `expected_config_hash`.
     Errors: raises `ValueError` when `section_config["cards"]` isn't a
-    list, or the view can't be resolved/isn't a `sections` view.
+    list, or the view can't be resolved/isn't a `sections` view. Returns
+    `{"error": "config_changed", "expected_config_hash",
+    "current_config_hash", "action"}` without saving when
+    `expected_config_hash` doesn't match.
     """
     section = dict(section_config or {})
     if not isinstance(section.get("cards", []), list):
-        raise ValueError("section_config['cards'] must be a list of card configs")
+        # ValueError (not TypeError) matches this file's established, tested
+        # convention: every input-validation failure in dashboards.py raises
+        # ValueError (see e.g. the "not a 'sections' view" check covered by
+        # tests/test_dashboards_sections.py), and the docstring above publicly
+        # documents `raises ValueError` as this function's contract.
+        raise ValueError("section_config['cards'] must be a list of card configs")  # noqa: TRY004
     section.setdefault("type", "grid")
     section.setdefault("cards", [])
 
     config, save_url_path, idx, view = _load_view(url_path, view_index)
+    mismatch = _check_expected_hash(config, expected_config_hash)
+    if mismatch is not None:
+        return mismatch
     sections = _require_sections(view, idx)
 
     at = len(sections) if position is None else max(0, min(position, len(sections)))
     sections.insert(at, section)
-    _save(config, save_url_path)
+    new_hash = _save_and_hash(config, save_url_path)
 
     return _result(
         "added",
@@ -758,6 +928,7 @@ def add_section_to_view(
         view,
         section_index=at,
         sections_in_view=len(sections),
+        config_hash=new_hash,
     )
 
 

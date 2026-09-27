@@ -7,4 +7,7 @@ __pycache__
 venv
 *.egg-info
 tests
+tests_e2e
+scripts
+.github
 .pytest_cache

@@ -1,0 +1,64 @@
+name: E2E (informational)
+
+# Informational on purpose: this workflow is NOT required for merge yet. Add it as
+# a required status check in branch protection only once it has been observed
+# green a few times in a row (it depends on a real Home Assistant container
+# booting fully within CI, which is inherently less deterministic than the mocked
+# unit tests in tests/).
+#
+# Third-party actions are pinned to a commit SHA (tag in a trailing comment),
+# verified the same way as ci.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Docker image tag verified to exist for both linux/amd64 and linux/arm64 via the
+# anonymous ghcr.io registry API (`GET /v2/home-assistant/home-assistant/manifests/
+# 2026.9.4` with a registry:pull token) — the newest stable home-assistant/core
+# release as of when this workflow was written (home-assistant/core releases API,
+# non-prerelease). Bump this alongside future nexus releases; don't let it drift
+# indefinitely, since each HA release can change the onboarding API this depends on.
+env:
+  HA_IMAGE: ghcr.io/home-assistant/home-assistant:2026.9.4
+
+jobs:
+  e2e-smoke:
+    name: Smoke test against a real, freshly onboarded HA
+    runs-on: ubuntu-latest
+    continue-on-error: true # informational — see header comment
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+
+      - name: Start Home Assistant
+        run: |
+          docker run -d --name ha \
+            -p 8123:8123 \
+            -v ha-config:/config \
+            "${HA_IMAGE}"
+
+      - name: Onboard Home Assistant (create admin user, finish onboarding)
+        run: |
+          python3 scripts/e2e_onboard_ha.py \
+            --base-url http://localhost:8123 \
+            --output "${{ runner.temp }}/e2e_ha_credentials.json" \
+            --wait-attempts 90 \
+            --wait-delay 2
+
+      - name: Run e2e smoke tests
+        env:
+          E2E_HA_CREDENTIALS_FILE: ${{ runner.temp }}/e2e_ha_credentials.json
+        run: python -m pytest tests_e2e -q
+
+      - name: Home Assistant container logs (always, for debugging)
+        if: always()
+        run: docker logs ha || true

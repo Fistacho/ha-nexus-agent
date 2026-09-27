@@ -1,10 +1,9 @@
 import logging
 import os
 import re
+import sys
 from fastmcp import FastMCP
 from dotenv import load_dotenv
-
-load_dotenv()
 
 from tools.entities import mcp as entities_mcp
 from tools.services import mcp as services_mcp
@@ -36,6 +35,24 @@ from tools.esphome import mcp as esphome_mcp
 from tools.statistics import mcp as statistics_mcp
 from tools import discover as discover_mod
 from tools.discover import mcp as discover_mcp
+
+# Not needed here for correctness (E402 CI-B cleanup, 0.22.0): every
+# `tools/<module>.py` above transitively imports `ha_client.py` or `auth.py`
+# before it evaluates any of its own module-level `os.getenv(...)` calls, and
+# both of those already call `load_dotenv()` at their own top (`ha_client.py`
+# line 10, `auth.py` line 8) — as do the handful of tool modules that read
+# `HA_CONFIG_PATH`/`HA_URL` directly (`tools/files.py`, `tools/git_ops.py`,
+# `tools/themes.py`, `tools/websocket.py`, each with its own `load_dotenv()`
+# call before the read). `python-dotenv`'s `load_dotenv()` only *fills in*
+# variables absent from `os.environ` (`override=False` by default) and is
+# idempotent, so calling it again here — after every import above has
+# already had a chance to populate `os.environ` from `.env` — changes
+# nothing an MCP client can observe. Kept for readability (this file's own
+# entry point, `main()`, also reads env vars, e.g. `NEXUS_PORT`) rather than
+# functional necessity; verified via `grep -rn load_dotenv tools/*.py *.py`
+# that no module-level `os.getenv` call anywhere in the codebase runs before
+# some `load_dotenv()` call.
+load_dotenv()
 
 mcp = FastMCP("nexus")
 
@@ -82,6 +99,24 @@ discover_mod.bind_root(mcp)
 # full_path, http_version, status_code)` — `full_path` (args[2]) is where the
 # query string lives.
 _TOKEN_QS_RE = re.compile(r"([?&]token=)[^&\s]+", re.IGNORECASE)
+
+# Logged once per process, the first time a request authenticates via
+# `?token=` instead of the `Authorization: Bearer` header. Never logs the
+# token value itself — only that the (already deprecated, see README/
+# Security) query-string method was used.
+_query_token_deprecation_logged = False
+
+
+def _warn_query_token_deprecated_once() -> None:
+    global _query_token_deprecation_logged
+    if _query_token_deprecation_logged:
+        return
+    _query_token_deprecation_logged = True
+    logging.getLogger(__name__).warning(
+        "Authenticated via the '?token=' query string. This method is deprecated "
+        "and will be removed in nexus 1.0.0 — switch to an "
+        "'Authorization: Bearer <API_KEY>' header instead."
+    )
 
 
 class RedactTokenFilter(logging.Filter):
@@ -139,7 +174,8 @@ def _build_app():
         async def __call__(self, scope, receive, send):
             if scope["type"] == "http" and scope.get("path", "").startswith("/mcp"):
                 query = parse_qs(scope.get("query_string", b"").decode())
-                token = query.get("token", [None])[0]
+                query_token = query.get("token", [None])[0]
+                token = query_token
                 if not token:
                     headers = dict(scope.get("headers", []))
                     auth = headers.get(b"authorization", b"").decode()
@@ -148,6 +184,8 @@ def _build_app():
                     await send({"type": "http.response.start", "status": 401, "headers": [(b"content-type", b"application/json")]})
                     await send({"type": "http.response.body", "body": b'{"error":"Unauthorized"}'})
                     return
+                if query_token:
+                    _warn_query_token_deprecated_once()
             await self.app(scope, receive, send)
 
     app = FastAPI(title="Nexus", docs_url=None, redoc_url=None, lifespan=mcp_app.lifespan)
@@ -164,12 +202,50 @@ def _build_app():
     return app
 
 
+def _apply_tool_policy_or_exit():
+    """Read and enforce the tool-exposure policy (ADR-0003 P1/P2).
+
+    Runs once, here, after every `mcp.mount()` call above has already
+    executed at import time — `import server` on its own never reaches this
+    function, so tests/tooling that only need the full, unfiltered catalogue
+    (T1/T2, `tests/contract/generate_tool_surface.py`) are unaffected.
+
+    A malformed option (unknown namespace, non-boolean `read_only`) aborts
+    startup with a readable message instead of silently applying a narrower
+    — or wider — policy than the operator configured.
+    """
+    from policy import PolicyConfigError, ToolPolicy, apply_policy
+
+    try:
+        tool_policy = ToolPolicy.from_env()
+    except PolicyConfigError as exc:
+        print(f"Nexus refused to start: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    application = apply_policy(mcp, tool_policy)
+    logging.getLogger(__name__).info(
+        "Tool policy applied: read_only=%s disabled_namespaces=%s -> "
+        "%d/%d tools visible, %d/%d prompts visible",
+        tool_policy.read_only,
+        sorted(tool_policy.disabled_namespaces),
+        application.tools_total - application.tools_disabled,
+        application.tools_total,
+        application.prompts_total - application.prompts_disabled,
+        application.prompts_total,
+    )
+    return tool_policy
+
+
 def main():
     port = int(os.getenv("NEXUS_PORT", "7123"))
+
+    tool_policy = _apply_tool_policy_or_exit()
 
     # HTTP mode: add-on or explicit NEXUS_HTTP=1
     if os.getenv("SUPERVISOR_TOKEN") or os.getenv("NEXUS_HTTP"):
         import uvicorn
+
+        import setup_ui
 
         for line in _startup_log_lines(port, http_mode=True):
             print(line)
@@ -178,7 +254,8 @@ def main():
         logging.getLogger("uvicorn.access").addFilter(RedactTokenFilter())
 
         app = _build_app()
-        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+        setup_ui.set_policy(tool_policy)
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")  # noqa: S104 — HA add-on container must accept Supervisor's port-mapped connections, not just loopback
     else:
         # stdio mode for Claude Desktop / local MCP client
         for line in _startup_log_lines(port, http_mode=False):

@@ -127,17 +127,24 @@ def submit_config_flow_step(
     `user_input`. What this does depends entirely on the integration domain
     driving the flow: it may just advance to the next form, or it may
     validate credentials against the integration's own device/cloud service
-    and, on the final step, create a real config entry that HA loads.
+    and create or overwrite a real config entry that HA loads. HA does not
+    signal in advance which step is the last one, so any submitted step —
+    not only a visibly "final" one — can be the one that creates the entry.
 
     Use when: providing the values a config-flow step asked for.
     Not for: reading the current step without submitting anything — use
-    `integrations_get_config_flow`.
+    `integrations_get_config_flow`; cancelling a flow before it finishes —
+    use `integrations_abort_config_flow`.
     Returns: the next step (form), a step with `errors`, or the finished
-    config entry.
+    config entry. The returned step's `last_step` field is `True` only
+    when the integration explicitly declares this is the final step, and
+    `None` otherwise — most integrations leave it `None` even on their
+    actual last step, so `None` does not mean more steps remain.
     Errors: raises `httpx.HTTPStatusError` if `flow_id` is unknown or
     expired.
     Limits: the integration handling this domain may reach an external
-    device or cloud service while validating `user_input`.
+    device or cloud service while validating `user_input`; a config entry
+    can be created without warning on any step.
     """
     with ha._client() as c:
         r = c.post(f"/api/config/config_entries/flow/{flow_id}", json=user_input)
@@ -362,22 +369,28 @@ def submit_options_flow_step(
 
     Calls `POST /api/config/config_entries/options/flow/{flow_id}` with
     `user_input`. What this does depends entirely on the integration
-    domain: intermediate steps just advance the form, while the final step
-    applies the new options to the existing config entry, replacing its
-    previous options, and may reach the integration's own device/cloud
-    service to validate them.
+    domain: an intermediate step just advances the form, while the step
+    that finishes the flow applies the new options to the existing config
+    entry, replacing its previous options. HA does not signal in advance
+    which step is the last one, so any submitted step — not only a
+    visibly "final" one — can be the one that overwrites the options.
 
     Use when: providing the values an options-flow step asked for.
     Not for: reading the current step without submitting — there is no
     separate "get options flow" tool; call
-    `integrations_start_options_flow` again to restart it.
+    `integrations_start_options_flow` again to restart it; cancelling a
+    flow before it finishes — use `integrations_abort_options_flow`.
     Returns: the next step (form), a step with `errors`, or the entry's
-    updated result.
+    updated result. The returned step's `last_step` field is `True` only
+    when the integration explicitly declares this is the final step, and
+    `None` otherwise — most integrations leave it `None` even on their
+    actual last step, so `None` does not mean more steps remain.
     Errors: raises `httpx.HTTPStatusError` if `flow_id` is unknown or
     expired.
-    Limits: on the final step, overwrites the entry's previous options with
-    the submitted values; the integration may reach an external device or
-    cloud service while validating them.
+    Limits: any submitted step, not only a visibly "final" one, may
+    overwrite the entry's previous options; the integration may reach an
+    external device or cloud service while validating the submitted
+    values.
     """
     with ha._client() as c:
         r = c.post(f"/api/config/config_entries/options/flow/{flow_id}", json=user_input)

@@ -1,5 +1,101 @@
 # Changelog
 
+## 0.22.0
+
+**Added**
+
+- New add-on options `read_only` and `disabled_namespaces` (ADR-0003 P1/P2), enforced
+  server-side through FastMCP's own Visibility mechanism: a hidden tool is refused at
+  `tools/call`, not merely omitted from `tools/list`. `read_only` hides and blocks every
+  tool whose annotations don't declare `readOnlyHint=True` — today 169 of 323 tools, 154
+  stay visible — and hides all MCP prompts (they carry no annotations, so there's no way
+  to prove one only ever reads). `disabled_namespaces` hides and blocks every tool/prompt
+  under a given namespace prefix (e.g. `["supervisor", "git"]`). Both are read once at
+  startup; a malformed value (unknown namespace, non-boolean `read_only`) stops the
+  add-on from starting instead of silently applying a narrower or wider policy than
+  configured. Standalone (non-add-on) equivalents: `NEXUS_READ_ONLY` /
+  `NEXUS_DISABLED_NAMESPACES`.
+- `expected_config_hash` / `config_hash` on the dashboard section tools
+  (`dashboards_get_view_sections`, `_add_card_to_section`, `_update_card_in_section`,
+  `_remove_card_from_section`, `_add_section_to_view`): optimistic concurrency for the
+  whole dashboard, since `card_index`/`section_index` are positions, not stable ids.
+  Pass the `config_hash` from a read back as `expected_config_hash` on the next write;
+  a stale hash returns `{"error": "config_changed", ...}` and saves nothing instead of
+  editing the wrong card. Omitting it keeps today's behaviour.
+- `timeout` (1–300 s) on `ws_get_states` and `ws_call_service`, alongside the existing
+  `ws_render_template` / `ws_listen_state_changes` / `ws_listen_events` /
+  `ws_subscribe_trigger`, which now enforce the same 1–300 s bounds.
+
+**Changed**
+
+- `supervisor_delete_backup` and `files_delete_config_file` now require `confirm=True`:
+  the first call without it does no I/O at all and returns
+  `{"error": "confirmation_required", "message", "action"}` instead of deleting
+  immediately. Both are one-shot, unrecoverable operations (a backup is itself the undo
+  mechanism for everything else in this add-on; a config file has no trash) that
+  previously had no safety net.
+- `automations_delete_scene`'s refusal without `confirm=True` now uses the same
+  `{"error": "confirmation_required", "message", "action"}` shape as every other
+  `confirm`-gated tool, instead of its own `{"error": "set confirm=True to delete", ...}`.
+- `GET /health` now returns only `{"status": "ok"}`. It previously also returned `ha_url`
+  and the live tool count — addon-internal facts that leaked to any unauthenticated
+  caller on the LAN, since the Supervisor watchdog only needs a 200. Those, plus the new
+  `read_only`/`disabled_namespaces` policy, now show only on the ingress-gated Setup UI
+  page.
+- `build.yaml`'s `build_from:` map now names `python:3.12-alpine` explicitly for all 5
+  architectures, matching what `Dockerfile` actually built from all along (it hardcoded
+  `FROM python:3.12-alpine`, making the previous `ghcr.io/home-assistant/<arch>-base-python`
+  entries dead). The Dockerfile now uses `ARG BUILD_FROM` / `FROM ${BUILD_FROM}` fed by
+  build.yaml, so the two files can no longer silently disagree. The image that ships to
+  users is unchanged.
+
+**Fixed**
+
+- The WebSocket `auth_required` → `auth` → `auth_ok` handshake in `tools/websocket.py`
+  now honours the caller's `timeout` — previously an add-on/HA instance that sent
+  `auth_required` and then never answered left the call blocked indefinitely, with no
+  way to bound it.
+- `esphome_clean_mqtt` now clears retained MQTT discovery topics through HA's own `mqtt`
+  integration (`mqtt/device/debug_info` plus an empty retained `mqtt.publish`) instead of
+  the ESPHome dashboard, which has no equivalent command.
+- `esphome_list_devices` / `esphome_get_device_entities` no longer rely on a
+  `binary_sensor.*_api_connection_status` entity that isn't guaranteed to exist. Connected
+  status now comes from whether any of a device's own registered entities report a state
+  other than `"unavailable"` (ESPHome entities share one per-config-entry availability
+  flag), and entity matching uses the device registry's `device_id` when a device-registry
+  entry is found, falling back to the previous slug-in-entity_id match otherwise.
+- ESPHome dashboard tools (`esphome_compile_device`, `esphome_validate_config`, and others
+  behind `_dash_ws_command`/`_dash_ws_spawn`) now attach a `diagnosis` block to a
+  `"Cannot connect to ESPHome dashboard"` error, built from the Supervisor add-on's own
+  `/addons/<slug>/info` (port-6052 mapping, ingress-only detection) with concrete advice
+  instead of a bare connection error.
+
+**Security**
+
+- `GET /health` (see Changed above) no longer exposes `ha_url`, the tool count or the
+  active tool-exposure policy to unauthenticated callers.
+- Authenticating via `?token=<API_KEY>` in the query string now logs one deprecation
+  warning per add-on start (never the key itself) and is documented as **removed in
+  nexus 1.0.0** — prefer the `Authorization: Bearer` header.
+- The Setup UI page and its README/Security docs now say explicitly that the Supervisor
+  **Watchdog** toggle on the add-on's **Info** tab must be turned on separately —
+  listing `watchdog:` in `config.yaml` does not enable it by itself, so an add-on that
+  silently stopped restarting itself is now called out on the same protected page.
+
+**Internal**
+
+- New GitHub Actions CI (`.github/workflows/ci.yml`): `ruff check .` (required), `pytest`
+  on Python 3.12 and 3.14, and a build-and-smoke-test job that builds the amd64 image
+  from this repo's own `Dockerfile`/`build.yaml` and polls `/health` for HTTP 200.
+- New E2E workflow (`.github/workflows/e2e.yml`, informational only): onboards a real,
+  freshly started Home Assistant container and runs `tests_e2e` against it. Not required
+  for merge yet — added as a required check only once observed green a few times in a row.
+- `Dockerfile` now reads its base image from `build.yaml` via `ARG BUILD_FROM` for every
+  architecture instead of hardcoding it (see Changed above); the runtime image itself
+  (`python:3.12-alpine`) is unchanged.
+- `ruff==0.16.1` pinned as a dev dependency; `ruff check .` is clean across the whole
+  repo (tests/tests_e2e excluded from lint — see `pyproject.toml`'s `[tool.ruff]` comment).
+
 ## 0.21.0
 
 **Added**

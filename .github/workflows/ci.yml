@@ -1,0 +1,121 @@
+name: CI
+
+# All third-party actions are pinned to a commit SHA (with the human-readable tag
+# in a trailing comment) per this repo's release process
+# (.claude/hooks / pre-push-guard) — verified against each action's own tag refs
+# via `gh api repos/<owner>/<repo>/tags` at the time this workflow was written,
+# not copied from memory.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint (ruff — required, see pyproject.toml [tool.ruff])
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install "ruff==0.16.1"
+      # Blocking: the CI-B cleanup pass (0.22.0) fixed or justified (with an
+      # inline `# noqa` and rationale) every pre-existing finding this job used
+      # to tolerate — `ruff check .` is clean and this job fails the build on
+      # any new regression.
+      - run: ruff check .
+
+  test:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest -q
+
+  build-smoke:
+    name: Build amd64 image + /health smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # build.yaml is the Supervisor's own source of truth for BUILD_FROM per
+      # architecture (see Dockerfile's `ARG BUILD_FROM`); reading it here instead
+      # of hardcoding the base image in this workflow means this job actually
+      # exercises the Dockerfile+build.yaml pair the Supervisor will use, not a
+      # CI-only substitute. Currently all 5 archs resolve to the same value,
+      # `python:3.12-alpine` (coordinator decision — see build.yaml/Dockerfile
+      # comments), but this step doesn't assume that: it reads whatever amd64 is
+      # actually configured to.
+      - name: Read amd64 BUILD_FROM from build.yaml
+        id: build_from
+        run: |
+          pip install --quiet pyyaml
+          value=$(python3 -c "import yaml; print(yaml.safe_load(open('build.yaml'))['build_from']['amd64'])")
+          echo "value=${value}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image (amd64, local docker load only — no push)
+        uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
+        with:
+          arch: amd64
+          context: .
+          image: nexus-ci-smoke
+          image-tags: |
+            smoke
+          version: ci-smoke
+          build-args: |
+            BUILD_FROM=${{ steps.build_from.outputs.value }}
+          push: false
+          load: true
+          cosign: false
+          # Required by the action's schema even though push=false (no login is
+          # attempted unless push=true) — GITHUB_TOKEN is always available.
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Smoke test — run the image and poll /health
+        run: |
+          set -eu
+          # run.sh always exports HA_URL=http://supervisor/core itself (Supervisor
+          # add-on mode) regardless of any -e HA_URL passed here, so there's no
+          # point setting it; HA_TOKEN is passed through untouched by run.sh and is
+          # only needed so auth.get_ha_token() doesn't raise during startup — /health
+          # itself doesn't require reaching a real HA instance.
+          docker run -d --name nexus-smoke \
+            -p 7123:7123 \
+            -e HA_TOKEN=smoke-test-token \
+            nexus-ci-smoke:smoke
+
+          ok=""
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:7123/health || echo "000")
+            if [ "$code" = "200" ]; then
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ -z "$ok" ]; then
+            echo "::error::nexus-smoke never returned HTTP 200 from /health"
+            docker logs nexus-smoke || true
+            exit 1
+          fi
+          echo "nexus-smoke is healthy (HTTP 200 from /health)"
+
+      - name: Container logs (always, for debugging)
+        if: always()
+        run: docker logs nexus-smoke || true

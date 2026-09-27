@@ -2,18 +2,31 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse, JSONResponse
 import os
 from auth import API_KEY, can_access_ui
+from policy import ToolPolicy
 
 _PORT = int(os.getenv("NEXUS_PORT", "7123"))
 
-# Wired in by server._build_app() once the FastMCP instance exists, so /health
-# and the Setup UI can report the live tool count instead of a hard-coded
-# number that silently goes stale (was "100" while the registry held 323).
+# Wired in by server._build_app() once the FastMCP instance exists, so the
+# Setup UI can report the live tool count instead of a hard-coded number
+# that silently goes stale (was "100" while the registry held 323).
 _mcp = None
+
+# Wired in by server.main() *after* policy.apply_policy() has run (ADR-0003
+# P1/P2). Anything that only calls `server._build_app()` directly (most of
+# tests/test_audit_http_auth.py) never calls set_policy(), so this default —
+# the same as 0.21.0's unconditional behaviour — is exactly right for those
+# callers too.
+_policy: ToolPolicy = ToolPolicy()
 
 
 def set_mcp(instance) -> None:
     global _mcp
     _mcp = instance
+
+
+def set_policy(policy: ToolPolicy) -> None:
+    global _policy
+    _policy = policy
 
 
 async def _tool_count() -> int:
@@ -120,7 +133,11 @@ def _build_configs(mcp_url_bare: str, mcp_url_with_token: str, api_key: str, ha_
     }
 
 
-def _locked_page_html(tool_count: int) -> str:
+def _locked_page_html() -> str:
+    """Unauthenticated response. Deliberately omits the tool count, `ha_url`
+    and active policy — those are addon-internal facts, shown only on the
+    `can_access_ui`-gated page below (ADR-0003 P: same reasoning as why
+    `/health` was trimmed to `{"status": "ok"}`)."""
     return """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -130,19 +147,40 @@ def _locked_page_html(tool_count: int) -> str:
 </head>
 <body>
 <h1>Nexus <span class="badge">running</span></h1>
-<p class="sub">MCP server for Home Assistant &nbsp;&middot;&nbsp; """ + str(tool_count) + """ tools &nbsp;&middot;&nbsp; <a href="health">health check</a></p>
+<p class="sub">MCP server for Home Assistant &nbsp;&middot;&nbsp; <a href="health">health check</a></p>
 
 <h2>Configuration is not shown here</h2>
 <p>This page only reveals your API key and client configuration to callers Home
 Assistant has already authenticated.</p>
-<div class="tip">Open Nexus from the Home Assistant sidebar panel (ingress) to see your API key and ready-to-paste client configs.</div>
+<div class="tip">Open Nexus with the <strong>Open Web UI</strong> button on the add-on's Info page to see your API key and ready-to-paste client configs. The Home Assistant sidebar only shows Nexus if you additionally enable "Show in sidebar" on that same page.</div>
 <p>Running the standalone (non-add-on) build? This page only shows the key to requests
 from <code>localhost</code>, or with a valid <code>Authorization: Bearer &lt;API_KEY&gt;</code> header.</p>
 </body>
 </html>"""
 
 
-def _full_page_html(configs: dict, mcp_url_with_token: str, api_key: str, ha_url: str, tool_count: int) -> str:
+def _policy_section_html(policy: ToolPolicy) -> str:
+    """Active tool-exposure policy (ADR-0003 P1/P2) — shown only here, behind
+    `can_access_ui`, next to the watchdog reminder Supervisor operators
+    otherwise miss (enabling it in `config.yaml` alone does not turn the
+    add-on's watchdog on)."""
+    if policy.disabled_namespaces:
+        namespaces_html = ", ".join(f"<code>{ns}</code>" for ns in sorted(policy.disabled_namespaces))
+    else:
+        namespaces_html = "<em>none</em>"
+
+    read_only_html = "<strong>on</strong> — only read-only tools are visible/callable" if policy.read_only else "off"
+
+    return """
+<h2>Active Policy</h2>
+<p>read_only: """ + read_only_html + """<br>
+disabled_namespaces: """ + namespaces_html + """<br>
+tool_mode: <code>""" + policy.tool_mode + """</code></p>
+<div class="tip">Changing these requires an add-on restart — see the add-on's Configuration tab. The Supervisor <strong>Watchdog</strong> toggle on the add-on's Info tab must be turned on separately; listing <code>watchdog:</code> in this add-on's own manifest does not enable it by itself.</div>
+"""
+
+
+def _full_page_html(configs: dict, mcp_url_with_token: str, api_key: str, ha_url: str, tool_count: int, policy: ToolPolicy) -> str:
     return """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -153,7 +191,7 @@ def _full_page_html(configs: dict, mcp_url_with_token: str, api_key: str, ha_url
 <body>
 <h1>Nexus <span class="badge">running</span></h1>
 <p class="sub">MCP server for Home Assistant &nbsp;&middot;&nbsp; """ + str(tool_count) + """ tools &nbsp;&middot;&nbsp; <a href="health">health check</a></p>
-
+""" + _policy_section_html(policy) + """
 <h2>API Key</h2>
 <div class="key">""" + api_key + """</div>
 <p>Stored in <code>/config/.nexus_api_key</code>. Prefer the <code>Authorization: Bearer</code> header over the URL query string below where your client supports it — query strings end up in access logs and shell history.</p>
@@ -218,24 +256,31 @@ def _full_page_html(configs: dict, mcp_url_with_token: str, api_key: str, ha_url
 
 
 async def setup_page(request: Request):
+    if not can_access_ui(request):
+        return HTMLResponse(_locked_page_html())
+
     host_header = request.headers.get("host", f"homeassistant.local:{_PORT}")
     hostname = host_header.split(":")[0]
     ha_url = _ha_url()
     tool_count = await _tool_count()
-
-    if not can_access_ui(request):
-        return HTMLResponse(_locked_page_html(tool_count))
 
     mcp_url_bare = f"http://{hostname}:{_PORT}/mcp"
     mcp_url_with_token = f"{mcp_url_bare}?token={API_KEY}"
     cwd = os.getcwd().replace("\\", "/")
     configs = _build_configs(mcp_url_bare, mcp_url_with_token, API_KEY, ha_url, cwd)
 
-    return HTMLResponse(_full_page_html(configs, mcp_url_with_token, API_KEY, ha_url, tool_count))
+    return HTMLResponse(_full_page_html(configs, mcp_url_with_token, API_KEY, ha_url, tool_count, _policy))
 
 
 async def health():
-    return {"status": "ok", "ha_url": _ha_url(), "tools": await _tool_count()}
+    """Public, unauthenticated — the Supervisor watchdog only needs a 200.
+
+    Deliberately returns nothing else: `ha_url`, the live tool count and the
+    active policy used to leak here to any caller on the LAN before ingress
+    auth was even checked. They now live on the `can_access_ui`-gated Setup
+    UI page instead (see `_full_page_html`/`_policy_section_html`).
+    """
+    return {"status": "ok"}
 
 
 async def regenerate(request: Request):

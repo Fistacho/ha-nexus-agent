@@ -350,21 +350,24 @@ def delete_scene(
 ) -> dict:
     """Delete a scene config, then reload scenes.
 
-    Without `confirm=True` returns a safety prompt; with `confirm=True`
-    deletes `/api/config/scene/config/<id>` and calls the `scene.reload`
-    service.
+    Without `confirm=True` returns a safety prompt and touches nothing;
+    with `confirm=True` deletes `/api/config/scene/config/<id>` and calls
+    the `scene.reload` service.
 
     Returns: dict `{"deleted": sid, ...}` merged with HA's delete response,
     or `{"status": "not_found", "scene_id": sid}` when no scene has that
     id.
-    Errors: returns `{"error": "set confirm=True to delete", "command":
-    ...}` when `confirm` is not True.
+    Errors: returns `{"error": "confirmation_required", "message": ...,
+    "action": ...}` when `confirm` is not True.
     Limits: requires `confirm=True`; deletion is immediate and permanent.
     """
-    if not confirm:
-        sid = _strip_prefix(scene_id, "scene")
-        return {"error": "set confirm=True to delete", "command": f'delete_scene("{scene_id}", confirm=True)'}
     sid = _strip_prefix(scene_id, "scene")
+    if not confirm:
+        return {
+            "error": "confirmation_required",
+            "message": f"This will permanently delete scene '{sid}'. Call again with confirm=True.",
+            "action": f"delete_scene(scene_id='{scene_id}', confirm=True)",
+        }
     with ha._client() as c:
         r = c.delete(f"/api/config/scene/config/{sid}")
         if r.status_code == 404:
@@ -1164,7 +1167,7 @@ def validate_automation_references(
         live_services: set = set()
         for entry in ha.list_services():
             domain = entry.get("domain", "")
-            for svc in (entry.get("services") or {}).keys():
+            for svc in entry.get("services") or {}:
                 live_services.add(f"{domain}.{svc}")
     except Exception as e:
         live_services = set()

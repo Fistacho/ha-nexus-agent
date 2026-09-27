@@ -23,14 +23,33 @@ standalone "ESPHome Device Builder" between esphome 2026.5.0 and 2026.7.0):
   (docs/API.md: `devices/validate` command) — see `_dash_ws_command`.
 - Clean-mqtt has no confirmed equivalent in Device Builder at all (searched
   docs/API.md for every mqtt/clean-related command; the closest, `firmware/clean`,
-  is a build-artifact clean, not an MQTT discovery-topic clean) — see
-  `clean_mqtt`'s docstring for the resulting open risk.
+  is a build-artifact clean, not an MQTT discovery-topic clean). `clean_mqtt`
+  therefore bypasses the dashboard entirely and goes through HA's own `mqtt`
+  integration instead (confirmed 2026-09-27 against `homeassistant/components/
+  mqtt/__init__.py` and `debug_info.py` on github.com/home-assistant/core):
+  WS command `mqtt/device/debug_info` (schema `{device_id: str}`, returns
+  `{"entities": [...], "triggers": [...]}` with each entry's
+  `discovery_data.topic`) when the device has a matching HA device-registry
+  entry, else a short `mqtt/subscribe` window on a discovery-prefix wildcard;
+  either way, clearing a topic is the `mqtt.publish` service with
+  `payload=""` and `retain=True` (`MQTT_PUBLISH_SCHEMA` accepts
+  `payload=None|str`, so `""` validates, and an empty retained publish is
+  the standard MQTT way to delete a broker's retained message on a topic).
+- Connecting a device's online/offline status is not read from a
+  `binary_sensor.*_api_connection_status` entity — confirmed live 2026-09-27
+  that entity does not reliably exist. Instead this follows
+  `homeassistant/components/esphome/entity.py`'s own logic: every non-deep-
+  -sleep entity's `available` (and thus its state, `"unavailable"` when
+  false) is driven by one shared `RuntimeEntryData.available` flag per
+  config entry, so any of a device's own entities reporting a state other
+  than `"unavailable"` means that device is connected.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import re
 import shutil
 import httpx
 from pathlib import Path
@@ -162,7 +181,9 @@ async def _dash_ws_spawn_async(path: str, payload: dict, timeout: float, tail_li
 
 
 def _dash_ws_spawn(path: str, payload: dict, timeout: float = 120, tail_lines: int = 200) -> dict:
-    coro_factory = lambda: _dash_ws_spawn_async(path, payload, timeout, tail_lines)
+    def coro_factory():
+        return _dash_ws_spawn_async(path, payload, timeout, tail_lines)
+
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -257,7 +278,9 @@ async def _dash_ws_command_async(command: str, args: dict, timeout: float, tail_
 
 
 def _dash_ws_command(command: str, args: dict, timeout: float = 60, tail_lines: int = 200) -> dict:
-    coro_factory = lambda: _dash_ws_command_async(command, args, timeout, tail_lines)
+    def coro_factory():
+        return _dash_ws_command_async(command, args, timeout, tail_lines)
+
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -320,6 +343,64 @@ def _esphome_slug_candidates() -> list[str]:
     return list(_ESPHOME_SLUGS)
 
 
+def _dashboard_unreachable_diagnosis() -> dict:
+    """Diagnose an unreachable ESPHome dashboard from the Supervisor add-on's own info.
+
+    `GET /addons/<slug>/info` (developers.home-assistant.io/docs/api/
+    supervisor/endpoints, confirmed 2026-09-27) exposes `network` — a dict of
+    published `"<container_port>/<proto>": <host_port>` mappings, empty when
+    nothing is published — and `ingress` (bool). Nexus never uses Supervisor
+    ingress (a session isn't scoped to one add-on; rejected by Panel
+    Security), so a dashboard only reachable through ingress is, from here,
+    indistinguishable from one not reachable at all — the fix is the same
+    either way: publish port 6052 on the add-on's own network settings.
+    """
+    candidates = _esphome_slug_candidates()
+    for slug in candidates:
+        result = _sup_json("GET", f"/addons/{slug}/info")
+        if "error" in result:
+            continue
+        data = result.get("data", {})
+        network = data.get("network") or {}
+        port_mapped = any(str(k).startswith("6052") for k in network)
+        ingress_only = bool(data.get("ingress")) and not port_mapped
+        if port_mapped:
+            advice = (
+                f"Port 6052 is mapped for add-on '{slug}' but still unreachable at "
+                f"{_DASH_URL} — check that ESPHOME_DASHBOARD_URL matches the mapped "
+                "host port and that network routing/firewall allows it."
+            )
+        else:
+            advice = (
+                f"Add-on '{slug}' does not publish port 6052 on its own network"
+                + (" (ingress-only)" if ingress_only else "")
+                + f"; nexus connects at ESPHOME_DASHBOARD_URL ({_DASH_URL}), not "
+                "through Supervisor ingress. To fix: in the ESPHome add-on's "
+                "settings, map host port 6052 under 'Network' with authentication "
+                "enabled (do not disable it via 'leave_front_door_open')."
+            )
+        return {
+            "slug": slug,
+            "port_6052_mapped": port_mapped,
+            "ingress_only": ingress_only,
+            "dashboard_url": _DASH_URL,
+            "advice": advice,
+        }
+    return {
+        "error": "Could not reach Supervisor to diagnose the add-on (SUPERVISOR_TOKEN unset, or /addons unreachable).",
+        "dashboard_url": _DASH_URL,
+        "tried_slugs": candidates,
+    }
+
+
+def _attach_dashboard_diagnosis(result: dict) -> dict:
+    """Add a Supervisor-based `diagnosis` to a dashboard-call result that failed to connect."""
+    err = result.get("error")
+    if isinstance(err, str) and err.startswith("Cannot connect to ESPHome dashboard"):
+        return {**result, "diagnosis": _dashboard_unreachable_diagnosis()}
+    return result
+
+
 def _safe_filename(name: str) -> str:
     """Validate a user-supplied ESPHome device name and return its `<name>.yaml` filename.
 
@@ -362,70 +443,115 @@ def _yaml_names() -> list[str]:
 
 # ── tools ─────────────────────────────────────────────────────────────────────
 
+_ESPHOME_MANUFACTURERS = {"espressif", "esphome"}
+
+
+def _esphome_config_entry_ids() -> set[str]:
+    """Every HA config-entry ID belonging to the `esphome` integration, or empty on error."""
+    ids: set[str] = set()
+    try:
+        for entry in ha._ws_call("config_entries/get", domain="esphome"):
+            ids.add(entry.get("entry_id", ""))
+    except Exception:
+        pass
+    return ids
+
+
+def _is_esphome_device(d: dict, entry_ids: set[str]) -> bool:
+    """True if device-registry entry `d` belongs to the ESPHome integration.
+
+    Three independent strategies, any one of which is enough: a config entry
+    in `entry_ids`, an `identifiers` tuple whose domain is `"esphome"`, or
+    (fallback) a `manufacturer` of Espressif/esphome.
+    """
+    by_entry = bool(entry_ids and set(d.get("config_entries", [])) & entry_ids)
+    ids = d.get("identifiers", [])
+    by_id = any(
+        isinstance(i, (list, tuple)) and len(i) >= 1 and str(i[0]) == "esphome"
+        for i in ids
+    )
+    by_mfr = str(d.get("manufacturer") or "").lower() in _ESPHOME_MANUFACTURERS
+    return by_entry or by_id or by_mfr
+
+
+def _device_connected(device_entities: list[dict], states: dict[str, dict]) -> bool | None:
+    """Whether a device is connected, from its own entities' states.
+
+    Per `homeassistant/components/esphome/entity.py`, every non-deep-sleep
+    entity's `available` — and thus its state, `"unavailable"` when false —
+    tracks one shared per-config-entry flag, so any entity reporting a state
+    other than `"unavailable"` means the device is connected. Returns `None`
+    (unknown) when the device has no known entities or none of them have a
+    recorded state.
+    """
+    saw_a_state = False
+    for e in device_entities:
+        s = states.get(e.get("entity_id", ""))
+        if s is None:
+            continue
+        saw_a_state = True
+        if s.get("state") != "unavailable":
+            return True
+    return False if saw_a_state else None
+
+
 @mcp.tool(annotations=read("List ESPHome devices"))
 def list_devices() -> dict:
     """List ESPHome devices from YAML configs, the HA device registry and online status.
 
     Combines `<name>.yaml` files under `/config/esphome/` with matching HA
     device-registry entries (identified via ESPHome config entries,
-    `identifiers` domain, or manufacturer as a fallback) and each device's
-    `binary_sensor.*_api_connection_status` state.
+    `identifiers` domain, or manufacturer as a fallback). A device's
+    connected status comes from its own entities' states (entity registry
+    `device_id` match): any entity in a state other than `"unavailable"`
+    means connected, since ESPHome entities share one per-config-entry
+    availability flag (`homeassistant/components/esphome/entity.py`) —
+    not from a `binary_sensor.*_api_connection_status` entity, which is not
+    guaranteed to exist.
 
     Use when: getting an overview of every ESPHome device, whether or not it
     currently has a matching HA device.
     Not for: one device's entities — use `esphome_get_device_entities`.
     Returns: `{"yaml_configs": [...], "ha_devices": [...], "online": <int>,
-    "offline": <int>}`.
+    "offline": <int>}`, where each `ha_devices` entry's `connected` is `True`,
+    `False`, or `None` (no known entities/states yet).
     Errors: `ha_devices` becomes `[{"error": str(e)}]` if reading the HA
-    device registry raises; connection-status lookups are silently skipped
-    on error instead of failing the whole call.
+    device registry raises; entity-registry/config-entry/state lookups are
+    silently skipped (treated as empty) on error instead of failing the
+    whole call.
     """
     configs = _yaml_names()
+    entry_ids = _esphome_config_entry_ids()
 
-    # Connection status from HA entity states
-    connected: dict[str, bool] = {}
+    entities_by_device: dict[str, list[dict]] = {}
     try:
-        for s in ha.get_states():
-            eid = s.get("entity_id", "")
-            if "api_connection_status" in eid:
-                slug = eid.replace("binary_sensor.", "").replace("_api_connection_status", "")
-                connected[slug] = s.get("state") == "on"
+        for e in ha.get_entity_registry():
+            device_id = e.get("device_id")
+            if device_id:
+                entities_by_device.setdefault(device_id, []).append(e)
     except Exception:
         pass
 
-    # ESPHome config entry IDs — reliable way to identify ESPHome devices
-    # regardless of how identifiers are serialised in this HA version
-    esphome_entry_ids: set[str] = set()
+    states: dict[str, dict] = {}
     try:
-        for entry in ha._ws_call("config_entries/get", domain="esphome"):
-            esphome_entry_ids.add(entry.get("entry_id", ""))
+        states = {s["entity_id"]: s for s in ha.get_states()}
     except Exception:
         pass
 
-    _ESPHOME_MANUFACTURERS = {"espressif", "esphome"}
-
-    # ESPHome devices from HA device registry
     ha_devices: list[dict] = []
+    online = offline = 0
     try:
         for d in ha.get_device_registry():
-            # Strategy 1: any config entry belongs to ESPHome integration
-            by_entry = bool(esphome_entry_ids and
-                set(d.get("config_entries", [])) & esphome_entry_ids)
-            # Strategy 2: identifiers domain == "esphome"
-            ids = d.get("identifiers", [])
-            by_id = any(
-                isinstance(i, (list, tuple)) and len(i) >= 1 and str(i[0]) == "esphome"
-                for i in ids
-            )
-            # Strategy 3: manufacturer is Espressif / esphome (fallback)
-            by_mfr = str(d.get("manufacturer") or "").lower() in _ESPHOME_MANUFACTURERS
-
-            if not (by_entry or by_id or by_mfr):
+            if not _is_esphome_device(d, entry_ids):
                 continue
 
-            # Derive slug for connection-status lookup
-            name = (d.get("name_by_user") or d.get("name") or "").lower()
-            slug = name.replace(" ", "_").replace("-", "_")
+            device_id = d.get("id")
+            connected = _device_connected(entities_by_device.get(device_id, []), states)
+            if connected is True:
+                online += 1
+            elif connected is False:
+                offline += 1
+
             ha_devices.append({
                 "name": d.get("name_by_user") or d.get("name"),
                 "manufacturer": d.get("manufacturer"),
@@ -433,8 +559,8 @@ def list_devices() -> dict:
                 "sw_version": d.get("sw_version"),
                 "hw_version": d.get("hw_version"),
                 "area_id": d.get("area_id"),
-                "connected": connected.get(slug),
-                "ha_device_id": d.get("id"),
+                "connected": connected,
+                "ha_device_id": device_id,
             })
     except Exception as e:
         ha_devices = [{"error": str(e)}]
@@ -442,8 +568,8 @@ def list_devices() -> dict:
     return {
         "yaml_configs": configs,
         "ha_devices": ha_devices,
-        "online": sum(1 for v in connected.values() if v),
-        "offline": sum(1 for v in connected.values() if not v),
+        "online": online,
+        "offline": offline,
     }
 
 
@@ -533,11 +659,14 @@ def write_config(
 
     for _tag in ("!secret", "!include", "!lambda", "!extend", "!remove"):
         _ESPHomeLoader.add_constructor(
-            _tag, lambda l, n, t=_tag: _tag_passthrough(l, t, n)
+            _tag, lambda loader, node, t=_tag: _tag_passthrough(loader, t, node)
         )
 
     try:
-        yaml.load(content, Loader=_ESPHomeLoader)
+        # _ESPHomeLoader subclasses yaml.SafeLoader (not yaml.Loader/UnsafeLoader) and
+        # only adds passthrough constructors for scalar ESPHome tags -- it cannot
+        # construct arbitrary Python objects, so this is not the S506 vulnerability.
+        yaml.load(content, Loader=_ESPHomeLoader)  # noqa: S506
     except yaml.YAMLError as e:
         return {"success": False, "error": f"YAML validation failed: {e}"}
 
@@ -565,9 +694,12 @@ def get_device_entities(
 ) -> list[dict]:
     """Get every HA entity belonging to one ESPHome device.
 
-    Slugifies `device_name` (lowercase, spaces/dashes to underscores) and
-    matches it against entity registry entries whose `platform` is
-    "esphome" and whose `entity_id` contains that slug.
+    Slugifies `device_name` (lowercase, spaces/dashes to underscores) and, if
+    a device-registry entry's own slugified name matches, matches entities by
+    that device's `device_id` (precise: immune to one device's slug being a
+    substring of another's). Falls back to matching entity registry entries
+    whose `platform` is "esphome" and whose `entity_id` contains the slug
+    when no device-registry entry matches (or that lookup fails).
 
     Use when: inspecting a specific device's exposed entities and their
     current state.
@@ -584,10 +716,29 @@ def get_device_entities(
         return [{"error": str(e)}]
 
     slug = device_name.lower().replace("-", "_").replace(" ", "_")
+
+    device_id = None
+    try:
+        entry_ids = _esphome_config_entry_ids()
+        for d in ha.get_device_registry():
+            if not _is_esphome_device(d, entry_ids):
+                continue
+            dname = (d.get("name_by_user") or d.get("name") or "").lower()
+            dslug = dname.replace("-", "_").replace(" ", "_")
+            if dslug == slug:
+                device_id = d.get("id")
+                break
+    except Exception:
+        device_id = None
+
     result = []
     for e in entity_reg:
         eid = e.get("entity_id", "")
-        if e.get("platform") == "esphome" and slug in eid.lower():
+        if device_id is not None:
+            matched = e.get("device_id") == device_id
+        else:
+            matched = e.get("platform") == "esphome" and slug in eid.lower()
+        if matched:
             s = states.get(eid, {})
             result.append({
                 "entity_id": eid,
@@ -643,7 +794,9 @@ def compile_device(
     Errors: `{"device": ..., "action": "compile", "error": "Invalid device
     name: ..."}` for a path-escaping `name`; `{"error": "timeout", ...}`
     when `timeout` elapses; `{"error": "Cannot connect to ESPHome dashboard
-    at ...: ..."}` when unreachable.
+    at ...: ..., "diagnosis": {...}}` when unreachable — `diagnosis` comes
+    from the Supervisor add-on's own info (port-6052/ingress mapping and
+    what to change), see `esphome_ping_dashboard`.
     Limits: blocks for up to `timeout` seconds; `log_lines` truncates the
     returned log.
     """
@@ -654,7 +807,7 @@ def compile_device(
     payload = {"configuration": filename}
     if only_generate:
         payload["only_generate"] = True
-    result = _dash_ws_spawn("/compile", payload, timeout=timeout, tail_lines=log_lines)
+    result = _attach_dashboard_diagnosis(_dash_ws_spawn("/compile", payload, timeout=timeout, tail_lines=log_lines))
     return {"device": name, "action": "compile", **result}
 
 
@@ -695,16 +848,16 @@ def validate_config(
     name: ..."}` for a path-escaping `name`; `{"error": "timeout", ...}`
     when `timeout` elapses; `{"error": "Dashboard requires
     authentication..."}` when unsupported credentials are needed;
-    `{"error": "Cannot connect to ESPHome dashboard at ...: ..."}` when
-    unreachable. Not yet exercised against a live add-on — treat a failure
-    as a signal to check `esphome_get_addon_logs`/`esphome_ping_dashboard`
-    first.
+    `{"error": "Cannot connect to ESPHome dashboard at ...: ...",
+    "diagnosis": {...}}` when unreachable — see `esphome_ping_dashboard`.
     """
     try:
         filename = _safe_filename(name)
     except ValueError as e:
         return {"device": name, "action": "validate", "error": str(e)}
-    result = _dash_ws_command("devices/validate", {"configuration": filename}, timeout=timeout, tail_lines=log_lines)
+    result = _attach_dashboard_diagnosis(
+        _dash_ws_command("devices/validate", {"configuration": filename}, timeout=timeout, tail_lines=log_lines)
+    )
     return {"device": name, "action": "validate", **result}
 
 
@@ -752,7 +905,8 @@ def upload_device(
     Errors: `{"device": ..., "action": "upload", "error": "Invalid device
     name: ..."}` for a path-escaping `name`; `{"error": "timeout", ...}`
     when `timeout` elapses; `{"error": "Cannot connect to ESPHome dashboard
-    at ...: ..."}` when unreachable.
+    at ...: ..., "diagnosis": {...}}` when unreachable — `diagnosis` comes
+    from the Supervisor add-on's own info, see `esphome_ping_dashboard`.
     Limits: blocks for up to `timeout` seconds; overwrites the device's
     firmware with no built-in rollback if the upload succeeds but the new
     firmware is broken.
@@ -762,8 +916,59 @@ def upload_device(
     except ValueError as e:
         return {"device": name, "action": "upload", "error": str(e)}
     payload = {"configuration": filename, "port": port}
-    result = _dash_ws_spawn("/upload", payload, timeout=timeout, tail_lines=log_lines)
+    result = _attach_dashboard_diagnosis(_dash_ws_spawn("/upload", payload, timeout=timeout, tail_lines=log_lines))
     return {"device": name, "action": "upload", **result}
+
+
+_SUB_BRACE_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_SUB_BARE_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
+
+# Window for the wildcard-subscribe fallback in `clean_mqtt`: ESPHome/HA send
+# retained discovery messages immediately on subscribe, so a few seconds is
+# enough; bounded further by the tool's own `timeout` argument.
+_MQTT_DISCOVERY_WINDOW = 3.0
+
+
+def _apply_substitutions(value: str, substitutions: dict) -> str:
+    """Resolve ESPHome `${key}`/`$key` substitution syntax against `substitutions`.
+
+    Two passes, matching ESPHome's own compound-substitution behaviour
+    (esphome.io/components/substitutions: "two substitution passes are
+    performed allowing compound replacements") — a substitution whose value
+    itself contains another substitution still resolves. A token with no
+    matching key in `substitutions` is left as-is; callers detect that by
+    re-scanning the result with the same patterns.
+    """
+    def _sub(m: re.Match) -> str:
+        v = substitutions.get(m.group(1))
+        return str(v) if v is not None else m.group(0)
+
+    for _ in range(2):
+        value = _SUB_BRACE_RE.sub(_sub, value)
+        value = _SUB_BARE_RE.sub(_sub, value)
+    return value
+
+
+def _resolve_scalar(value, substitutions: dict) -> tuple[str | None, str | None]:
+    """Resolve one YAML scalar that may use ESPHome substitutions or carry an HA `!tag`.
+
+    Returns `(resolved, error)` — exactly one is not `None`. A value
+    NUL-encoded by `_lvgl_load` (i.e. it was `!secret`/`!include`/`!lambda`/
+    etc. in the YAML) can't be resolved outside ESPHome itself; a
+    substitution with no matching `substitutions:` key is likewise left
+    unresolved. Both are reported as errors rather than used as literal text.
+    """
+    if value is None:
+        return None, "value is not set"
+    if not isinstance(value, str):
+        return str(value), None
+    if value.startswith("\x00!"):
+        tag = value.split("\x00", 2)[1]
+        return None, f"uses a {tag} tag, which cannot be resolved outside ESPHome itself"
+    resolved = _apply_substitutions(value, substitutions)
+    if _SUB_BRACE_RE.search(resolved) or _SUB_BARE_RE.search(resolved):
+        return None, f"unresolved substitution in {value!r} (not defined in this config's substitutions:)"
+    return resolved, None
 
 
 @mcp.tool(annotations=destructive("Clean stale MQTT discovery entries", idempotent=True))
@@ -774,46 +979,151 @@ def clean_mqtt(
     ],
     timeout: Annotated[
         float,
-        Field(description="Maximum seconds to wait for the operation to finish, e.g. 60."),
+        Field(
+            description=(
+                "Maximum seconds to spend collecting retained MQTT discovery "
+                "topics via a wildcard subscribe, e.g. 60. Only used when no "
+                "matching HA device is found for this config's node name."
+            )
+        ),
     ] = 60,
     log_lines: Annotated[
         int,
-        Field(description="Number of trailing log lines to return, e.g. 200."),
+        Field(
+            description=(
+                "Unused by this tool's HA-mqtt-integration implementation "
+                "(kept only for API/parameter-surface compatibility with "
+                "earlier versions that spawned a dashboard process and "
+                "returned trailing log lines), e.g. 200."
+            )
+        ),
     ] = 200,
 ) -> dict:
-    """Remove stale MQTT discovery entries for an ESPHome device (MQTT mode only).
+    """Remove stale MQTT discovery entries for an ESPHome device, through HA's own MQTT integration.
 
-    WARNING: unverified / likely broken against the currently installed
-    add-on. This calls the old dashboard's `/clean-mqtt` WebSocket spawn
-    endpoint, which does not exist in Device Builder's `api/legacy.py`
-    (github.com/esphome/device-builder, read on GitHub 2026-09-27 — it
-    keeps only six HA-compat routes, none of them `/clean-mqtt`). Its
-    docs/API.md `/ws` command list has no equivalent either — the closest,
-    `firmware/clean`, clears build artifacts, not MQTT topics. Verified
-    compatible only with the legacy ESPHome pip dashboard (esphome
-    <= 2026.5.0).
+    Skips with zero network calls when the config has no `mqtt:` section.
+    Otherwise resolves the node name (`esphome.name`, with `substitutions:`)
+    and `mqtt.discovery_prefix` (default `"homeassistant"`). With a matching
+    HA device, reads topics via WS `mqtt/device/debug_info`; otherwise
+    briefly `mqtt/subscribe`s to `{prefix}/+/{node_name}/#` and collects
+    retained topics. Clears each topic via the `mqtt.publish` service,
+    `payload=""` and `retain=True` -- MQTT's own way to delete a retained
+    message. Never touches the ESPHome dashboard, which has no
+    MQTT-topic-clearing command.
 
-    Use when: a local MQTT broker still shows discovery entries for a
-    device that was removed or renamed, and the installed dashboard still
-    serves the legacy `/clean-mqtt` route.
-    Not for: the currently documented "ESPHome Device Builder" add-on —
-    expect this to fail there (connection/timeout/404-style error) until an
-    equivalent command is found or ESPHome restores one; check
-    `esphome_get_addon_logs` after a failure.
-    Returns: `{"device": ..., "action": "clean_mqtt", "exit_code": <int>,
-    "success": <bool>, "log_tail": [...], "log_lines": <int>}` on
-    completion.
-    Errors: `{"device": ..., "action": "clean_mqtt", "error": "Invalid
-    device name: ..."}` for a path-escaping `name`; `{"error": "timeout",
-    ...}` when `timeout` elapses; `{"error": "Cannot connect to ESPHome
-    dashboard at ...: ..."}` when unreachable.
+    Use when: a removed/renamed device's old MQTT discovery entries still
+    linger in Home Assistant.
+    Not for: a config with no `mqtt:` section; firmware artifacts -- use
+    `esphome_compile_device`.
+    Returns: `{"device", "action": "clean_mqtt", "skipped": True, "reason":
+    ...}` with no `mqtt:` section; otherwise `{"success": <bool>, "method":
+    "debug_info"|"wildcard_subscribe", "topics_cleared": [...], "count":
+    <int>}`, plus `"errors": [...]` on partial failures.
+    Errors: `{"error": "..."}` for an invalid/missing device file, an
+    unresolvable `esphome.name`/`mqtt.discovery_prefix`, or a WebSocket/
+    service-call failure.
+    Limits: the wildcard fallback only collects for `min(timeout, 3)`
+    seconds -- may miss a slow message or catch an unrelated topic.
     """
+    parsed, err = _lvgl_load(name)
+    if err:
+        return {"device": name, "action": "clean_mqtt", "error": err}
+
+    mqtt_cfg = parsed.get("mqtt") if parsed else None
+    if not isinstance(mqtt_cfg, dict):
+        return {
+            "device": name,
+            "action": "clean_mqtt",
+            "skipped": True,
+            "reason": "No mqtt: section in config — this device does not use MQTT discovery.",
+        }
+
+    substitutions = parsed.get("substitutions")
+    if not isinstance(substitutions, dict):
+        substitutions = {}
+
+    esphome_cfg = parsed.get("esphome")
+    node_name_raw = esphome_cfg.get("name") if isinstance(esphome_cfg, dict) else None
+    if node_name_raw is None:
+        return {
+            "device": name, "action": "clean_mqtt",
+            "error": "No esphome.name in config — cannot determine the MQTT node name.",
+        }
+    node_name, node_err = _resolve_scalar(node_name_raw, substitutions)
+    if node_err:
+        return {"device": name, "action": "clean_mqtt", "error": f"Cannot resolve esphome.name: {node_err}"}
+
+    prefix_raw = mqtt_cfg.get("discovery_prefix")
+    if prefix_raw is None:
+        discovery_prefix = "homeassistant"
+    else:
+        discovery_prefix, prefix_err = _resolve_scalar(prefix_raw, substitutions)
+        if prefix_err:
+            return {
+                "device": name, "action": "clean_mqtt",
+                "error": f"Cannot resolve mqtt.discovery_prefix: {prefix_err}",
+            }
+
+    device_id = None
     try:
-        filename = _safe_filename(name)
-    except ValueError as e:
+        entry_ids = _esphome_config_entry_ids()
+        node_slug = node_name.lower().replace("-", "_").replace(" ", "_")
+        for d in ha.get_device_registry():
+            if not _is_esphome_device(d, entry_ids):
+                continue
+            dslug = (d.get("name_by_user") or d.get("name") or "").lower().replace("-", "_").replace(" ", "_")
+            if dslug == node_slug:
+                device_id = d.get("id")
+                break
+    except Exception:
+        device_id = None
+
+    topics: set[str] = set()
+    try:
+        if device_id is not None:
+            method = "debug_info"
+            info = ha._ws_call("mqtt/device/debug_info", device_id=device_id) or {}
+            for entity in info.get("entities", []) or []:
+                topic = (entity.get("discovery_data") or {}).get("topic")
+                if topic:
+                    topics.add(topic)
+            for trigger in info.get("triggers", []) or []:
+                topic = (trigger.get("discovery_data") or {}).get("topic")
+                if topic:
+                    topics.add(topic)
+        else:
+            method = "wildcard_subscribe"
+            wildcard = f"{discovery_prefix}/+/{node_name}/#"
+            window = min(_MQTT_DISCOVERY_WINDOW, timeout)
+            events = ha._ws_collect_events(
+                "mqtt/subscribe", is_last=lambda e: False, timeout=window, topic=wildcard,
+            )
+            for event in events:
+                if event.get("retain") and event.get("topic"):
+                    topics.add(event["topic"])
+    except Exception as e:
         return {"device": name, "action": "clean_mqtt", "error": str(e)}
-    result = _dash_ws_spawn("/clean-mqtt", {"configuration": filename}, timeout=timeout, tail_lines=log_lines)
-    return {"device": name, "action": "clean_mqtt", **result}
+
+    cleared: list[str] = []
+    publish_errors: list[str] = []
+    for topic in sorted(topics):
+        try:
+            ha.call_service("mqtt", "publish", {"topic": topic, "payload": "", "retain": True})
+            cleared.append(topic)
+        except Exception as e:
+            publish_errors.append(f"{topic}: {e}")
+
+    result = {
+        "device": name,
+        "action": "clean_mqtt",
+        "success": not publish_errors,
+        "method": method,
+        "topics_cleared": cleared,
+        "count": len(cleared),
+    }
+    if publish_errors:
+        result["errors"] = publish_errors
+    return result
 
 
 @mcp.tool(annotations=read("Get ESPHome add-on status"))
@@ -904,10 +1214,22 @@ def ping_dashboard() -> dict:
     Use when: diagnosing a connection failure from
     `esphome_compile_device`/`esphome_validate_config`/`esphome_upload_device`.
     Not for: add-on version/update status — use `esphome_get_addon_info`.
-    Returns: `{"url": ..., "reachable": <bool>, "result": {...}}`.
+    Returns: `{"url": ..., "reachable": <bool>, "result": {...}}`; when
+    `reachable` is `False`, also `"diagnosis": {"slug", "port_6052_mapped",
+    "ingress_only", "dashboard_url", "advice"}` built from the ESPHome
+    add-on's own `GET /addons/<slug>/info` — whether port 6052 is published
+    on its network settings versus only reachable through Supervisor
+    ingress (which nexus does not use), and what to change if not.
+    Errors: never raises; `result` (from `/ping`) and, when Supervisor
+    itself can't be reached, `diagnosis` instead hold a nested
+    `{"error": ...}` value rather than failing the call.
     """
     result = _dash("GET", "/ping", timeout=5)
-    return {"url": _DASH_URL, "reachable": "error" not in result, "result": result}
+    reachable = "error" not in result
+    out = {"url": _DASH_URL, "reachable": reachable, "result": result}
+    if not reachable:
+        out["diagnosis"] = _dashboard_unreachable_diagnosis()
+    return out
 
 
 # ── LVGL tools ────────────────────────────────────────────────────────────────
@@ -929,7 +1251,7 @@ def _lvgl_load(name: str) -> tuple[dict | None, str]:
         return f"\x00{tag}\x00{val}"
 
     for _t in ("!secret", "!include", "!lambda", "!extend", "!remove"):
-        _L.add_constructor(_t, lambda l, n, t=_t: _tag_ctor(l, t, n))
+        _L.add_constructor(_t, lambda loader, node, t=_t: _tag_ctor(loader, t, node))
 
     try:
         path = _device_path(name)
@@ -938,7 +1260,10 @@ def _lvgl_load(name: str) -> tuple[dict | None, str]:
     if not path.exists():
         return None, f"Not found: {path.name}"
     try:
-        parsed = yaml.load(path.read_text(encoding="utf-8"), Loader=_L)
+        # _L subclasses yaml.SafeLoader (not yaml.Loader/UnsafeLoader) and only adds
+        # passthrough constructors for scalar ESPHome tags -- it cannot construct
+        # arbitrary Python objects, so this is not the S506 vulnerability.
+        parsed = yaml.load(path.read_text(encoding="utf-8"), Loader=_L)  # noqa: S506
         return parsed, ""
     except yaml.YAMLError as e:
         return None, f"YAML parse error: {e}"
@@ -1210,7 +1535,7 @@ def lvgl_validate(
         for widget in page.get("widgets", []):
             if not isinstance(widget, dict):
                 continue
-            for _, props in widget.items():
+            for props in widget.values():
                 if isinstance(props, dict):
                     wid = props.get("id")
                     if wid:
