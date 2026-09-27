@@ -53,21 +53,12 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      # build.yaml is the Supervisor's own source of truth for BUILD_FROM per
-      # architecture (see Dockerfile's `ARG BUILD_FROM`); reading it here instead
-      # of hardcoding the base image in this workflow means this job actually
-      # exercises the Dockerfile+build.yaml pair the Supervisor will use, not a
-      # CI-only substitute. Currently all 5 archs resolve to the same value,
-      # `python:3.12-alpine` (coordinator decision — see build.yaml/Dockerfile
-      # comments), but this step doesn't assume that: it reads whatever amd64 is
-      # actually configured to.
-      - name: Read amd64 BUILD_FROM from build.yaml
-        id: build_from
-        run: |
-          pip install --quiet pyyaml
-          value=$(python3 -c "import yaml; print(yaml.safe_load(open('build.yaml'))['build_from']['amd64'])")
-          echo "value=${value}" >> "$GITHUB_OUTPUT"
-
+      # No build.yaml / ARG BUILD_FROM in this repo (see Dockerfile header and
+      # tests/test_build_image_consistency.py — reverted in 0.22.1). The Dockerfile's
+      # FROM is a literal (`python:3.12-alpine`), so this job needs no build-arg to
+      # match what the real Supervisor does: passing one here that the real Supervisor
+      # doesn't (or vice versa) is exactly how the 0.22.0 regression went uncaught by
+      # this job while still breaking `update.install` on a live instance.
       - name: Build image (amd64, local docker load only — no push)
         uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
         with:
@@ -77,8 +68,6 @@ jobs:
           image-tags: |
             smoke
           version: ci-smoke
-          build-args: |
-            BUILD_FROM=${{ steps.build_from.outputs.value }}
           push: false
           load: true
           cosign: false

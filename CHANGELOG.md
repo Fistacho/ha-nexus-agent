@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.22.1
+
+Includes everything in 0.22.0 below — 0.22.0 was never installable under the real
+Supervisor (see Fixed) and should not be used; upgrade straight to 0.22.1.
+
+**Fixed**
+
+- **Add-on image failed to build under the Supervisor** (`update.install` /
+  `Error updating Nexus Agent: An unknown error occurred while trying to build the
+  image for app <slug>`). Root cause, confirmed against `home-assistant/supervisor`
+  tag `2026.09.2` (`supervisor/apps/validate.py`): a `build_from:` value must contain
+  a `namespace/repository` split (`RE_DOCKER_IMAGE_BUILD`) to pass Supervisor's own
+  schema — a bare official-image reference like `python:3.12-alpine` (no namespace,
+  even though `docker pull`/`FROM` accept it directly) fails that check. 0.22.0's new
+  `build.yaml` used exactly that bare form; Supervisor silently substituted its own
+  fallback (`ghcr.io/home-assistant/base:latest`, an image with no Python and no
+  `apk`) for every architecture instead of raising, and the resulting `docker build`
+  failed several layers away from anything visible in the add-on's own config.
+  Reverted to what every release through 0.21.0 shipped and verified working: the
+  Dockerfile's `FROM` is a literal `python:3.12-alpine` again (no `ARG BUILD_FROM`),
+  and `build.yaml` is removed — Supervisor's own `AppBuild.create()` already
+  recommends exactly that ("uses build.yaml which is deprecated. Move build
+  parameters into the Dockerfile directly"), and this add-on needs no
+  per-architecture build difference in the first place. `tests/test_build_image_consistency.py`
+  now guards both the literal `FROM` and the absence of `build.yaml`, and reproduces
+  the Supervisor regex directly so a future bare-image regression fails locally
+  instead of only on a live instance. The CI build-smoke job no longer feeds a
+  `--build-arg BUILD_FROM=...` the real Supervisor never receives, which is why it
+  had passed despite this regression.
+
 ## 0.22.0
 
 **Added**

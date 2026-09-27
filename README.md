@@ -27,6 +27,15 @@ Once connected, just talk to your AI assistant:
 
 ---
 
+## What's New in v0.22.1
+
+Includes everything from 0.22.0 below — 0.22.0 could not be built by the real Home
+Assistant Supervisor (a `build.yaml` regression) and should not be used; install
+0.22.1 directly. **Fixed:** the add-on image failed to build under the Supervisor
+(`update.install` error) — reverted to a literal `FROM python:3.12-alpine` in the
+Dockerfile (no `ARG BUILD_FROM`) and removed `build.yaml`, matching every release
+through 0.21.0. Full details in [CHANGELOG.md](CHANGELOG.md#0221).
+
 ## What's New in v0.22.0
 
 - **`read_only` and `disabled_namespaces` add-on options** — a serverside policy that hides

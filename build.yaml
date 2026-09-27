@@ -1,6 +1,0 @@
-build_from:
-  aarch64: "python:3.12-alpine"
-  amd64: "python:3.12-alpine"
-  armhf: "python:3.12-alpine"
-  armv7: "python:3.12-alpine"
-  i386: "python:3.12-alpine"
