@@ -13,12 +13,20 @@ Security panel review (2026-09-27, second pass):
   written under www/card_builder/ (served unauthenticated at /local/).
 * tools/files.py `list_config_files` — `subdirectory` boundary bypass.
 * tools/git_ops.py `git_rollback_file` — path boundary bypass (defense in depth).
+
+ADR-0004 S4 (2026-09-27, partition D): with `host_network: true`, a request
+from this add-on to loopback/link-local has the same peer identity as HA
+Core/Supervisor towards some ingress-fronted add-ons (e.g. the ESPHome
+Device Builder trusts `127.0.0.1` without authentication) — so
+`upload_image_from_url` must refuse to become an SSRF proxy into the host's
+own network, on the initial URL and on every redirect hop.
 """
 from __future__ import annotations
 
 import base64
-import urllib.request
+import socket
 
+import httpx
 import pytest
 
 import ha_client as ha
@@ -125,11 +133,24 @@ def test_upload_media_from_path_accepts_file_inside_www(tmp_path, monkeypatch):
 
 
 # --- F25 tools/card_builder.py: upload_image_from_url -----------------------
+#
+# ADR-0004 S4 SSRF guard: the download path now goes through httpx (manual
+# redirect handling + per-hop DNS validation), not urllib. `_FakeHttpxClient`
+# stands in for `httpx.Client()` the same way `FakeClient` does in
+# `tests/test_audit_discover_esphome_blueprints.py` — a context manager
+# recording every `.stream()` call and replaying queued responses in order.
 
-class _FakeURLResponse:
-    def __init__(self, content: bytes, content_type: str):
-        self._content = content
-        self.headers = {"Content-Type": content_type}
+
+class _FakeStreamResponse:
+    """Stand-in for the `httpx.Response` yielded by `Client.stream(...)`."""
+
+    def __init__(self, status_code: int, headers: dict, chunks: list[bytes]):
+        self.status_code = status_code
+        # Real httpx.Response headers are case-insensitive (e.g. `Location`
+        # must be readable via `.get("location")`) — mirror that here so the
+        # fake doesn't mask a lookup bug the real thing would tolerate.
+        self.headers = httpx.Headers(headers)
+        self._chunks = list(chunks)
 
     def __enter__(self):
         return self
@@ -137,17 +158,69 @@ class _FakeURLResponse:
     def __exit__(self, *exc):
         return False
 
-    def read(self, n: int = -1) -> bytes:
-        if n is None or n < 0:
-            return self._content
-        return self._content[:n]
+    def iter_bytes(self):
+        yield from self._chunks
+
+
+class _FakeHttpxClient:
+    """Stand-in for `httpx.Client()` — records every `.stream()` call
+    (method, resolved URL, headers, extensions) and returns the queued
+    `_FakeStreamResponse`s in order, one per call.
+    """
+
+    def __init__(self, responses: list[_FakeStreamResponse]):
+        self._responses = list(responses)
+        self.calls: list[dict] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def stream(self, method, url, *, headers=None, extensions=None, follow_redirects=False):
+        assert follow_redirects is False, "redirects must be handled manually so each hop is re-validated"
+        self.calls.append({
+            "method": method,
+            "url": str(url),
+            "headers": dict(headers or {}),
+            "extensions": extensions,
+        })
+        if not self._responses:
+            raise AssertionError("no more fake responses queued — unexpected extra request")
+        return self._responses.pop(0)
+
+
+def _install_fake_client(monkeypatch, responses: list[_FakeStreamResponse]) -> _FakeHttpxClient:
+    fake_client = _FakeHttpxClient(responses)
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: fake_client)
+    return fake_client
+
+
+def _no_http_client(*_a, **_k):
+    raise AssertionError("must not open any HTTP connection for a rejected target")
+
+
+def _fake_getaddrinfo(mapping: dict[str, str]):
+    """`socket.getaddrinfo` stand-in for hostnames that need a mocked public
+    IP (no real DNS lookup in tests). IP literals and 'localhost' resolve
+    for real — `getaddrinfo` on those is local-only, no network involved,
+    so using the real resolver there is the more faithful test.
+    """
+
+    def fake(host, *args, **kwargs):
+        if host not in mapping:
+            raise AssertionError(f"unexpected getaddrinfo({host!r}) — add it to the test's mapping")
+        ip = mapping[host]
+        family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+        sockaddr = (ip, 0, 0, 0) if family == socket.AF_INET6 else (ip, 0)
+        return [(family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", sockaddr)]
+
+    return fake
 
 
 def test_upload_image_from_url_rejects_non_http_scheme(monkeypatch):
-    def explode(*a, **k):
-        raise AssertionError("must not open a non-http(s) URL")
-
-    monkeypatch.setattr(urllib.request, "urlopen", explode)
+    monkeypatch.setattr(httpx, "Client", _no_http_client)
     monkeypatch.setattr(ha, "_ws_call", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not upload")))
 
     result = _unwrap(card_builder.upload_image_from_url)("file:///etc/passwd")
@@ -155,16 +228,117 @@ def test_upload_image_from_url_rejects_non_http_scheme(monkeypatch):
     assert result["error"] == "scheme_not_allowed"
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/x",
+        "http://localhost/x",
+        "http://[::1]/x",
+        "http://[::ffff:127.0.0.1]/x",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://0.0.0.0/x",
+    ],
+    ids=["ipv4-loopback", "localhost", "ipv6-loopback", "ipv4-mapped-ipv6-loopback", "link-local", "unspecified"],
+)
+def test_upload_image_from_url_rejects_internal_targets(url, monkeypatch):
+    """127.0.0.1, localhost, ::1, ::ffff:127.0.0.1, 169.254.x and 0.0.0.0 must
+    all be refused before any HTTP connection is attempted — this add-on's
+    own loopback is a trusted peer for other ingress-fronted add-ons under
+    `host_network: true` (ADR-0004 S4).
+    """
+    monkeypatch.setattr(httpx, "Client", _no_http_client)
+    monkeypatch.setattr(ha, "_ws_call", _explode)
+
+    result = _unwrap(card_builder.upload_image_from_url)(url)
+
+    assert result["error"] == "target_not_allowed"
+
+
+def test_upload_image_from_url_rejects_redirect_to_loopback(monkeypatch):
+    """A public-looking URL that redirects to an internal address must be
+    refused, and the internal target must never actually be connected to.
+    """
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        _fake_getaddrinfo({"public.example": "93.184.216.34", "127.0.0.1": "127.0.0.1"}),
+    )
+    fake_client = _install_fake_client(
+        monkeypatch,
+        [_FakeStreamResponse(302, {"Location": "http://127.0.0.1/secret"}, [])],
+    )
+    monkeypatch.setattr(ha, "_ws_call", _explode)
+
+    result = _unwrap(card_builder.upload_image_from_url)("https://public.example/redirector")
+
+    assert result["error"] == "target_not_allowed"
+    # Exactly one request was made — to the public host. The internal
+    # redirect target was validated and rejected before a second connection
+    # was ever attempted.
+    assert len(fake_client.calls) == 1
+    assert "93.184.216.34" in fake_client.calls[0]["url"]
+
+
+def test_upload_image_from_url_allows_public_url(monkeypatch):
+    monkeypatch.setattr(
+        socket, "getaddrinfo", _fake_getaddrinfo({"example.com": "93.184.216.34"})
+    )
+    content = b"\x89PNG\r\n\x1a\nfake"
+    fake_client = _install_fake_client(
+        monkeypatch,
+        [_FakeStreamResponse(200, {"Content-Type": "image/png"}, [content])],
+    )
+
+    calls = {}
+
+    def fake_ws_call(msg_type, **kwargs):
+        calls["kwargs"] = kwargs
+        return {"reference": "cb-media://local/card_builder/photo.png"}
+
+    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+
+    result = _unwrap(card_builder.upload_image_from_url)("https://example.com/photo.png")
+
+    assert "error" not in result
+    assert calls["kwargs"]["filename"] == "photo.png"
+    assert fake_client.calls[0]["headers"]["Host"] == "example.com"
+    assert fake_client.calls[0]["extensions"] == {"sni_hostname": "example.com"}
+
+
+def test_upload_image_from_url_allows_lan_address(monkeypatch):
+    """RFC1918 LAN addresses stay allowed — users legitimately fetch images
+    from devices on their own network (a camera snapshot, a local NAS, ...).
+    """
+    content = b"\x89PNG\r\n\x1a\nfake"
+    fake_client = _install_fake_client(
+        monkeypatch,
+        [_FakeStreamResponse(200, {"Content-Type": "image/png"}, [content])],
+    )
+
+    calls = {}
+
+    def fake_ws_call(msg_type, **kwargs):
+        calls["kwargs"] = kwargs
+        return {"reference": "cb-media://local/card_builder/photo.png"}
+
+    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+
+    result = _unwrap(card_builder.upload_image_from_url)("http://192.168.1.50/photo.png")
+
+    assert "error" not in result
+    assert calls["kwargs"]["filename"] == "photo.png"
+    assert fake_client.calls[0]["url"].startswith("http://192.168.1.50")
+
+
 def test_upload_image_from_url_rejects_non_image_content_type(monkeypatch):
-    def fake_urlopen(req, timeout=30):
-        return _FakeURLResponse(b"<html>not an image</html>", "text/html")
-
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-
-    def explode(*a, **k):
-        raise AssertionError("must not upload a non-image response")
-
-    monkeypatch.setattr(ha, "_ws_call", explode)
+    monkeypatch.setattr(
+        socket, "getaddrinfo", _fake_getaddrinfo({"example.com": "93.184.216.34"})
+    )
+    _install_fake_client(
+        monkeypatch,
+        [_FakeStreamResponse(200, {"Content-Type": "text/html"}, [b"<html>not an image</html>"])],
+    )
+    monkeypatch.setattr(ha, "_ws_call", _explode)
 
     result = _unwrap(card_builder.upload_image_from_url)("https://example.com/looks-like-image")
 
@@ -172,17 +346,15 @@ def test_upload_image_from_url_rejects_non_image_content_type(monkeypatch):
 
 
 def test_upload_image_from_url_rejects_oversized_response(monkeypatch):
+    monkeypatch.setattr(
+        socket, "getaddrinfo", _fake_getaddrinfo({"example.com": "93.184.216.34"})
+    )
     oversized = b"x" * (card_builder._MAX_URL_IMAGE_BYTES + 1)
-
-    def fake_urlopen(req, timeout=30):
-        return _FakeURLResponse(oversized, "image/png")
-
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-
-    def explode(*a, **k):
-        raise AssertionError("must not upload an oversized response")
-
-    monkeypatch.setattr(ha, "_ws_call", explode)
+    _install_fake_client(
+        monkeypatch,
+        [_FakeStreamResponse(200, {"Content-Type": "image/png"}, [oversized])],
+    )
+    monkeypatch.setattr(ha, "_ws_call", _explode)
 
     result = _unwrap(card_builder.upload_image_from_url)("https://example.com/huge.png")
 
@@ -190,12 +362,14 @@ def test_upload_image_from_url_rejects_oversized_response(monkeypatch):
 
 
 def test_upload_image_from_url_accepts_valid_image(monkeypatch):
+    monkeypatch.setattr(
+        socket, "getaddrinfo", _fake_getaddrinfo({"example.com": "93.184.216.34"})
+    )
     content = b"\x89PNG\r\n\x1a\nfake"
-
-    def fake_urlopen(req, timeout=30):
-        return _FakeURLResponse(content, "image/png")
-
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    _install_fake_client(
+        monkeypatch,
+        [_FakeStreamResponse(200, {"Content-Type": "image/png"}, [content])],
+    )
 
     calls = {}
 
@@ -401,10 +575,13 @@ def test_upload_media_from_path_sanitizes_svg(tmp_path, monkeypatch):
 
 
 def test_upload_image_from_url_sanitizes_svg_response(monkeypatch):
-    def fake_urlopen(req, timeout=30):
-        return _FakeURLResponse(_SVG_WITH_SCRIPT.encode("utf-8"), "image/svg+xml")
-
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        socket, "getaddrinfo", _fake_getaddrinfo({"example.com": "93.184.216.34"})
+    )
+    _install_fake_client(
+        monkeypatch,
+        [_FakeStreamResponse(200, {"Content-Type": "image/svg+xml"}, [_SVG_WITH_SCRIPT.encode("utf-8")])],
+    )
 
     calls = {}
 

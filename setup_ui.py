@@ -18,6 +18,13 @@ _mcp = None
 # callers too.
 _policy: ToolPolicy = ToolPolicy()
 
+# Wired in by server.main() *after* addon_network.resolve_listen_plan() has
+# run (ADR-0004 D1b). `None` here means "nothing called set_listen_plan()" —
+# every test that builds the app via `server._build_app()` directly (i.e.
+# the whole of tests/test_audit_http_auth.py) falls back to `_PORT` below,
+# reproducing pre-0.23.0's single-LAN-socket-at-NEXUS_PORT behaviour exactly.
+_listen_plan = None
+
 
 def set_mcp(instance) -> None:
     global _mcp
@@ -27,6 +34,20 @@ def set_mcp(instance) -> None:
 def set_policy(policy: ToolPolicy) -> None:
     global _policy
     _policy = policy
+
+
+def set_listen_plan(plan) -> None:
+    global _listen_plan
+    _listen_plan = plan
+
+
+def _lan_port() -> int | None:
+    """The port a LAN-based MCP client should connect to, or `None` if the
+    add-on's Network settings leave nexus reachable only via ingress
+    (ADR-0004 D1b/S3)."""
+    if _listen_plan is not None:
+        return _listen_plan.lan_port
+    return _PORT
 
 
 async def _tool_count() -> int:
@@ -180,22 +201,23 @@ tool_mode: <code>""" + policy.tool_mode + """</code></p>
 """
 
 
-def _full_page_html(configs: dict, mcp_url_with_token: str, api_key: str, ha_url: str, tool_count: int, policy: ToolPolicy) -> str:
-    return """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Nexus</title>
-<style>""" + _PAGE_STYLE + """</style>
-</head>
-<body>
-<h1>Nexus <span class="badge">running</span></h1>
-<p class="sub">MCP server for Home Assistant &nbsp;&middot;&nbsp; """ + str(tool_count) + """ tools &nbsp;&middot;&nbsp; <a href="health">health check</a></p>
-""" + _policy_section_html(policy) + """
-<h2>API Key</h2>
-<div class="key">""" + api_key + """</div>
-<p>Stored in <code>/config/.nexus_api_key</code>. Prefer the <code>Authorization: Bearer</code> header over the URL query string below where your client supports it — query strings end up in access logs and shell history.</p>
+def _no_lan_mcp_section_html() -> str:
+    """Replaces the MCP URL + per-client-config sections when
+    `lan_port is None` (ADR-0004 D1b/S3: the operator disabled the port in
+    this add-on's Network settings). No client config below would work from
+    outside the host in that case, so none is shown — showing a config with
+    no working URL would only mislead."""
+    return """
+<h2>MCP URL</h2>
+<div class="warn">MCP is <strong>not exposed on the LAN</strong> — the port is disabled in this add-on's <strong>Network</strong> settings (Configuration tab, or Info tab &rarr; Network). Home Assistant ingress (this page) is the only way to reach Nexus right now. Re-enable a port there and restart the add-on to get a LAN-reachable MCP URL and ready-to-paste client configs here.</div>
+"""
 
+
+def _full_page_html(configs: dict | None, mcp_url_with_token: str | None, api_key: str, ha_url: str, tool_count: int, policy: ToolPolicy, lan_port: int | None) -> str:
+    if lan_port is None:
+        mcp_section = _no_lan_mcp_section_html()
+    else:
+        mcp_section = """
 <h2>MCP URL</h2>
 <div class="key" id="mcp-url">""" + mcp_url_with_token + """</div>
 <div class="deprecated">The <code>?token=</code> query string is supported for backward compatibility only and is logged in plaintext by the HTTP access log. Use the <code>Authorization: Bearer</code> header wherever the client below supports it.</div>
@@ -241,7 +263,23 @@ def _full_page_html(configs: dict, mcp_url_with_token: str, api_key: str, ha_url
 <h2>Windsurf</h2>
 <p>Paste into <code>~/.codeium/windsurf/mcp_config.json</code>:</p>
 <div class="code-wrap"><pre id="windsurf">""" + configs["windsurf"] + """</pre><button class="copy-btn" onclick="copyBlock('windsurf')">copy</button></div>
+"""
 
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Nexus</title>
+<style>""" + _PAGE_STYLE + """</style>
+</head>
+<body>
+<h1>Nexus <span class="badge">running</span></h1>
+<p class="sub">MCP server for Home Assistant &nbsp;&middot;&nbsp; """ + str(tool_count) + """ tools &nbsp;&middot;&nbsp; <a href="health">health check</a></p>
+""" + _policy_section_html(policy) + """
+<h2>API Key</h2>
+<div class="key">""" + api_key + """</div>
+<p>Stored in <code>/config/.nexus_api_key</code>. Prefer the <code>Authorization: Bearer</code> header over the URL query string below where your client supports it — query strings end up in access logs and shell history.</p>
+""" + mcp_section + """
 <h2>Home Assistant</h2>
 <p>Connected to: <code>""" + ha_url + """</code></p>
 <div class="warn">
@@ -259,17 +297,21 @@ async def setup_page(request: Request):
     if not can_access_ui(request):
         return HTMLResponse(_locked_page_html())
 
-    host_header = request.headers.get("host", f"homeassistant.local:{_PORT}")
+    lan_port = _lan_port()
+    host_header = request.headers.get("host", f"homeassistant.local:{lan_port or _PORT}")
     hostname = host_header.split(":")[0]
     ha_url = _ha_url()
     tool_count = await _tool_count()
 
-    mcp_url_bare = f"http://{hostname}:{_PORT}/mcp"
+    if lan_port is None:
+        return HTMLResponse(_full_page_html(None, None, API_KEY, ha_url, tool_count, _policy, lan_port=None))
+
+    mcp_url_bare = f"http://{hostname}:{lan_port}/mcp"
     mcp_url_with_token = f"{mcp_url_bare}?token={API_KEY}"
     cwd = os.getcwd().replace("\\", "/")
     configs = _build_configs(mcp_url_bare, mcp_url_with_token, API_KEY, ha_url, cwd)
 
-    return HTMLResponse(_full_page_html(configs, mcp_url_with_token, API_KEY, ha_url, tool_count, _policy))
+    return HTMLResponse(_full_page_html(configs, mcp_url_with_token, API_KEY, ha_url, tool_count, _policy, lan_port=lan_port))
 
 
 async def health():

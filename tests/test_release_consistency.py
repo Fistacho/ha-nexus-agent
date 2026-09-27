@@ -48,6 +48,26 @@ def _read_changelog_version(root: Path) -> str:
     return match.group(1)
 
 
+def check_host_network_enabled(root: Path) -> list[str]:
+    """`config.yaml`'s `host_network: true` is required by ADR-0004 D1 — nexus
+    reaches the ESPHome Device Builder add-on's trusted-peer site ingress at
+    `http://127.0.0.1:<ingress_port>` the same way HA Core itself does, which
+    only works if nexus's own container shares the host's network namespace.
+    Losing this flag (e.g. an unreviewed revert while chasing an unrelated
+    Network-tab/`ports:` regression — see `addon_network.py`'s module
+    docstring for the `GET /addons/self/info` reconstruction that flag makes
+    necessary) silently breaks every `supervisor_ingress`-mode
+    `DashboardClient` call with `esphome_unreachable`, with no signal until
+    someone actually exercises an ESPHome tool against a real HA install."""
+    config = yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8"))
+    if config.get("host_network") is not True:
+        return [
+            f"config.yaml host_network is {config.get('host_network')!r}, expected True "
+            "(ADR-0004 D1 — required for the ESPHome Device Builder ingress connection)"
+        ]
+    return []
+
+
 def check_release_consistency(root: Path) -> list[str]:
     """Return human-readable mismatch descriptions; an empty list means consistent."""
     pyproject_version = _read_pyproject_version(root)
@@ -79,6 +99,11 @@ def _copy_release_files(tmp_path: Path) -> None:
 
 def test_repo_versions_are_consistent():
     problems = check_release_consistency(REPO_ROOT)
+    assert not problems, "; ".join(problems)
+
+
+def test_host_network_is_enabled():
+    problems = check_host_network_enabled(REPO_ROOT)
     assert not problems, "; ".join(problems)
 
 
@@ -119,6 +144,24 @@ def test_detects_pyproject_drift(tmp_path):
 
     problems = check_release_consistency(tmp_path)
     assert len(problems) == 2, problems  # drifted from both config.yaml AND CHANGELOG
+
+
+def test_detects_host_network_disabled(tmp_path):
+    config = yaml.safe_load((REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
+    config["host_network"] = False
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    problems = check_host_network_enabled(tmp_path)
+    assert any("host_network" in p for p in problems), problems
+
+
+def test_detects_host_network_missing(tmp_path):
+    config = yaml.safe_load((REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
+    del config["host_network"]
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    problems = check_host_network_enabled(tmp_path)
+    assert any("host_network" in p for p in problems), problems
 
 
 def test_missing_changelog_heading_raises(tmp_path):

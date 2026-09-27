@@ -1,20 +1,24 @@
 """Registry test for the shared `confirm` safety gate (ADR-0003 D1).
 
-Sixteen destructive tools across six modules refuse to run without
+Seventeen destructive tools across seven modules refuse to run without
 `confirm=True` and, when refused, all return the exact same shape:
 `{"error": "confirmation_required", "message": ..., "action": ...}`, with
 zero I/O performed before that check. This is the common convention
 established in `tools/system.py` (`restart_ha`, `stop_ha`) and now applied to
 every tool in the registry below — including the two that gained `confirm`
-in 0.22.0 (`supervisor_delete_backup`, `files_delete_config_file`) and the
-one whose refusal shape was unified (`automations_delete_scene`, previously
-`{"error": "set confirm=True to delete", "command": ...}`).
+in 0.22.0 (`supervisor_delete_backup`, `files_delete_config_file`), the one
+whose refusal shape was unified (`automations_delete_scene`, previously
+`{"error": "set confirm=True to delete", "command": ...}`), and
+`esphome_upload_device` (ADR-0004 D5, 0.23.0) — it flashes firmware with no
+automatic rollback and, in add-on mode, never actually reached the dashboard
+before ADR-0004's rewrite, so this is the first release where it does
+anything at all.
 
 This test does not enumerate every `delete_*`/`remove_*`/`stop_*` tool in the
 add-on — ADR-0003 D1 deliberately leaves the rest (e.g. `areas_delete_area`,
 `supervisor_stop_addon`) without `confirm` until a follow-up ADR. The
-registry here is exactly the 16 tools that ADR-0003 counts as
-`confirm`-guarded after this change (14 pre-existing + 2 new).
+registry here is exactly the 17 tools that count as `confirm`-guarded after
+this change (16 pre-existing + 1 new).
 """
 from __future__ import annotations
 
@@ -45,6 +49,7 @@ _REGISTRY: list[tuple[str, str, dict[str, Any]]] = [
     ("system", "restart_ha", {}),
     ("system", "stop_ha", {}),
     ("files", "delete_config_file", {"relative_path": "packages/old.yaml"}),
+    ("esphome", "upload_device", {"name": "kitchen_sensor"}),
 ]
 _IDS = [f"{mod}.{name}" for mod, name, _ in _REGISTRY]
 
@@ -62,8 +67,9 @@ def _forbid_io(monkeypatch):
 
     Covers every transport the registry's tools use: `ha_client`'s HTTP
     client and WS call for automations/dashboards/integrations/system,
-    Supervisor's own request helper, git_ops's repo accessor, and
-    `Path.unlink` for files.delete_config_file.
+    Supervisor's own request helper, git_ops's repo accessor, `Path.unlink`
+    for files.delete_config_file, and the ESPHome dashboard client
+    singleton for esphome.upload_device.
     """
 
     def _boom(*_args, **_kwargs):
@@ -79,6 +85,10 @@ def _forbid_io(monkeypatch):
     monkeypatch.setattr(git_ops, "_repo", _boom)
 
     monkeypatch.setattr(Path, "unlink", _boom)
+
+    esphome = importlib.import_module("tools.esphome")
+    monkeypatch.setattr(esphome, "_get_dashboard_client", _boom)
+    monkeypatch.setattr(esphome, "_get_dashboard_locator", _boom)
 
 
 @pytest.mark.parametrize("module_name, local_name, kwargs", _REGISTRY, ids=_IDS)

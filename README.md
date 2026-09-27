@@ -27,6 +27,30 @@ Once connected, just talk to your AI assistant:
 
 ---
 
+## What's New in v0.23.0
+
+- **ESPHome compile/validate/OTA upload work in the add-on** — routed through the
+  ESPHome Device Builder add-on's own trusted-peer ingress site, the same path Home
+  Assistant Core itself uses to reach it. Standalone installs need
+  `ESPHOME_DASHBOARD_URL` set explicitly; the add-on discovers it automatically via
+  the Supervisor.
+- **The add-on now uses `host_network: true`** so it can reach that trusted-peer site
+  at all — see [Network (add-on)](#network-add-on) below for what this means for your
+  Network tab settings, and note the add-on's security rating drops by one point as a
+  result.
+- **Stable `esphome_*` error codes** (`esphome_not_configured`, `esphome_unreachable`,
+  `esphome_auth_required`, `esphome_protocol_error`, `esphome_command_failed`,
+  `esphome_unsupported_option`, `timeout`) with a `diagnosis` block on
+  connectivity/auth failures instead of ad-hoc messages.
+- **`esphome_upload_device` requires `confirm=True`** — OTA-flashing a device is not
+  undoable the way a config edit is; the first call without it does no I/O.
+- **SSRF guard on `card_builder_upload_image_from_url`** — resolves the hostname once,
+  rejects loopback/link-local/reserved destinations, and pins every redirect hop to the
+  already-resolved IP, closing the DNS-rebinding window. More relevant than before:
+  under `host_network`, a loopback request from this add-on now looks like it came from
+  Home Assistant Core to some ingress-fronted add-ons.
+- Full details in [CHANGELOG.md](CHANGELOG.md#0230).
+
 ## What's New in v0.22.1
 
 Includes everything from 0.22.0 below — 0.22.0 could not be built by the real Home
@@ -353,6 +377,32 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 `read_only` and `disabled_namespaces` combine as a union — a tool hidden by either one is hidden. Both are evaluated once at startup; there is no per-session or per-client variant.
 
+## Network (add-on)
+
+Since 0.23.0 the add-on runs with `host_network: true` (ADR-0004) — the only way it can
+reach the ESPHome Device Builder add-on's trusted-peer ingress site at
+`127.0.0.1:<its ingress_port>`, the same path Home Assistant Core itself uses to reach
+it. This is a deliberate trade-off, not a default anyone should ignore: the add-on's
+Supervisor security rating drops by one point as a result, since a host-networked
+container can reach the host's own loopback interface, not just its own network
+namespace.
+
+Practically, this changes how the `port` option is enforced. Docker no longer publishes
+`ports:` from `config.yaml` — nexus reconstructs your choice itself at startup from the
+add-on's **Network** tab (Configuration tab, or Info tab → Network):
+
+- **Default (`7123`)** — nexus binds `0.0.0.0:7123`; MCP + Setup UI are reachable on the
+  LAN at that port, same as before 0.23.0.
+- **Remapped to another port** — nexus binds the LAN socket there instead;
+  `ingress_port` stays fixed at `7123` regardless, so Home Assistant's own ingress
+  ("Open Web UI") keeps working either way.
+- **Disabled/unmapped** — no LAN socket at all; only Home Assistant ingress can reach
+  nexus. This is the only way to turn the LAN endpoint off entirely.
+
+Do not try to work around any of this by editing the `port` *option's* value below —
+it is scheduled for removal in 1.0.0 and only ever controls the LAN socket described
+above.
+
 ## Dashboard Screenshots
 
 `dashboards_screenshot` renders any Lovelace view to a base64-encoded PNG by delegating to the **Puppet** headless Chromium add-on. Nexus itself contains no browser dependencies — this approach works on every architecture (amd64, aarch64, armv7, armhf).
@@ -440,7 +490,7 @@ action:
 | `NEXUS_API_KEY` | No | auto-generated | Pin to a specific API key |
 | `NEXUS_PORT` | No | `7123` | HTTP server port |
 | `NEXUS_SCREENSHOT_ENGINE_URL` | No | auto-discovered | Explicit URL to Puppet engine (Docker/standalone) |
-| `ESPHOME_DASHBOARD_URL` | No | `http://homeassistant.local:6052` | ESPHome dashboard URL for compile/OTA tools |
+| `ESPHOME_DASHBOARD_URL` | Standalone only, for `esphome_*` compile/validate/upload | — | ESPHome Device Builder's trusted-peer ingress URL. The add-on discovers this automatically via the Supervisor and does not need it set; standalone installs must set it explicitly or those tools return `esphome_not_configured`. |
 | `NEXUS_READ_ONLY` | No | `false` | Standalone equivalent of the `read_only` add-on option — see [Add-on Options](#add-on-options) |
 | `NEXUS_DISABLED_NAMESPACES` | No | *(empty)* | Standalone equivalent of `disabled_namespaces`, comma-separated (e.g. `supervisor,git`) |
 

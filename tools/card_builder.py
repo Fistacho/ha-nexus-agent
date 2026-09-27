@@ -23,13 +23,17 @@ A "card" lives in HA storage and is referenced from a dashboard with
 from __future__ import annotations
 
 import base64
+import ipaddress
 import os
 import re
+import socket
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urljoin, urlparse
 
+import httpx
 from fastmcp import FastMCP
 from pydantic import Field
 
@@ -169,6 +173,207 @@ def _validate_upload_filename_and_path(filename: str, path: str) -> dict | None:
         }
 
     return None
+
+
+# =========================================================================
+# SSRF guard — shared by upload_image_from_url. See ADR-0004 S4: with
+# host_network: true (ADR-0004 D1) a request to 127.0.0.1/localhost from
+# this add-on has the same peer identity as a request from Home Assistant
+# Core or the Supervisor itself, so some ingress-fronted add-ons (e.g. the
+# ESPHome Device Builder, ADR-0004) treat it as trusted and skip
+# authentication entirely. A model asked to "mirror this background image"
+# must not be able to turn that into a GET against a local, trusting
+# service — nor into one against link-local metadata endpoints, multicast,
+# or other non-routable destinations that were never meant to be "a remote
+# image host".
+# =========================================================================
+
+# Redirect hops followed before giving up — generous enough for a CDN
+# (scheme upgrade + one asset-host bounce) but small enough to bound the
+# number of DNS resolutions/connections a single call can trigger.
+_MAX_URL_REDIRECTS = 5
+
+
+def _is_disallowed_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True if `ip` must never be the destination of an `upload_image_from_url`
+    download.
+
+    Loopback, link-local, unspecified ("any"), multicast and IANA-reserved
+    addresses are rejected outright — none of them is a legitimate *remote*
+    image host, and loopback specifically is the peer identity some
+    ingress-fronted add-ons trust without authentication (ADR-0004 S4).
+    RFC1918 (`10/8`, `172.16/12`, `192.168/16`) is deliberately **not**
+    rejected: users legitimately fetch images from devices on their own LAN
+    (a camera snapshot, a local NAS, …), and this add-on could already reach
+    the LAN before `host_network` — blocking it here would break a real use
+    case without closing a hole that ADR-0004 opened.
+
+    `ipaddress` already normalizes IPv4-mapped IPv6 (`::ffff:127.0.0.1`) to
+    the underlying IPv4's semantics — `is_loopback` etc. return the right
+    answer for it directly, no separate unwrapping needed.
+    """
+    return (
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_unspecified
+        or ip.is_multicast
+        or ip.is_reserved
+    )
+
+
+def _resolve_safe_addresses(host: str) -> tuple[list[str] | None, dict | None]:
+    """Resolve `host` to its IP literals and validate every one of them.
+
+    Returns `(ip_literals, None)` on success or `(None, error_dict)`. The
+    whole hostname is rejected if **any** resolved address is disallowed
+    (`_is_disallowed_ip`) — not just the one that would be connected to —
+    because a hostname that answers with a mix of public and internal
+    addresses is exactly the shape of a DNS-rebinding setup, and no
+    legitimate single remote image host resolves to both.
+
+    Called once per hop — the initial URL, then again for every redirect
+    target — and the caller connects to one of the literals returned here,
+    never to `host` again. That is what actually closes the DNS-rebinding
+    window: a second lookup, which is where a rebinding attacker's
+    nameserver would switch the answer, never happens.
+    """
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except OSError as err:
+        return None, {"error": "dns_resolution_failed", "host": host, "detail": str(err)}
+
+    ips: list[str] = []
+    for _family, _socktype, _proto, _canonname, sockaddr in infos:
+        raw_ip = sockaddr[0].split("%", 1)[0]  # strip IPv6 zone id, e.g. "fe80::1%eth0"
+        try:
+            ip = ipaddress.ip_address(raw_ip)
+        except ValueError as err:
+            return None, {"error": "dns_resolution_failed", "host": host, "detail": str(err)}
+        if _is_disallowed_ip(ip):
+            return None, {
+                "error": "target_not_allowed",
+                "host": host,
+                "detail": f"'{host}' resolves to disallowed address {ip}",
+            }
+        if raw_ip not in ips:
+            ips.append(raw_ip)
+
+    if not ips:
+        return None, {"error": "dns_resolution_failed", "host": host, "detail": "no addresses returned"}
+    return ips, None
+
+
+def _host_header_value(host: str, port: int, scheme: str) -> str:
+    """`Host` header value matching what a browser would send: `host` alone
+    for the scheme's default port, `host:port` otherwise.
+    """
+    default_port = 443 if scheme == "https" else 80
+    return host if port == default_port else f"{host}:{port}"
+
+
+def _fetch_remote_image(url: str) -> tuple[bytes | None, str | None, dict | None]:
+    """Download `url` for `upload_image_from_url`, enforcing the SSRF guard
+    on the initial URL and on every redirect target, plus the existing
+    content-type/size limits on the final response.
+
+    Returns `(content, content_type, None)` on success or `(None, None,
+    error_dict)`. Never raises.
+
+    Redirects are followed manually with `follow_redirects=False` on the
+    client: letting httpx follow them itself would connect straight to the
+    redirect target with none of the guards below applied.
+
+    DNS-rebinding: the client connects to the **literal IP address**
+    returned by `_resolve_safe_addresses` for this hop (baked into the
+    request URL as `host`), never to the original hostname again — so there
+    is no second resolution point left for a rebinding attacker's
+    nameserver to flip the answer at. The original hostname is preserved
+    for the server via an explicit `Host` header and, for TLS, the
+    `sni_hostname` extension: httpcore uses it both for the ClientHello SNI
+    and as the `server_hostname` passed to `ssl.SSLContext.wrap_socket`,
+    which is also what certificate hostname verification checks against —
+    so redirecting the *connection* to an IP literal does not weaken
+    certificate validation for the original domain.
+    """
+    current_url = url
+
+    for _hop in range(_MAX_URL_REDIRECTS + 1):
+        parsed = urlparse(current_url)
+        if parsed.scheme not in ("http", "https"):
+            return None, None, {
+                "error": "scheme_not_allowed",
+                "url": current_url,
+                "detail": "Only http/https URLs are allowed",
+            }
+
+        host = parsed.hostname
+        if not host:
+            return None, None, {
+                "error": "target_not_allowed",
+                "url": current_url,
+                "detail": "URL has no host",
+            }
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+        # Resolve and validate *before* touching the network for this hop —
+        # no httpx.Client is even constructed for a target that fails here.
+        ips, err = _resolve_safe_addresses(host)
+        if err:
+            return None, None, {**err, "url": current_url}
+
+        request_url = httpx.URL(
+            scheme=parsed.scheme,
+            host=ips[0],
+            port=port,
+            path=parsed.path or "/",
+            query=parsed.query.encode() if parsed.query else None,
+        )
+        headers = {
+            "User-Agent": "Nexus/0.20",
+            "Host": _host_header_value(host, port, parsed.scheme),
+        }
+
+        try:
+            with httpx.Client(timeout=30) as client, client.stream(
+                "GET",
+                request_url,
+                headers=headers,
+                extensions={"sni_hostname": host},
+                follow_redirects=False,
+            ) as response:
+                if response.status_code in (301, 302, 303, 307, 308):
+                    location = response.headers.get("location")
+                    if not location:
+                        return None, None, {
+                            "error": "download_failed",
+                            "url": current_url,
+                            "detail": f"redirect status {response.status_code} with no Location header",
+                        }
+                    current_url = urljoin(current_url, location)
+                    continue
+
+                content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                if not content_type.startswith(_ALLOWED_MEDIA_CONTENT_TYPE_PREFIX):
+                    return None, None, {
+                        "error": "content_type_not_allowed",
+                        "url": current_url,
+                        "content_type": content_type or None,
+                    }
+
+                content = bytearray()
+                for chunk in response.iter_bytes():
+                    content.extend(chunk)
+                    if len(content) > _MAX_URL_IMAGE_BYTES:
+                        return None, None, {
+                            "error": "file_too_large",
+                            "url": current_url,
+                            "limit_bytes": _MAX_URL_IMAGE_BYTES,
+                        }
+                return bytes(content), content_type, None
+        except httpx.HTTPError as err:
+            return None, None, {"error": "download_failed", "url": current_url, "detail": str(err)}
+
+    return None, None, {"error": "too_many_redirects", "url": url, "limit": _MAX_URL_REDIRECTS}
 
 
 # =========================================================================
@@ -1552,32 +1757,30 @@ def upload_image_from_url(
 
     Only `http`/`https` schemes are accepted. The response must declare an
     `image/*` Content-Type (covers `image/svg+xml`) and stay within
-    `_MAX_URL_IMAGE_BYTES`, else nothing is uploaded. Falls back to
-    deriving `filename` from the URL path. An `image/svg+xml` response is
-    sanitized (script/handler/unsafe-URL stripping) before upload — see
-    `sanitize_svg` — regardless of the requested `filename`, since the
-    remote server controls the actual bytes. The file becomes **public**
-    under `/local/` with **no authentication**. `card_builder/media/upload`
-    writes with no existence check, so uploading onto an existing
-    `path`/`filename` **silently overwrites it**, with no backup.
+    `_MAX_URL_IMAGE_BYTES`, else nothing is uploaded. `image/svg+xml` is
+    sanitized (see `sanitize_svg`) regardless of `filename`, since the
+    remote server controls the bytes. The file becomes **public** under
+    `/local/` with **no authentication**, and an existing `path`/
+    `filename` is **silently overwritten**.
 
-    Use when: mirroring a remote image (e.g. a weather-background asset)
-    into the media library so a card can reference it locally.
+    The URL and every redirect hop are resolved and rejected on a
+    loopback, link-local, unspecified, multicast or other reserved
+    address (incl. `::ffff:127.0.0.1`) — `host_network: true` means
+    `127.0.0.1`/`localhost` here can reach host services that trust it as
+    a local peer. Private LAN ranges stay allowed (e.g. a camera snapshot
+    on your own network).
+
+    Use when: mirroring a remote image into the media library.
     Not for: bytes already in memory — use `card_builder_upload_media`; a
-    file already on the HA config filesystem — use
-    `card_builder_upload_media_from_path`.
-    Returns: `{reference, path, url}`, same shape as
-    `card_builder_upload_media`.
-    Errors: `{"error": "scheme_not_allowed" | "content_type_not_allowed" |
-    "file_too_large" | "download_failed" | "invalid_svg" | ...}` (plus
-    `sanitize_svg` errors) when the URL, response, or SVG fails validation.
-    Limits: 30-second download timeout, capped at `_MAX_URL_IMAGE_BYTES`
-    (15 MiB); the one Card Builder tool that reaches outside the HA
-    instance and its host.
+    file on disk — use `card_builder_upload_media_from_path`.
+    Returns: `{reference, path, url}`.
+    Errors: `{"error": "scheme_not_allowed" | "target_not_allowed" |
+    "dns_resolution_failed" | "too_many_redirects" |
+    "content_type_not_allowed" | "file_too_large" | "download_failed" |
+    "invalid_svg" | ...}`.
+    Limits: 30-second timeout, `_MAX_URL_IMAGE_BYTES` (15 MiB) cap, up to
+    `_MAX_URL_REDIRECTS` (5) redirects, each re-validated.
     """
-    import urllib.request
-    from urllib.parse import urlparse
-
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return {"error": "scheme_not_allowed", "url": url, "detail": "Only http/https URLs are allowed"}
@@ -1586,17 +1789,9 @@ def upload_image_from_url(
     if not final_name:
         final_name = parsed.path.rsplit("/", 1)[-1] or "image"
 
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Nexus/0.20"})  # noqa: S310 -- scheme checked above
-        with urllib.request.urlopen(req, timeout=30) as r:  # noqa: S310 -- scheme checked above
-            content_type = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-            if not content_type.startswith(_ALLOWED_MEDIA_CONTENT_TYPE_PREFIX):
-                return {"error": "content_type_not_allowed", "url": url, "content_type": content_type or None}
-            content = r.read(_MAX_URL_IMAGE_BYTES + 1)
-            if len(content) > _MAX_URL_IMAGE_BYTES:
-                return {"error": "file_too_large", "url": url, "limit_bytes": _MAX_URL_IMAGE_BYTES}
-    except Exception as err:
-        return {"error": "download_failed", "url": url, "detail": str(err)}
+    content, content_type, err = _fetch_remote_image(url)
+    if err:
+        return err
 
     if not final_name.lower().endswith(tuple(_ALLOWED_MEDIA_EXTENSIONS)):
         # Guess extension from content-type if filename has no extension.

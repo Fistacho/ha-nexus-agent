@@ -1,7 +1,7 @@
 name: Nexus Agent
-version: "0.22.2"
+version: "0.23.0"
 slug: nexus_agent
-description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.22.1 (includes 0.22.0): read-only mode and per-namespace disabling, confirm gates on backup/config-file deletion, safer section-by-section dashboard edits, and a fix for the add-on image failing to build under the Supervisor"
+description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.23.0: ESPHome compile/validate/OTA upload work in the add-on via the Device Builder's trusted ingress site (add-on now uses host network)"
 url: https://github.com/Fistacho/ha-nexus-agent
 arch:
   - aarch64
@@ -12,7 +12,15 @@ arch:
 init: false
 startup: application
 boot: auto
-host_network: false
+# ADR-0004: host_network is required so nexus can reach the ESPHome Device
+# Builder's trusted-peer site ingress (127.0.0.1:<its ingress_port>) the same
+# way HA Core does. Docker no longer maps `ports:` below once this is true —
+# `addon_network.py` reconstructs the Network tab's LAN-port semantics at
+# startup from `GET /addons/self/info` instead (see its module docstring).
+# Do not change the `port` option below to work around this: `ingress_port`
+# stays pinned at 7123 regardless, and `port` is scheduled for removal in
+# 1.0.0 (see translations/en.yaml).
+host_network: true
 hassio_api: true
 hassio_role: manager
 homeassistant_api: true

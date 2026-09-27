@@ -74,7 +74,7 @@ class ToolPolicy:
 
     read_only: bool = False
     disabled_namespaces: frozenset[str] = field(default_factory=frozenset)
-    # Reserved for ADR-0003 P3 (0.23.0, tool-search mode). Fixed at "full"
+    # Reserved for ADR-0003 P3 (0.24.0, tool-search mode). Fixed at "full"
     # until that partition wires a `NEXUS_TOOL_MODE` option through
     # `config.yaml`/`run.sh` — `from_env()` never reads an env var for it.
     tool_mode: Literal["full", "search"] = "full"

@@ -1,9 +1,12 @@
+import logging
 import os
 import secrets
 from pathlib import Path
 from fastapi import HTTPException, Request, Security, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
+
+_LOGGER = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -78,6 +81,53 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(_bea
 #   "Users are previously authenticated via Home Assistant. Authentication is
 #   not required [again by the add-on]."
 #
+# ADR-0004 S1 re-verification (2026-09-27, `home-assistant/supervisor` @
+# `main` and `home-assistant/core` @ `dev`), done because host_network
+# changes which address Supervisor's ingress proxy targets (see below) and
+# the coordinator's security review specifically asked for this to be
+# checked in source rather than assumed:
+#
+# - `X-Ingress-Path` (and `X-Hass-Source: core.ingress`) is added by **HA
+#   Core**, not directly by Supervisor: `homeassistant/components/hassio/
+#   ingress.py::_init_header()` sets both on every request Core proxies from
+#   the browser's `/api/hassio_ingress/<token>/...` to Supervisor's own
+#   `/ingress/<token>/...`. Supervisor's `supervisor/api/ingress.py::
+#   _init_header()` then forwards that request on to the add-on container;
+#   its own header-filter list only drops `Content-Length`,
+#   `Content-Encoding`, `Transfer-Encoding`, the `Sec-WebSocket-*` triplet and
+#   `HEADER_REMOTE_USER_*`/`HEADER_TOKEN*` — `X-Ingress-Path` and
+#   `X-Hass-Source` are NOT in that list, so they reach the add-on unchanged.
+#   Net effect: the header this function checks for genuinely arrives here,
+#   confirmed by reading both hops, not just the add-on-facing one.
+# - The peer IP: Supervisor's proxy (`api/ingress.py::_handle_request` /
+#   `_handle_websocket`) connects out to `http://{app.ip_address}:
+#   {app.ingress_port}/...` using Supervisor's *own* aiohttp
+#   `ClientSession` — i.e. from Supervisor's own container, whose address on
+#   the "hassio" bridge network is fixed at `172.30.32.2`
+#   (`supervisor/docker/network.py::DockerNetwork.supervisor` ==
+#   `DOCKER_IPV4_NETWORK_MASK[2]`, `172.30.32.0/23`). That source address
+#   does not depend on the *destination* `app.ip_address` at all — under
+#   `host_network`, `supervisor/docker/app.py::DockerApp.ip_address` returns
+#   `sys_docker.network.gateway` (`172.30.32.1`, the same bridge's gateway,
+#   an address Docker assigns directly to a host-visible bridge interface)
+#   instead of a dedicated container IP, but Supervisor is still the one
+#   *initiating* the connection, from the same container, over the same
+#   bridge network, either way. So `172.30.32.2` as the expected peer IP is
+#   not expected to change under host_network — but this is inferred from
+#   Docker bridge-networking semantics (a container connecting to its own
+#   bridge's gateway address is intra-network traffic Docker does not NAT),
+#   not from a packet capture. `is_ingress_request()` logs the observed peer
+#   at DEBUG specifically so this can be confirmed live once nexus actually
+#   runs with `host_network: true` (ADR-0004 acceptance criteria).
+# - Consequence for this function: do NOT add `172.30.32.1` (the gateway) or
+#   `127.0.0.1` to the trusted-peer set. Both are host-reachable under
+#   `host_network` by any process or add-on sharing the host's network
+#   namespace, not just Supervisor — trusting either would let anything else
+#   on the host impersonate ingress. If the peer-IP assumption above ever
+#   turns out wrong on live HA, this function is meant to fail CLOSED (return
+#   False, keep the Setup UI locked) rather than have its trusted-peer set
+#   widened to compensate.
+#
 # CSRF note: a POST to /regenerate cannot be forged from a third-party page
 # through the user's browser, because (a) the add-on only accepts it from
 # 172.30.32.2 — an address only the Supervisor's internal proxy can connect
@@ -97,11 +147,26 @@ def is_ingress_request(request: Request) -> bool:
 
     Both the source IP *and* the `X-Ingress-Path` header are required —
     defense in depth in case something else on the docker network shares the
-    172.30.32.2 address or spoofs the header alone.
+    172.30.32.2 address or spoofs the header alone. Never widen this by
+    trusting a different peer (e.g. the host_network gateway `172.30.32.1`,
+    or `127.0.0.1`) instead — see the ADR-0004 S1 comment above.
+
+    Logs the observed peer at DEBUG (never any header *value* beyond the
+    boolean "is X-Ingress-Path present", and never a secret) so the
+    172.30.32.2 assumption above can be confirmed against a live add-on
+    running with `host_network: true`.
     """
     client = request.client
     client_host = client.host if client else None
-    return client_host == INGRESS_PROXY_HOST and "x-ingress-path" in request.headers
+    has_ingress_header = "x-ingress-path" in request.headers
+    result = client_host == INGRESS_PROXY_HOST and has_ingress_header
+
+    _LOGGER.debug(
+        "is_ingress_request: peer=%s has_x_ingress_path_header=%s -> trusted=%s "
+        "(expected peer for ADR-0004 host_network: %s)",
+        client_host, has_ingress_header, result, INGRESS_PROXY_HOST,
+    )
+    return result
 
 
 def is_addon_mode() -> bool:

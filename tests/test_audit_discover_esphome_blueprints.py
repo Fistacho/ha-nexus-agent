@@ -18,7 +18,10 @@ F23 `tools/esphome.py`: compile/validate/upload/clean_mqtt sent HTTP POST to das
     the installed add-on's real slug (`5c53de3b_esphome`) wasn't in that hard-coded list.
     Also fixed: every device-name parameter in this module (get/write_config, compile/
     validate/upload/clean_mqtt, lvgl_add_widget/lvgl_delete_widget) accepted `../` path
-    traversal — `_device_path`/`_safe_filename` now reject it.
+    traversal — `_device_path`/`_safe_filename` now reject it. (ADR-0004 partition A
+    later extracted the actual dashboard wire protocol into `esphome_dashboard.py` — see
+    `tests/test_esphome_dashboard_client.py`/`tests/test_esphome_dashboard_status.py` —
+    so the wire-level tests that originally lived in this file moved there.)
 F24 `tools/esphome.py` lvgl_add_widget/lvgl_delete_widget: `yaml.dump` rewrites the whole
     device file (comments/anchors lost) with no backup.
 F26 `tools/blueprints.py` import_blueprint: docstring claimed it saves to
@@ -27,10 +30,8 @@ F26 `tools/blueprints.py` import_blueprint: docstring claimed it saves to
 """
 from __future__ import annotations
 
-import json
 import re
 
-import httpx
 import pytest
 
 import ha_client as ha
@@ -124,230 +125,15 @@ def test_tool_search_docstring_has_no_stale_tool_count():
 
 
 # --- F23: ESPHome compile/validate/upload/clean_mqtt must use the dashboard WS API ---
-
-class _FakeWebSocket:
-    def __init__(self, events: list[dict]):
-        self._events = list(events)
-        self.sent: list[dict] = []
-
-    async def send(self, message: str) -> None:
-        self.sent.append(json.loads(message))
-
-    async def recv(self) -> str:
-        return json.dumps(self._events.pop(0))
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-
-class _FakeConnect:
-    """Stand-in for `websockets.connect` — records the URL and websocket it opened.
-
-    (Assigning to `instance.__call__` would not intercept `instance(...)` — dunder
-    lookups go through the type, not the instance — so instances are recorded here.)
-    """
-
-    def __init__(self, events: list[dict]):
-        self._events = events
-        self.urls: list[str] = []
-        self.instances: list[_FakeWebSocket] = []
-
-    def __call__(self, url, **kwargs):
-        self.urls.append(url)
-        ws = _FakeWebSocket(self._events)
-        self.instances.append(ws)
-        return ws
-
-
-def _no_http(*a, **k):
-    raise AssertionError("must not fall back to a plain HTTP POST for /compile & co.")
-
-
-def test_compile_device_sends_spawn_message_with_configuration(monkeypatch):
-    import websockets
-
-    fake_connect = _FakeConnect([{"event": "exit", "code": 0}])
-    monkeypatch.setattr(websockets, "connect", fake_connect)
-    monkeypatch.setattr(httpx, "Client", _no_http)
-
-    result = _unwrap(esphome_tools.compile_device)("livingroom")
-
-    assert result["success"] is True
-    (ws,) = fake_connect.instances
-    assert ws.sent == [{"type": "spawn", "configuration": "livingroom.yaml"}]
-
-
-def test_upload_device_defaults_port_to_ota(monkeypatch):
-    import websockets
-
-    fake_connect = _FakeConnect([{"event": "exit", "code": 0}])
-    monkeypatch.setattr(websockets, "connect", fake_connect)
-    monkeypatch.setattr(httpx, "Client", _no_http)
-
-    result = _unwrap(esphome_tools.upload_device)("livingroom")
-
-    assert result["success"] is True
-    (ws,) = fake_connect.instances
-    assert ws.sent == [{"type": "spawn", "configuration": "livingroom.yaml", "port": "OTA"}]
-
-
-def test_compile_device_reports_failure_exit_code(monkeypatch):
-    import websockets
-
-    fake_connect = _FakeConnect([
-        {"event": "line", "data": "error: xyz"},
-        {"event": "exit", "code": 1},
-    ])
-    monkeypatch.setattr(websockets, "connect", fake_connect)
-
-    result = _unwrap(esphome_tools.compile_device)("livingroom")
-
-    assert result["exit_code"] == 1
-    assert result["success"] is False
-    assert result["log_tail"] == ["error: xyz"]
-
-
-def test_dash_ws_spawn_times_out_gracefully(monkeypatch):
-    """A process that never sends 'exit' must not hang the tool call forever."""
-    import asyncio as _asyncio
-
-    class _NeverExitsWS(_FakeWebSocket):
-        async def recv(self) -> str:
-            await _asyncio.sleep(0)
-            raise _asyncio.TimeoutError
-
-    import websockets
-
-    def connect(url, **kwargs):
-        return _NeverExitsWS([])
-
-    monkeypatch.setattr(websockets, "connect", connect)
-
-    result = esphome_tools._dash_ws_spawn("/compile", {"configuration": "x.yaml"}, timeout=0.01)
-
-    assert result["error"] == "timeout"
-
-
-def test_ping_dashboard_still_uses_plain_http_get(monkeypatch):
-    """/ping is a regular tornado GET handler (not a websocket) — must stay on httpx."""
-    calls = []
-
-    class FakeClient:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-        def request(self, method, path, json=None):
-            calls.append((method, path))
-            request = httpx.Request(method, f"http://homeassistant.local:6052{path}")
-            return httpx.Response(200, json={"ok": True}, request=request)
-
-    monkeypatch.setattr(httpx, "Client", lambda **k: FakeClient())
-
-    result = _unwrap(esphome_tools.ping_dashboard)()
-
-    assert calls == [("GET", "/ping")]
-    assert result["reachable"] is True
-
-
-# --- Follow-up to F23: Device Builder dropped the legacy /validate & /clean-mqtt WS
-# routes (confirmed on GitHub 2026-09-27: esphome/device-builder's api/legacy.py keeps
-# only /devices, /ping, /json-config, /encryption-key, /compile, /upload). validate_config
-# must now use the newer multiplexed /ws command protocol (docs/API.md: `devices/validate`).
-
-class _FakeMultiplexWebSocket:
-    """Stand-in for the `/ws` multiplexed protocol: first recv is the ServerInfoMessage,
-    then one command is sent, then queued command/result/event frames are replayed."""
-
-    def __init__(self, server_info: dict, events: list[dict]):
-        self._queue = [json.dumps(server_info)] + [json.dumps(e) for e in events]
-        self.sent: list[dict] = []
-
-    async def send(self, message: str) -> None:
-        self.sent.append(json.loads(message))
-
-    async def recv(self) -> str:
-        return self._queue.pop(0)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-
-class _FakeMultiplexConnect:
-    def __init__(self, server_info: dict, events: list[dict]):
-        self._server_info = server_info
-        self._events = events
-        self.urls: list[str] = []
-        self.instances: list[_FakeMultiplexWebSocket] = []
-
-    def __call__(self, url, **kwargs):
-        self.urls.append(url)
-        ws = _FakeMultiplexWebSocket(self._server_info, self._events)
-        self.instances.append(ws)
-        return ws
-
-
-def test_validate_config_uses_ws_multiplexed_devices_validate_command(monkeypatch):
-    """RED (post-research): the legacy dashboard's dedicated /validate WebSocket route
-    is gone from Device Builder — validate must go through /ws's `devices/validate`
-    command/response protocol instead of the old per-endpoint spawn protocol."""
-    import websockets
-
-    fake_connect = _FakeMultiplexConnect(
-        {"requires_auth": False},
-        [
-            {"message_id": "1", "event": "output", "data": "Checking configuration...\n"},
-            {"message_id": "1", "event": "result", "data": {"success": True, "code": 0}},
-        ],
-    )
-    monkeypatch.setattr(websockets, "connect", fake_connect)
-    monkeypatch.setattr(httpx, "Client", _no_http)
-
-    result = _unwrap(esphome_tools.validate_config)("livingroom")
-
-    assert fake_connect.urls == ["ws://homeassistant.local:6052/ws"]
-    (ws,) = fake_connect.instances
-    assert ws.sent == [
-        {"command": "devices/validate", "message_id": "1", "args": {"configuration": "livingroom.yaml"}}
-    ]
-    assert result["success"] is True
-    assert "Checking configuration...\n" in result["log_tail"]
-
-
-def test_validate_config_surfaces_ws_error_code(monkeypatch):
-    import websockets
-
-    fake_connect = _FakeMultiplexConnect(
-        {"requires_auth": False},
-        [{"message_id": "1", "error_code": "not_found", "details": "no such file"}],
-    )
-    monkeypatch.setattr(websockets, "connect", fake_connect)
-
-    result = _unwrap(esphome_tools.validate_config)("missing")
-
-    assert result["error"] == "not_found"
-
-
-def test_validate_config_refuses_when_dashboard_requires_auth(monkeypatch):
-    """No ESPHOME_USERNAME/ESPHOME_PASSWORD wiring exists — fail fast and clearly
-    rather than hang or guess credentials."""
-    import websockets
-
-    fake_connect = _FakeMultiplexConnect({"requires_auth": True}, [])
-    monkeypatch.setattr(websockets, "connect", fake_connect)
-
-    result = _unwrap(esphome_tools.validate_config)("livingroom")
-
-    assert "error" in result
-    assert fake_connect.instances[0].sent == []
+#
+# The wire-protocol-level tests that used to live here (raw `websockets.connect`
+# fakes exercising `/compile`, `/upload` and the multiplexed `/ws` `devices/validate`
+# command) moved to `tests/test_esphome_dashboard_client.py` when that protocol layer
+# was extracted into `esphome_dashboard.DashboardClient` (ADR-0004 partition A) — this
+# module's own tools no longer open a socket at all, they call that client and map its
+# typed `DashboardError`s (see `tests/test_esphome_dashboard_status.py`, ADR-0004
+# partition B). Only the two traversal/docstring checks below still belong to this
+# F23 regression file.
 
 
 def test_validate_config_rejects_path_traversal_before_opening_any_socket(monkeypatch):

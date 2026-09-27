@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import re
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 from starlette.testclient import TestClient
 
@@ -119,6 +120,27 @@ def test_setup_page_addon_mode_does_not_trust_localhost_without_ingress(monkeypa
 
     assert resp.status_code == 200
     assert auth.API_KEY not in resp.text
+
+
+# --- ADR-0004 S2 regression: 127.0.0.1 is not a trust boundary in add-on mode,
+# on ALL three endpoints (Setup UI, /regenerate, /mcp) — not just `/`. Written
+# for host_network specifically: once nexus binds a socket at the ingress
+# address (not just 0.0.0.0), it becomes even more important that *loopback*
+# still isn't trusted, since host_network means literally any other process
+# or add-on sharing the host's network namespace can also reach 127.0.0.1.
+
+def test_regenerate_addon_mode_127_0_0_1_without_bearer_is_forbidden(monkeypatch):
+    with _make_client(monkeypatch, addon_mode=True, client=("127.0.0.1", 51234)) as tc:
+        resp = tc.post("/regenerate")
+
+    assert resp.status_code == 403
+
+
+def test_mcp_addon_mode_127_0_0_1_without_token_is_unauthorized(monkeypatch):
+    with _make_client(monkeypatch, addon_mode=True, client=("127.0.0.1", 51234)) as tc:
+        resp = tc.post("/mcp", json={"jsonrpc": "2.0", "method": "ping", "id": 1})
+
+    assert resp.status_code == 401
 
 
 def test_locked_page_hides_tool_count_policy_and_ha_url(monkeypatch):
@@ -329,6 +351,63 @@ def test_query_token_warning_not_logged_for_bearer_header(monkeypatch, caplog):
             assert resp.status_code != 401
 
     assert not any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+# --- ADR-0004 S1: peer IP + X-Ingress-Path detection is logged at DEBUG so it
+# can be confirmed against a live add-on running with host_network: true -----
+
+def test_is_ingress_request_logs_peer_and_header_presence_at_debug(caplog):
+    request = SimpleNamespace(
+        client=SimpleNamespace(host=INGRESS_HOST),
+        headers={"x-ingress-path": "/api/hassio_ingress/abc123"},
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="auth"):
+        result = auth.is_ingress_request(request)
+
+    assert result is True
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any(INGRESS_HOST in r.getMessage() for r in debug_records)
+    assert any("has_x_ingress_path_header=True" in r.getMessage() for r in debug_records)
+    for record in debug_records:
+        assert auth.API_KEY not in record.getMessage()
+
+
+def test_is_ingress_request_still_fails_closed_for_untrusted_peer():
+    """Regression: the new DEBUG logging must not change the trust decision
+    itself — an untrusted peer with the header spoofed is still rejected."""
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="172.30.32.1"),  # the host_network gateway, NOT Supervisor
+        headers={"x-ingress-path": "/api/hassio_ingress/abc123"},
+    )
+
+    assert auth.is_ingress_request(request) is False
+
+
+# --- ADR-0004 D1b: HTTP-mode startup banner reflects the ListenPlan ----------
+
+def test_startup_log_lines_for_plan_never_contain_the_api_key_lan_exposed():
+    import addon_network
+
+    plan = addon_network.ListenPlan.standalone(7123)
+    lines = server._startup_log_lines_for_plan(plan)
+
+    assert not any(auth.API_KEY in line for line in lines)
+    assert any("7123" in line for line in lines)
+    assert any("key" in line.lower() for line in lines)
+
+
+def test_startup_log_lines_for_plan_reports_ingress_only_when_lan_disabled():
+    import addon_network
+
+    plan = addon_network.ListenPlan.from_self_info(
+        {"network": {"7123/tcp": None}, "ip_address": "172.30.32.1"}
+    )
+    lines = server._startup_log_lines_for_plan(plan)
+
+    assert not any(auth.API_KEY in line for line in lines)
+    assert any("172.30.32.1:7123" in line for line in lines)
+    assert any("not" in line.lower() and "lan" in line.lower() for line in lines)
 
 
 # --- API key must never be printed at startup --------------------------------

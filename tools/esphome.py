@@ -1,17 +1,28 @@
 """ESPHome device management tools.
 
-Read configs from /config/esphome/, query HA device/entity registry,
-and drive compile / validate / OTA upload via the ESPHome dashboard API.
+Read configs from /config/esphome/, query HA device/entity registry, and drive
+compile / validate / OTA-upload via the ESPHome "Device Builder" dashboard.
 
-Dashboard URL: set ESPHOME_DASHBOARD_URL env var (default: http://homeassistant.local:6052).
-Inside HA add-on context the default works if ESPHome add-on is installed.
+All dashboard I/O goes through `esphome_dashboard.DashboardClient`
+(ADR-0004 partition A) — this module never opens a socket to the dashboard
+itself. It owns dashboard *discovery* only: in add-on mode (`SUPERVISOR_TOKEN`
+set) the dashboard is always dialled at `http://127.0.0.1:<ingress_port>`, the
+installed ESPHome add-on's own site-ingress port, found from the live
+Supervisor `/addons` listing (`_discover_esphome_slug`) and
+`GET /addons/<slug>/info`; this only works because nexus itself runs with
+`host_network: true` (ADR-0004 D1) and shares the host's loopback with the
+ESPHome add-on's own `host_network` container. In standalone/HACS mode, set
+`ESPHOME_DASHBOARD_URL` to the dashboard's own URL — there is no default
+guess. `esphome_dashboard.DashboardError` subclasses raised by the client are
+translated here into this module's `{"error": ...}` tool-result shape
+(ADR-0002); see `_dashboard_error_response`.
 
 Add-on identity & protocol (re-verified 2026-09-27 against the live add-on list and
 GitHub, since the pip `esphome` package dropped its built-in dashboard for the
 standalone "ESPHome Device Builder" between esphome 2026.5.0 and 2026.7.0):
 - The add-on's Supervisor slug is NOT one of a fixed set of hashes — it is looked up
   dynamically from `GET /addons` (see `_discover_esphome_slug`) instead of guessing.
-- `esphome/device-builder` (github.com/esphome/device-builder) is the new dashboard.
+- `esphome/device-builder` (github.com/esphome/device-builder) is the dashboard.
   Its `esphome_device_builder/api/legacy.py` keeps exactly six HA-compat routes:
   GET /devices, GET /ping, GET /json-config, POST /encryption-key, and two
   WebSocket routes — GET /compile and GET /upload — confirmed (raw file read
@@ -19,8 +30,9 @@ standalone "ESPHome Device Builder" between esphome 2026.5.0 and 2026.7.0):
   (`{"type": "spawn", "configuration": ..., "port": ...}` in, `{"event": "line"/"exit"}`
   out), just re-routed through Device Builder's firmware job queue. There is no
   legacy `/validate` or `/clean-mqtt` WebSocket route anymore.
-- Validate now goes through Device Builder's newer multiplexed `/ws` command API
-  (docs/API.md: `devices/validate` command) — see `_dash_ws_command`.
+- Validate goes through Device Builder's newer multiplexed `/ws` command API
+  (docs/API.md: `devices/validate` command) — see
+  `esphome_dashboard.DashboardClient.validate`.
 - Clean-mqtt has no confirmed equivalent in Device Builder at all (searched
   docs/API.md for every mqtt/clean-related command; the closest, `firmware/clean`,
   is a build-artifact clean, not an MQTT discovery-topic clean). `clean_mqtt`
@@ -46,11 +58,10 @@ standalone "ESPHome Device Builder" between esphome 2026.5.0 and 2026.7.0):
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import os
 import re
 import shutil
+import threading
 import httpx
 from pathlib import Path
 from typing import Annotated
@@ -58,6 +69,7 @@ from typing import Annotated
 from fastmcp import FastMCP
 from pydantic import Field
 
+import esphome_dashboard as dash
 import ha_client as ha
 from tools._contract import destructive, read, write
 
@@ -67,7 +79,6 @@ TOOL_CONTRACT = {"version": 1, "long_ok": {}, "heuristic_exceptions": {}}
 
 _CONFIG_PATH = Path(os.getenv("HA_CONFIG_PATH", "/config"))
 _ESPHOME_DIR = _CONFIG_PATH / "esphome"
-_DASH_URL = os.getenv("ESPHOME_DASHBOARD_URL", "http://homeassistant.local:6052")
 
 # Historical hard-coded guesses — kept only as a last-ditch fallback for
 # _esphome_slug_candidates() when the live `/addons` listing itself is unreachable
@@ -111,183 +122,211 @@ def _sup_text(path: str, timeout: int = 30) -> str:
         return r.text
 
 
-def _dash(method: str, path: str, body: dict | None = None, timeout: int = 120) -> dict:
-    try:
-        with httpx.Client(base_url=_DASH_URL, timeout=timeout) as c:
-            r = c.request(method, path, json=body)
-            if "application/json" in r.headers.get("content-type", ""):
-                return r.json()
-            return {"status_code": r.status_code, "text": r.text[:2000]}
-    except httpx.ConnectError:
-        return {"error": f"Cannot connect to ESPHome dashboard at {_DASH_URL}. Set ESPHOME_DASHBOARD_URL if needed."}
-    except httpx.HTTPStatusError as e:
-        return {"error": f"HTTP {e.response.status_code}", "detail": e.response.text[:200]}
-    except Exception as e:
-        return {"error": str(e)}
+def _supervisor_get(path: str) -> dict:
+    """Adapt `_sup_json` to `esphome_dashboard.DashboardLocator`'s `supervisor_get` contract.
 
-
-def _dash_ws_url(path: str) -> str:
-    return _DASH_URL.replace("https://", "wss://").replace("http://", "ws://") + path
-
-
-async def _dash_ws_spawn_async(path: str, payload: dict, timeout: float, tail_lines: int) -> dict:
-    """Spawn a command on the ESPHome dashboard over its WebSocket API.
-
-    Protocol (esphome/dashboard/web_server.py, `EsphomeCommandWebSocket`): the
-    client sends one `{"type": "spawn", ...payload}` message; the server then
-    streams `{"event": "line", "data": <str>}` per output line and finishes
-    with `{"event": "exit", "code": <int>}`. There is no auth handshake (the
-    dashboard's own cookie/basic auth applies at the HTTP upgrade, not here).
+    `_sup_json` reports every failure — missing `SUPERVISOR_TOKEN`, an HTTP
+    error, or a network exception — as a returned `{"error": ...}` dict
+    rather than raising. `DashboardLocator` needs the opposite (ADR-0004 D3
+    point 1: "supervisor_get ... raise[s] on failure to reach Supervisor at
+    all"), so it can turn any of those into `esphome_unreachable` uniformly
+    without needing to know `_sup_json`'s own error shape. This is that thin
+    adapter; it performs no I/O of its own.
     """
-    import websockets
-
-    lines: list[str] = []
-    try:
-        async with websockets.connect(_dash_ws_url(path), max_size=None) as ws:
-            await ws.send(json.dumps({"type": "spawn", **payload}))
-            deadline = asyncio.get_running_loop().time() + timeout
-            while True:
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    return {
-                        "error": "timeout",
-                        "timeout": timeout,
-                        "log_tail": lines[-tail_lines:],
-                        "log_lines": len(lines),
-                    }
-                try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-                except asyncio.TimeoutError:
-                    return {
-                        "error": "timeout",
-                        "timeout": timeout,
-                        "log_tail": lines[-tail_lines:],
-                        "log_lines": len(lines),
-                    }
-                message = json.loads(raw)
-                event = message.get("event")
-                if event == "line":
-                    lines.append(message.get("data", ""))
-                elif event == "exit":
-                    code = message.get("code")
-                    return {
-                        "exit_code": code,
-                        "success": code == 0,
-                        "log_tail": lines[-tail_lines:],
-                        "log_lines": len(lines),
-                    }
-    except OSError as e:
-        return {"error": f"Cannot connect to ESPHome dashboard at {_DASH_URL}: {e}"}
+    result = _sup_json("GET", path)
+    if "error" in result:
+        raise RuntimeError(result["error"])
+    return result
 
 
-def _dash_ws_spawn(path: str, payload: dict, timeout: float = 120, tail_lines: int = 200) -> dict:
-    def coro_factory():
-        return _dash_ws_spawn_async(path, payload, timeout, tail_lines)
-
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro_factory())
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        return pool.submit(asyncio.run, coro_factory()).result()
+_dashboard_lock = threading.RLock()  # reentrant: _get_dashboard_client() calls _get_dashboard_locator()
+                                      # while already holding this lock.
+_dashboard_locator: dash.DashboardLocator | None = None
+_dashboard_client: dash.DashboardClient | None = None
 
 
-async def _dash_ws_command_async(command: str, args: dict, timeout: float, tail_lines: int) -> dict:
-    """Run one command on the ESPHome Device Builder multiplexed WebSocket API (`/ws`).
+def _get_dashboard_locator() -> dash.DashboardLocator:
+    """Process-wide `DashboardLocator` singleton, built lazily on first use.
 
-    Protocol (esphome/device-builder, docs/API.md, confirmed on GitHub 2026-09-27):
-    on connect the server sends a `ServerInfoMessage` first (checked here for
-    `requires_auth` — if the dashboard has a username/password set, this bails out
-    immediately with a clear error rather than hanging or guessing credentials, since
-    no ESPHOME_USERNAME/ESPHOME_PASSWORD plumbing exists yet). The client then sends
-    one `{"command": ..., "message_id": ..., "args": ...}`; the server replies either
-    a single `{"message_id", "result"}`, an `{"message_id", "error_code", "details"}`,
-    or streams `{"message_id", "event": "output", "data": <str>}` lines followed by a
-    terminal `{"message_id", "event": "result", "data": {...}}`.
+    Reads `os.environ` live on every `locate()` call (see
+    `esphome_dashboard.DashboardLocator`), so this does not need rebuilding
+    when `ESPHOME_DASHBOARD_URL`/`SUPERVISOR_TOKEN` change — only its
+    in-memory `supervisor_ingress` cache (`invalidate()`) does. Reset for
+    tests with `_reset_dashboard_client()`.
     """
-    import websockets
-
-    message_id = "1"
-    lines: list[str] = []
-    deadline = asyncio.get_running_loop().time() + timeout
-
-    async def _recv(ws):
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            raise asyncio.TimeoutError
-        return await asyncio.wait_for(ws.recv(), timeout=remaining)
-
-    try:
-        async with websockets.connect(_dash_ws_url("/ws"), max_size=None) as ws:
-            try:
-                raw = await _recv(ws)
-            except asyncio.TimeoutError:
-                return {"error": "timeout", "timeout": timeout, "log_tail": [], "log_lines": 0}
-            server_info = json.loads(raw)
-            if server_info.get("requires_auth"):
-                return {
-                    "error": "Dashboard requires authentication (ESPHOME_USERNAME/"
-                             "ESPHOME_PASSWORD) — not supported by this tool.",
-                }
-
-            await ws.send(json.dumps({"command": command, "message_id": message_id, "args": args}))
-
-            while True:
-                try:
-                    raw = await _recv(ws)
-                except asyncio.TimeoutError:
-                    return {
-                        "error": "timeout",
-                        "timeout": timeout,
-                        "log_tail": lines[-tail_lines:],
-                        "log_lines": len(lines),
-                    }
-                message = json.loads(raw)
-                if message.get("message_id") != message_id:
-                    continue
-                if "error_code" in message:
-                    return {
-                        "error": message.get("error_code"),
-                        "details": message.get("details"),
-                        "log_tail": lines[-tail_lines:],
-                        "log_lines": len(lines),
-                    }
-                if "result" in message:
-                    return {
-                        "success": True,
-                        "result": message["result"],
-                        "log_tail": lines[-tail_lines:],
-                        "log_lines": len(lines),
-                    }
-                event = message.get("event")
-                if event == "output":
-                    lines.append(message.get("data", ""))
-                elif event == "result":
-                    data = message.get("data") or {}
-                    success = data.get("success")
-                    return {
-                        "success": bool(success) if success is not None else None,
-                        "exit_code": data.get("code"),
-                        "result": data,
-                        "log_tail": lines[-tail_lines:],
-                        "log_lines": len(lines),
-                    }
-    except OSError as e:
-        return {"error": f"Cannot connect to ESPHome dashboard at {_DASH_URL}: {e}"}
+    global _dashboard_locator
+    with _dashboard_lock:
+        if _dashboard_locator is None:
+            _dashboard_locator = dash.DashboardLocator(
+                env=os.environ,
+                supervisor_get=_supervisor_get,
+                discover_slug=_discover_esphome_slug,
+            )
+        return _dashboard_locator
 
 
-def _dash_ws_command(command: str, args: dict, timeout: float = 60, tail_lines: int = 200) -> dict:
-    def coro_factory():
-        return _dash_ws_command_async(command, args, timeout, tail_lines)
+def _get_dashboard_client() -> dash.DashboardClient:
+    """Process-wide `DashboardClient` singleton (one client/locator per process, ADR-0004 D3)."""
+    global _dashboard_client
+    with _dashboard_lock:
+        if _dashboard_client is None:
+            _dashboard_client = dash.DashboardClient(_get_dashboard_locator())
+        return _dashboard_client
 
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro_factory())
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        return pool.submit(asyncio.run, coro_factory()).result()
+
+def _reset_dashboard_client() -> None:
+    """Test-only: drop the cached locator/client singletons so a fresh env is picked up."""
+    global _dashboard_locator, _dashboard_client
+    with _dashboard_lock:
+        _dashboard_locator = None
+        _dashboard_client = None
+
+
+def _diagnose_dashboard_unreachable() -> dict:
+    """Build the `diagnosis` dict attached to an `esphome_unreachable`/`esphome_auth_required` error.
+
+    Re-derives everything fresh from env/Supervisor rather than from the
+    raised `DashboardError`'s own `.extra` — that works whether the failure
+    happened while resolving the endpoint at all (`DashboardLocator.locate()`
+    itself raised) or while talking to an endpoint that did resolve
+    (connection refused, or the dashboard refusing auth after connecting).
+
+    Returns `{"mode", "dashboard_url", "slug", "addon_state", "ingress",
+    "ingress_port", "advice"}` (ADR-0004 D3) — `mode` is `"explicit"`,
+    `"supervisor_ingress"`, or `"unknown"` (neither `ESPHOME_DASHBOARD_URL`
+    nor `SUPERVISOR_TOKEN` set); every field besides `mode`/`dashboard_url`/
+    `advice` is `None` outside `supervisor_ingress` mode, since there is no
+    add-on to describe.
+    """
+    explicit_url = (os.getenv("ESPHOME_DASHBOARD_URL") or "").strip()
+    if explicit_url:
+        return {
+            "mode": "explicit",
+            "dashboard_url": explicit_url,
+            "slug": None,
+            "addon_state": None,
+            "ingress": None,
+            "ingress_port": None,
+            "advice": (
+                f"ESPHOME_DASHBOARD_URL is set to {explicit_url!r} but the dashboard did not "
+                "respond as expected. Check that an ESPHome Device Builder is actually "
+                "listening there and reachable from this container/host."
+            ),
+        }
+
+    if not (os.getenv("SUPERVISOR_TOKEN") or "").strip():
+        return {
+            "mode": "unknown",
+            "dashboard_url": None,
+            "slug": None,
+            "addon_state": None,
+            "ingress": None,
+            "ingress_port": None,
+            "advice": (
+                "Neither ESPHOME_DASHBOARD_URL nor SUPERVISOR_TOKEN is set — there is no "
+                "configured way to reach an ESPHome dashboard from here."
+            ),
+        }
+
+    slug = _discover_esphome_slug()
+    if not slug:
+        return {
+            "mode": "supervisor_ingress",
+            "dashboard_url": None,
+            "slug": None,
+            "addon_state": None,
+            "ingress": None,
+            "ingress_port": None,
+            "advice": (
+                "The ESPHome add-on was not found in the Supervisor add-on list — install it, "
+                "or check that it is not stopped/uninstalled."
+            ),
+        }
+
+    info = _sup_json("GET", f"/addons/{slug}/info")
+    if "error" in info:
+        return {
+            "mode": "supervisor_ingress",
+            "dashboard_url": None,
+            "slug": slug,
+            "addon_state": None,
+            "ingress": None,
+            "ingress_port": None,
+            "advice": f"Could not reach Supervisor to get add-on '{slug}' info: {info['error']}.",
+        }
+
+    data = info.get("data", {})
+    state = data.get("state")
+    ingress = bool(data.get("ingress"))
+    port = data.get("ingress_port")
+    valid_port = isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535
+    dashboard_url = f"http://127.0.0.1:{port}" if valid_port else None
+
+    if state != "started":
+        advice = f"ESPHome add-on '{slug}' is not running (state={state!r}) — start it under Settings > Add-ons."
+    elif not ingress:
+        advice = (
+            f"ESPHome add-on '{slug}' does not have ingress enabled — nexus needs it (over its own "
+            "host_network, ADR-0004) to reach the dashboard at 127.0.0.1:<ingress_port>."
+        )
+    elif not valid_port:
+        advice = f"ESPHome add-on '{slug}' reported no usable ingress_port ({port!r})."
+    else:
+        advice = (
+            f"Add-on '{slug}' looks installed, running and ingress-enabled at {dashboard_url}, but the "
+            "connection still failed. Check `esphome_get_addon_logs` for a crash there, and that nexus "
+            "itself is running with host_network enabled (ADR-0004) so it shares the host's loopback."
+        )
+
+    return {
+        "mode": "supervisor_ingress",
+        "dashboard_url": dashboard_url,
+        "slug": slug,
+        "addon_state": state,
+        "ingress": ingress,
+        "ingress_port": port if valid_port else None,
+        "advice": advice,
+    }
+
+
+def _dashboard_error_response(
+    e: dash.DashboardError, *, device: str | None = None, action: str | None = None,
+) -> dict:
+    """Map one `esphome_dashboard.DashboardError` to this module's `{"error": ...}` shape.
+
+    Shared by every tool that talks to `DashboardClient` (`ping_dashboard`,
+    `compile_device`, `validate_config`, `upload_device`) so the mapping —
+    stable `.code` values, `dashboard_error_code`/`details` for a dashboard-
+    reported failure, `log_tail`/`log_lines`/`job_may_still_be_running` for a
+    timeout, and a Supervisor-derived `diagnosis` for `esphome_unreachable`/
+    `esphome_auth_required` (ADR-0004 D3) — lives in exactly one place.
+    """
+    result: dict = {}
+    if device is not None:
+        result["device"] = device
+    if action is not None:
+        result["action"] = action
+    result["error"] = e.code
+    message = str(e)
+
+    if isinstance(e, dash.CommandFailedError):
+        result["dashboard_error_code"] = e.dashboard_error_code
+        result["details"] = e.details
+    elif isinstance(e, dash.DashboardTimeoutError):
+        result["timeout"] = e.timeout
+        result["log_tail"] = e.log_tail
+        result["log_lines"] = e.log_lines
+        result["job_may_still_be_running"] = e.job_may_still_be_running
+        if e.job_may_still_be_running:
+            message += (
+                " Do not retry — the dashboard's firmware job queue does not cancel a job just "
+                "because this call stopped waiting for it; check esphome_get_addon_logs instead."
+            )
+    elif isinstance(e, (dash.UnreachableError, dash.AuthRequiredError)):
+        result["diagnosis"] = _diagnose_dashboard_unreachable()
+
+    result["message"] = message
+    return result
 
 
 def _looks_like_esphome_slug(slug: str) -> bool:
@@ -343,90 +382,30 @@ def _esphome_slug_candidates() -> list[str]:
     return list(_ESPHOME_SLUGS)
 
 
-def _dashboard_unreachable_diagnosis() -> dict:
-    """Diagnose an unreachable ESPHome dashboard from the Supervisor add-on's own info.
-
-    `GET /addons/<slug>/info` (developers.home-assistant.io/docs/api/
-    supervisor/endpoints, confirmed 2026-09-27) exposes `network` — a dict of
-    `"<container_port>/<proto>": <host_port>` entries for every port the
-    add-on's `config.yaml` declares, where the value is the published host
-    port (`int`) or `None` when the user has left that port unpublished (the
-    key is always present; only its value tells you whether it's mapped) —
-    and `ingress` (bool). Confirmed against `home-assistant/supervisor`
-    tag 2026.09.2: `App.ports` (`supervisor/apps/app.py`) merges the user's
-    persisted per-port override over the `config.yaml` default the same way
-    regardless of `host_network`, so `None` means "not published" whether or
-    not `host_network` is set — `host_network` only changes how that
-    publishing is *enforced*: `DockerApp.ports` (`supervisor/docker/app.py`)
-    returns `None` (no `-p` mapping passed to Docker at all) whenever
-    `self.app.host_network` is true, because `network_mode` is `"host"` and
-    the container already shares the host's network stack, so an `int` value
-    there does not correspond to a distinct Docker port-publish step the way
-    it does for a bridge-network add-on — the port still isn't reachable
-    unless the add-on's own process is listening on it. Nexus never uses
-    Supervisor ingress (a session isn't scoped to one add-on; rejected by
-    Panel Security), so a dashboard only reachable through ingress is, from
-    here, indistinguishable from one not reachable at all — the fix is the
-    same either way: publish port 6052 on the add-on's own network settings.
-    """
-    candidates = _esphome_slug_candidates()
-    for slug in candidates:
-        result = _sup_json("GET", f"/addons/{slug}/info")
-        if "error" in result:
-            continue
-        data = result.get("data", {})
-        network = data.get("network") or {}
-        port_mapped = isinstance(network.get("6052/tcp"), int)
-        ingress_only = bool(data.get("ingress")) and not port_mapped
-        if port_mapped:
-            advice = (
-                f"Port 6052 is mapped for add-on '{slug}' but still unreachable at "
-                f"{_DASH_URL} — check that ESPHOME_DASHBOARD_URL matches the mapped "
-                "host port and that network routing/firewall allows it."
-            )
-        else:
-            advice = (
-                f"Add-on '{slug}' does not publish port 6052 on its own network"
-                + (" (ingress-only)" if ingress_only else "")
-                + f"; nexus connects at ESPHOME_DASHBOARD_URL ({_DASH_URL}), not "
-                "through Supervisor ingress. To fix: in the ESPHome add-on's "
-                "settings, map host port 6052 under 'Network' with authentication "
-                "enabled (do not disable it via 'leave_front_door_open')."
-            )
-        return {
-            "slug": slug,
-            "port_6052_mapped": port_mapped,
-            "ingress_only": ingress_only,
-            "dashboard_url": _DASH_URL,
-            "advice": advice,
-        }
-    return {
-        "error": "Could not reach Supervisor to diagnose the add-on (SUPERVISOR_TOKEN unset, or /addons unreachable).",
-        "dashboard_url": _DASH_URL,
-        "tried_slugs": candidates,
-    }
-
-
-def _attach_dashboard_diagnosis(result: dict) -> dict:
-    """Add a Supervisor-based `diagnosis` to a dashboard-call result that failed to connect."""
-    err = result.get("error")
-    if isinstance(err, str) and err.startswith("Cannot connect to ESPHome dashboard"):
-        return {**result, "diagnosis": _dashboard_unreachable_diagnosis()}
-    return result
+_BLOCKED_DEVICE_NAMES = {"secrets", "secrets.yaml"}
+"""Device names this module refuses everywhere (ADR-0004 D-3): ESPHome's own
+per-device secrets file, `/config/esphome/secrets.yaml`, is not a device
+config. `files.py`'s `_BLOCKED_PATHS` blocks the equivalent generic
+`/config/secrets.yaml`; this module has its own denylist because device
+names here are bare stems/filenames, not `files`-style relative paths."""
 
 
 def _safe_filename(name: str) -> str:
     """Validate a user-supplied ESPHome device name and return its `<name>.yaml` filename.
 
-    Rejects path separators, a leading dot, and blank input (same policy as
-    `tools/themes.py::_theme_path`) — this is the boundary that stops
-    `write_config(name="../../../etc/cron.d/x", ...)`-style path traversal, applied
-    to every device-name parameter in this module (get/write_config, compile/
-    validate/upload/clean_mqtt, the LVGL editor tools) before it reaches disk or is
-    forwarded to the dashboard as a `configuration` argument.
+    Rejects path separators, a leading dot, blank input, and (case-
+    insensitively) `secrets`/`secrets.yaml` (ADR-0004 D-3) — this is the
+    boundary that stops `write_config(name="../../../etc/cron.d/x", ...)`-
+    style path traversal and `get_config(name="secrets")`-style access to
+    ESPHome's own secrets file, applied to every device-name parameter in
+    this module (get/write_config, compile/validate/upload/clean_mqtt, the
+    LVGL editor tools) before it reaches disk or is forwarded to the
+    dashboard as a `configuration` argument.
     """
     if "/" in name or "\\" in name or name.startswith(".") or not name.strip():
         raise ValueError(f"Invalid device name: {name!r}")
+    if name.strip().lower() in _BLOCKED_DEVICE_NAMES:
+        raise ValueError(f"Access to '{name}' is blocked: it is not a device config.")
     return name if name.endswith(".yaml") else f"{name}.yaml"
 
 
@@ -451,7 +430,7 @@ def _yaml_names() -> list[str]:
         return []
     return sorted(
         f.stem for f in _ESPHOME_DIR.glob("*.yaml")
-        if not f.name.startswith(".") and f.name != "secrets.yaml"
+        if not f.name.startswith(".") and f.stem.lower() not in _BLOCKED_DEVICE_NAMES
     )
 
 
@@ -622,6 +601,90 @@ def get_config(
     return {"name": path.name, "content": path.read_text(encoding="utf-8")}
 
 
+_REMOTE_SOURCE_RE = re.compile(r"^(?:https?|git|github|gitlab|codeberg)://", re.IGNORECASE)
+
+
+def _is_remote_source_string(value: str) -> bool:
+    """True if `value` looks like a remote `external_components:`/`packages:` source.
+
+    Matches every remote-source prefix ESPHome itself recognizes
+    (esphome.io/components/external_components, esphome.io/components/
+    packages): `github://`, `gitlab://`, `codeberg://`, `git://`,
+    `http(s)://`. A bare relative path — `external_components`'s local
+    shorthand, or a `packages:` value that was a `!include` in the source
+    YAML (its tag is stripped by `write_config`'s loader, leaving just the
+    plain filename) — has none of these and is treated as local.
+    """
+    return bool(_REMOTE_SOURCE_RE.match(value.strip()))
+
+
+def _remote_source_from_dict(source: dict) -> str | None:
+    """Extract a remote source string from one `source:`/packages dict entry, or None if local.
+
+    `type: local` (`external_components`'s own local dict form) is always
+    local, regardless of any other key. Otherwise a `url` key — required by
+    `packages`' remote dict form and used by `external_components`'
+    `type: git` dict form — marks the entry remote. A dict with neither
+    `type: local` nor a `url` matches no documented remote form and is
+    skipped rather than guessed at.
+    """
+    if str(source.get("type", "")).strip().lower() == "local":
+        return None
+    url = source.get("url")
+    if isinstance(url, str) and url.strip():
+        return url.strip()
+    return None
+
+
+def _detect_remote_sources(parsed: dict) -> list[str]:
+    """Scan a parsed ESPHome config's `external_components:`/`packages:` for remote sources.
+
+    Static structural check on the already-parsed YAML only — no network
+    I/O, nothing fetched or executed here. `external_components:` is a list
+    of `{source: ..., ...}` entries whose `source` is a string (a
+    `github://...` shorthand, a `type: git` dict, or a local path/`type:
+    local` dict) per esphome.io/components/external_components. `packages:`
+    is a dict or list whose entries are a local `!include`/bare-path string,
+    a remote shorthand string (`github://`/`gitlab://`/`codeberg://`), or a
+    dict carrying a `url`, per esphome.io/components/packages. Returns the
+    detected remote source strings in encounter order (external_components
+    first, then packages); duplicates are preserved, not deduplicated.
+    """
+    sources: list[str] = []
+
+    external_components = parsed.get("external_components")
+    if isinstance(external_components, list):
+        for entry in external_components:
+            if not isinstance(entry, dict):
+                continue
+            source = entry.get("source")
+            if isinstance(source, str):
+                if _is_remote_source_string(source):
+                    sources.append(source.strip())
+            elif isinstance(source, dict):
+                found = _remote_source_from_dict(source)
+                if found:
+                    sources.append(found)
+
+    packages = parsed.get("packages")
+    if isinstance(packages, dict):
+        package_values = list(packages.values())
+    elif isinstance(packages, list):
+        package_values = packages
+    else:
+        package_values = []
+    for value in package_values:
+        if isinstance(value, str):
+            if _is_remote_source_string(value):
+                sources.append(value.strip())
+        elif isinstance(value, dict):
+            found = _remote_source_from_dict(value)
+            if found:
+                sources.append(found)
+
+    return sources
+
+
 @mcp.tool(annotations=destructive("Write ESPHome device YAML config", idempotent=True))
 def write_config(
     name: Annotated[
@@ -656,7 +719,12 @@ def write_config(
     `esphome_lvgl_add_widget`/`esphome_lvgl_delete_widget` instead of
     hand-editing the whole YAML text.
     Returns: `{"success": True, "name": ..., "path": ..., "bytes": ...}` on
-    success.
+    success; a remote `external_components:`/`packages:` source
+    (`github://`/`gitlab://`/`codeberg://`/`git://`/`http(s)://`, or a dict
+    with a `url`) adds `"warning"` (review before `esphome_compile_device`,
+    which fetches and runs it) and `"external_sources": [...]`; a config
+    with none, or only local (`type: local`, bare-path, `!include`) ones,
+    gets neither key.
     Errors: `{"success": False, "error": "YAML validation failed: ..."}` for
     invalid YAML; `{"success": False, "error": "Invalid device name: ..."}`
     for a path-escaping `name`.
@@ -680,7 +748,7 @@ def write_config(
         # _ESPHomeLoader subclasses yaml.SafeLoader (not yaml.Loader/UnsafeLoader) and
         # only adds passthrough constructors for scalar ESPHome tags -- it cannot
         # construct arbitrary Python objects, so this is not the S506 vulnerability.
-        yaml.load(content, Loader=_ESPHomeLoader)  # noqa: S506
+        parsed = yaml.load(content, Loader=_ESPHomeLoader)  # noqa: S506
     except yaml.YAMLError as e:
         return {"success": False, "error": f"YAML validation failed: {e}"}
 
@@ -690,7 +758,17 @@ def write_config(
         return {"success": False, "error": str(e)}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-    return {"success": True, "name": path.name, "path": str(path), "bytes": len(content.encode())}
+    result = {"success": True, "name": path.name, "path": str(path), "bytes": len(content.encode())}
+
+    remote_sources = _detect_remote_sources(parsed if isinstance(parsed, dict) else {})
+    if remote_sources:
+        result["warning"] = (
+            "This config's external_components/packages fetch and execute code from a "
+            "remote source at compile time -- review external_sources before calling "
+            "esphome_compile_device."
+        )
+        result["external_sources"] = remote_sources
+    return result
 
 
 @mcp.tool(annotations=read("Get an ESPHome device's HA entities"))
@@ -789,39 +867,52 @@ def compile_device(
         Field(description="Number of trailing build-log lines to return, e.g. 200."),
     ] = 200,
 ) -> dict:
-    """Compile ESPHome firmware for a device via the dashboard WebSocket API (`/compile`).
+    """Compile ESPHome firmware for a device via the dashboard's `/compile` WebSocket route.
 
-    Blocks until the compile process exits (~60-180s). Verified compatible
-    with the "ESPHome Device Builder" add-on (github.com/esphome/
-    device-builder, read on GitHub 2026-09-27): `/compile` is one of the
-    two routes it keeps for HA back-compat, with the same spawn wire
-    protocol as the old dashboard, now backed by its firmware job queue. On
-    a first build for a given platform, the PlatformIO toolchain fetches
-    build packages from the internet (registry.platformio.org) into its
-    own cache before compiling.
+    Blocks until the compile process exits (~60-180s). Compatible with the
+    "ESPHome Device Builder" add-on (esphome/device-builder): `/compile`
+    keeps the same spawn wire protocol as the old dashboard, now backed by
+    its firmware job queue. A first build for a platform fetches PlatformIO
+    packages from the internet before compiling. `only_generate=True` is
+    rejected outright (see Errors) — Device Builder ignores that field and
+    always runs a full build (ADR-0004 D4); it stays in the signature only
+    for input-shape compatibility.
 
-    Use when: building firmware for a device before `esphome_upload_device`.
-    Not for: checking config validity without a full build — use
-    `esphome_validate_config`, which is faster and does not fetch packages.
-    Returns: `{"device": ..., "action": "compile", "exit_code": <int>,
-    "success": <bool>, "log_tail": [...], "log_lines": <int>}`.
-    Errors: `{"device": ..., "action": "compile", "error": "Invalid device
-    name: ..."}` for a path-escaping `name`; `{"error": "timeout", ...}`
-    when `timeout` elapses; `{"error": "Cannot connect to ESPHome dashboard
-    at ...: ..., "diagnosis": {...}}` when unreachable — `diagnosis` comes
-    from the Supervisor add-on's own info (port-6052/ingress mapping and
-    what to change), see `esphome_ping_dashboard`.
-    Limits: blocks for up to `timeout` seconds; `log_lines` truncates the
-    returned log.
+    Use when: building firmware before `esphome_upload_device`.
+    Not for: checking config validity only — use `esphome_validate_config`,
+    which is faster and skips package downloads.
+    Returns: `{"device", "action": "compile", "exit_code", "success",
+    "log_tail", "log_lines"}`.
+    Errors: `{"error": "esphome_unsupported_option", ...}` for
+    `only_generate=True` (no I/O); `{"error": "Invalid device name: ..."}`
+    for a path-escaping or blocked (e.g. 'secrets') `name`; otherwise one of
+    `esphome_dashboard.DashboardError`'s stable codes —
+    `esphome_unreachable`/`esphome_auth_required` add `diagnosis` (see
+    `esphome_ping_dashboard`); `timeout` adds `log_tail`/`log_lines`/
+    `job_may_still_be_running` (always `True` — do not retry, check
+    `esphome_get_addon_logs`); `esphome_command_failed` adds
+    `dashboard_error_code`/`details`.
+    Limits: blocks up to `timeout` seconds; `log_lines` truncates the log.
     """
+    if only_generate:
+        return {
+            "device": name,
+            "action": "compile",
+            "error": "esphome_unsupported_option",
+            "message": (
+                "only_generate=True is not supported: ESPHome Device Builder's /compile route "
+                "ignores this field and always runs a full build (ADR-0004 D4) — there is no "
+                "generate-only mode to request."
+            ),
+        }
     try:
         filename = _safe_filename(name)
     except ValueError as e:
         return {"device": name, "action": "compile", "error": str(e)}
-    payload = {"configuration": filename}
-    if only_generate:
-        payload["only_generate"] = True
-    result = _attach_dashboard_diagnosis(_dash_ws_spawn("/compile", payload, timeout=timeout, tail_lines=log_lines))
+    try:
+        result = _get_dashboard_client().compile(filename, timeout=timeout, tail_lines=log_lines)
+    except dash.DashboardError as e:
+        return _dashboard_error_response(e, device=name, action="compile")
     return {"device": name, "action": "compile", **result}
 
 
@@ -844,34 +935,36 @@ def validate_config(
 
     Uses the `devices/validate` command on Device Builder's newer
     multiplexed `/ws` protocol (github.com/esphome/device-builder,
-    docs/API.md, confirmed 2026-09-27) — the legacy `/validate` WebSocket
-    route from the old ESPHome dashboard no longer exists in Device
-    Builder's `api/legacy.py`. Unlike `esphome_compile_device`, this never
-    builds firmware and never fetches PlatformIO packages. If the
-    dashboard needs a username/password, this fails fast instead of
-    hanging (no credential wiring exists yet).
+    docs/API.md) — the legacy `/validate` route from the old ESPHome
+    dashboard no longer exists. Unlike `esphome_compile_device`, this never
+    builds firmware or fetches PlatformIO packages. If the dashboard needs
+    a username/password, this fails fast instead of hanging (no credential
+    wiring exists here).
 
     Use when: checking a config's validity quickly, e.g. before
     `esphome_compile_device`.
     Not for: a full firmware build — use `esphome_compile_device`; not for
     LVGL-only structural checks — use `esphome_lvgl_validate`, which runs
     without the dashboard.
-    Returns: `{"device": ..., "action": "validate", "success": <bool>,
-    "result": ..., "log_tail": [...], "log_lines": <int>}`.
-    Errors: `{"device": ..., "action": "validate", "error": "Invalid device
-    name: ..."}` for a path-escaping `name`; `{"error": "timeout", ...}`
-    when `timeout` elapses; `{"error": "Dashboard requires
-    authentication..."}` when unsupported credentials are needed;
-    `{"error": "Cannot connect to ESPHome dashboard at ...: ...",
-    "diagnosis": {...}}` when unreachable — see `esphome_ping_dashboard`.
+    Returns: `{"device", "action": "validate", "success", "result",
+    "log_tail", "log_lines"}`.
+    Errors: `{"error": "Invalid device name: ..."}` for a path-escaping or
+    blocked (e.g. 'secrets') `name`; otherwise one of
+    `esphome_dashboard.DashboardError`'s stable codes —
+    `esphome_auth_required` (credentials this tool cannot supply) and
+    `esphome_unreachable` add `diagnosis` (see `esphome_ping_dashboard`);
+    `timeout` adds `log_tail`/`log_lines`/`job_may_still_be_running`
+    (always `False` — validation enqueues no job); `esphome_command_failed`
+    adds `dashboard_error_code`/`details`.
     """
     try:
         filename = _safe_filename(name)
     except ValueError as e:
         return {"device": name, "action": "validate", "error": str(e)}
-    result = _attach_dashboard_diagnosis(
-        _dash_ws_command("devices/validate", {"configuration": filename}, timeout=timeout, tail_lines=log_lines)
-    )
+    try:
+        result = _get_dashboard_client().validate(filename, timeout=timeout, tail_lines=log_lines)
+    except dash.DashboardError as e:
+        return _dashboard_error_response(e, device=name, action="validate")
     return {"device": name, "action": "validate", **result}
 
 
@@ -898,39 +991,60 @@ def upload_device(
         int,
         Field(description="Number of trailing upload-log lines to return, e.g. 200."),
     ] = 200,
+    confirm: Annotated[
+        bool,
+        Field(
+            description=(
+                "Set true to actually flash the device. False (default) "
+                "performs no action and instead returns a confirmation "
+                "prompt; `name` is not resolved or touched in that case."
+            )
+        ),
+    ] = False,
 ) -> dict:
-    """Flash previously compiled firmware to an ESPHome device via the dashboard WebSocket API (`/upload`).
+    """Flash previously compiled firmware to an ESPHome device via the dashboard's `/upload` WebSocket route.
 
     Requires the device to already be built (`esphome_compile_device`) and,
-    for OTA, reachable on the network with a matching OTA password. Blocks
-    until done (~30-240s) and overwrites the device's running firmware —
-    there is no automatic rollback if the new firmware is broken. Verified
-    compatible with the "ESPHome Device Builder" add-on (github.com/esphome/
-    device-builder, `api/legacy.py` read on GitHub 2026-09-27): `/upload` is
-    the other WebSocket route it keeps for HA back-compat, with the same
-    spawn wire protocol as `esphome_compile_device`.
+    for OTA, reachable with a matching OTA password. Without `confirm=True`
+    returns a confirmation prompt and performs no I/O (ADR-0004 D5) — this
+    overwrites the running firmware with no automatic rollback if broken.
+    Same "ESPHome Device Builder" (esphome/device-builder) spawn wire
+    protocol as `esphome_compile_device`, on `/upload`.
 
-    Use when: deploying a compiled build to the physical device.
-    Not for: building the firmware itself — use `esphome_compile_device`
-    first.
-    Returns: `{"device": ..., "action": "upload", "exit_code": <int>,
-    "success": <bool>, "log_tail": [...], "log_lines": <int>}` on
-    completion.
-    Errors: `{"device": ..., "action": "upload", "error": "Invalid device
-    name: ..."}` for a path-escaping `name`; `{"error": "timeout", ...}`
-    when `timeout` elapses; `{"error": "Cannot connect to ESPHome dashboard
-    at ...: ..., "diagnosis": {...}}` when unreachable — `diagnosis` comes
-    from the Supervisor add-on's own info, see `esphome_ping_dashboard`.
-    Limits: blocks for up to `timeout` seconds; overwrites the device's
-    firmware with no built-in rollback if the upload succeeds but the new
-    firmware is broken.
+    Use when: deploying a compiled build to the device, once confirmed.
+    Not for: building the firmware — use `esphome_compile_device` first.
+    Returns: `{"device", "action": "upload", "exit_code", "success",
+    "log_tail", "log_lines"}` on completion.
+    Errors: `{"error": "confirmation_required", "message", "action"}` when
+    `confirm` is false (checked first, before `name` is resolved);
+    `{"error": "Invalid device name: ..."}` for a path-escaping or blocked
+    (e.g. 'secrets') `name`; otherwise one of
+    `esphome_dashboard.DashboardError`'s stable codes —
+    `esphome_unreachable`/`esphome_auth_required` add `diagnosis` (see
+    `esphome_ping_dashboard`); `timeout` adds `log_tail`/`log_lines`/
+    `job_may_still_be_running` (always `True` — do not retry, check
+    `esphome_get_addon_logs`); `esphome_command_failed` adds
+    `dashboard_error_code`/`details`.
+    Limits: requires `confirm=True`; blocks up to `timeout` seconds; no
+    rollback if the upload succeeds but firmware is broken.
     """
+    if not confirm:
+        return {
+            "error": "confirmation_required",
+            "message": (
+                f"This will overwrite the running firmware on device '{name}' with no "
+                "automatic rollback if it is broken. Call again with confirm=True."
+            ),
+            "action": f"upload_device(name={name!r}, port={port!r}, confirm=True)",
+        }
     try:
         filename = _safe_filename(name)
     except ValueError as e:
         return {"device": name, "action": "upload", "error": str(e)}
-    payload = {"configuration": filename, "port": port}
-    result = _attach_dashboard_diagnosis(_dash_ws_spawn("/upload", payload, timeout=timeout, tail_lines=log_lines))
+    try:
+        result = _get_dashboard_client().upload(filename, port, timeout=timeout, tail_lines=log_lines)
+    except dash.DashboardError as e:
+        return _dashboard_error_response(e, device=name, action="upload")
     return {"device": name, "action": "upload", **result}
 
 
@@ -1214,36 +1328,49 @@ def get_addon_logs(
 
 @mcp.tool(annotations=read("Check ESPHome dashboard reachability"))
 def ping_dashboard() -> dict:
-    """Check whether the ESPHome dashboard responds at its configured URL.
+    """Check whether the ESPHome Device Builder dashboard responds.
 
-    Calls `GET /ping` on `ESPHOME_DASHBOARD_URL` (default
-    `http://homeassistant.local:6052`, override via that env var).
-    `reachable: false` here does not necessarily mean the add-on is down —
-    it means this URL/port isn't reachable from nexus's container; two
-    live-only things to check next are whether `mDNS homeassistant.local`
-    actually resolves inside the nexus container, and whether the add-on's
-    `ingress_url`/host port from `esphome_get_addon_info` matches
-    `ESPHOME_DASHBOARD_URL`.
+    Resolves where the dashboard is (`esphome_dashboard.DashboardLocator`,
+    ADR-0004 D2) — an explicit `ESPHOME_DASHBOARD_URL` (mode `"explicit"`)
+    if set, else in add-on mode the installed ESPHome add-on's own
+    site-ingress port, always dialled at `http://127.0.0.1:<ingress_port>`
+    (mode `"supervisor_ingress"`) — then calls `GET /ping` there. A `False`
+    `reachable` here does not necessarily mean the add-on itself is down;
+    see `diagnosis`/`advice` for what to check next.
 
     Use when: diagnosing a connection failure from
-    `esphome_compile_device`/`esphome_validate_config`/`esphome_upload_device`.
+    `esphome_compile_device`/`esphome_validate_config`/`esphome_upload_device`,
+    or confirming the dashboard is reachable before calling one of them.
     Not for: add-on version/update status — use `esphome_get_addon_info`.
-    Returns: `{"url": ..., "reachable": <bool>, "result": {...}}`; when
-    `reachable` is `False`, also `"diagnosis": {"slug", "port_6052_mapped",
-    "ingress_only", "dashboard_url", "advice"}` built from the ESPHome
-    add-on's own `GET /addons/<slug>/info` — whether port 6052 is published
-    on its network settings versus only reachable through Supervisor
-    ingress (which nexus does not use), and what to change if not.
-    Errors: never raises; `result` (from `/ping`) and, when Supervisor
-    itself can't be reached, `diagnosis` instead hold a nested
-    `{"error": ...}` value rather than failing the call.
+    Returns: `{"reachable": True, "url": ..., "mode": "explicit"|
+    "supervisor_ingress", "result": {...}}` (the raw `/ping` JSON) on
+    success.
+    Errors: never raises. On failure: `{"reachable": False, "error":
+    <stable code>, "message": ...}` — `"esphome_not_configured"` (neither
+    `ESPHOME_DASHBOARD_URL` nor the add-on's own info could be resolved) has
+    no `url`/`mode`; `"esphome_unreachable"`/`"esphome_auth_required"` add
+    `url`, `mode` and a `diagnosis`: `{"mode", "dashboard_url", "slug",
+    "addon_state", "ingress", "ingress_port", "advice"}` built from the
+    ESPHome add-on's own `GET /addons/<slug>/info` (`slug`/`addon_state`/
+    `ingress`/`ingress_port` are `None` outside `supervisor_ingress` mode).
     """
-    result = _dash("GET", "/ping", timeout=5)
-    reachable = "error" not in result
-    out = {"url": _DASH_URL, "reachable": reachable, "result": result}
-    if not reachable:
-        out["diagnosis"] = _dashboard_unreachable_diagnosis()
-    return out
+    locator = _get_dashboard_locator()
+    try:
+        endpoint = locator.locate()
+    except dash.DashboardError as e:
+        return {**_dashboard_error_response(e), "reachable": False}
+
+    try:
+        result = _get_dashboard_client().ping()
+    except dash.DashboardError as e:
+        return {
+            **_dashboard_error_response(e),
+            "reachable": False,
+            "url": endpoint.base_url,
+            "mode": endpoint.source,
+        }
+
+    return {"reachable": True, "url": endpoint.base_url, "mode": endpoint.source, "result": result}
 
 
 # ── LVGL tools ────────────────────────────────────────────────────────────────

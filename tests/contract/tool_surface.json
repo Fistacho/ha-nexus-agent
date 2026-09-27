@@ -3084,6 +3084,10 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
           "log_lines": {
             "default": 200,
             "type": "integer"

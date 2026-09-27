@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.23.0
+
+**Changed (important for operators)**
+
+- **The add-on now uses `host_network: true`** (ADR-0004). ESPHome
+  compile/validate/OTA upload only work through the Device Builder add-on's
+  trusted-peer ingress site, reachable at `127.0.0.1:<its ingress_port>` — the
+  same path Home Assistant Core itself uses — and that address is only
+  reachable this way when nexus shares the host's network namespace.
+  Consequence: the add-on's security rating drops by one point, and Docker no
+  longer maps `ports:` from `config.yaml` — nexus now reconstructs the Network
+  tab's LAN-port semantics itself at startup (default `0.0.0.0:7123`; pick a
+  different port in the Network tab and nexus opens the LAN on that port
+  instead, ingress stays fixed at 7123 either way; disable the port there and
+  only ingress remains reachable, with no LAN socket at all). The `port`
+  option itself is unchanged and still scheduled for removal in 1.0.0 — do not
+  work around any of this by editing it.
+- The ESPHome Device Builder's ingress URL is now discovered automatically
+  through the Supervisor (`ingress_port`) instead of a fixed guess. The
+  previous default `ESPHOME_DASHBOARD_URL=http://homeassistant.local:6052` has
+  been removed — standalone (non-add-on) installs must now set it explicitly
+  for `esphome_*` compile/validate/upload tools to work.
+- `esphome_*` tools now return stable error codes instead of ad-hoc messages:
+  `esphome_not_configured`, `esphome_unreachable`, `esphome_auth_required`,
+  `esphome_protocol_error`, `esphome_command_failed`, `esphome_unsupported_option`,
+  `timeout`. `esphome_unreachable`/`esphome_auth_required` now carry a
+  `diagnosis` block (mode, dashboard URL, slug, advice) instead of leaving the
+  caller to guess what to check next.
+- `esphome_upload_device` now requires `confirm=True` (new `confirm` parameter,
+  default `false`) — OTA-flashing a device is not undoable the way a config
+  edit is. Without it, the tool performs no I/O and returns
+  `{"error": "confirmation_required", "message", "action"}`.
+- `esphome_compile_device(only_generate=True)` now returns
+  `{"error": "esphome_unsupported_option", ...}` instead of silently compiling
+  anyway — the Device Builder's ingress site has no equivalent of ESPHome
+  CLI's `--only-generate`.
+- A compile/upload call that times out now returns
+  `job_may_still_be_running: true` — the underlying ESPHome job is not
+  cancelled by the timeout, so retrying blind can race a job already running;
+  check `esphome_get_addon_logs` first.
+
+**Added**
+
+- `esphome_write_config` now returns `warning` + `external_sources` when the
+  written config references remote `external_components`/`packages` — those
+  are fetched and executed at compile time, so review them before calling
+  `esphome_compile_device`.
+
+**Security**
+
+- New SSRF guard on `card_builder_upload_image_from_url`: resolves the target
+  hostname once, rejects loopback/link-local/unspecified/multicast/reserved
+  destinations, and connects to the resolved IP literal (not the hostname
+  again) on every redirect hop, closing the DNS-rebinding window. Relevant
+  because under `host_network`, a request to loopback from this add-on now
+  has the same peer identity Home Assistant Core has — exactly what some
+  ingress-fronted add-ons (e.g. the Device Builder) trust without
+  authentication.
+- `esphome_*` tools refuse to read or write `secrets.yaml`/`secrets` as a
+  device name — ESPHome's per-device secrets file is not a device.
+- In add-on mode nexus no longer trusts the loopback peer or the
+  `host_network` bridge gateway (`172.30.32.1`) as if it were Supervisor's
+  ingress proxy: `/mcp` still requires the API key, and the Setup UI still
+  only unlocks over genuine ingress (verified peer IP + `X-Ingress-Path`) or
+  a valid `Authorization: Bearer` token.
+
+**Internal**
+
+- New `esphome_dashboard.py` (Device Builder ingress client) and
+  `addon_network.py` (`ListenPlan` — reconstructs the Network tab's LAN-port
+  semantics from the Supervisor's own add-on info under `host_network`), plus
+  their test suites.
+- ADR-0003 P3 (tool-search mode) is reserved for 0.24.0, not this release —
+  `policy.py`'s `tool_mode` stays fixed at `"full"`.
+
 ## 0.22.2
 
 **Fixed**

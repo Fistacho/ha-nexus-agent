@@ -138,6 +138,10 @@ def _startup_log_lines(port: int, http_mode: bool) -> list[str]:
     It used to be printed with `print(f"API key → {API_KEY}")` on every
     start, landing in the add-on's persisted log (and any terminal history in
     standalone mode) in plaintext.
+
+    Used for stdio mode only since 0.23.0 (ADR-0004) — HTTP mode's banner
+    must instead reflect a `ListenPlan`, which may bind more than one socket;
+    see `_startup_log_lines_for_plan`.
     """
     from auth import _KEY_FILE
 
@@ -149,6 +153,38 @@ def _startup_log_lines(port: int, http_mode: bool) -> list[str]:
         ]
     else:
         lines = ["Nexus starting (stdio)"]
+
+    lines.append(f"API key stored in {_KEY_FILE}; open the Nexus panel (ingress) to see client config")
+    return lines
+
+
+def _startup_log_lines_for_plan(plan) -> list[str]:
+    """HTTP-mode startup banner for a `ListenPlan` (ADR-0004 D1b).
+
+    Unlike `_startup_log_lines`, this reports every socket nexus actually
+    binds — one line each — instead of assuming a single `0.0.0.0:<port>`.
+    Under `host_network` that can be one wildcard LAN socket (today's
+    behaviour, port left at its default), a wildcard LAN socket *plus* a
+    dedicated ingress socket (port remapped), or ingress-only with no LAN
+    socket at all (port disabled) — see `addon_network.ListenPlan`.
+
+    Never includes the raw API key, for the same reason as
+    `_startup_log_lines`.
+    """
+    from auth import _KEY_FILE
+
+    lines = ["Nexus starting (HTTP)"]
+    for host, sock_port in plan.sockets:
+        lines.append(f"Listening on {host}:{sock_port}")
+
+    if plan.lan_port is not None:
+        lines.append(f"Setup UI  → http://localhost:{plan.lan_port}")
+        lines.append(f"MCP       → http://localhost:{plan.lan_port}/mcp")
+    else:
+        lines.append(
+            "MCP + Setup UI are NOT exposed on the LAN (port disabled in this "
+            "add-on's Network settings) — reach Nexus via Home Assistant ingress instead"
+        )
 
     lines.append(f"API key stored in {_KEY_FILE}; open the Nexus panel (ingress) to see client config")
     return lines
@@ -246,8 +282,30 @@ def main():
         import uvicorn
 
         import setup_ui
+        from addon_network import AddonNetworkUnavailable, resolve_listen_plan
 
-        for line in _startup_log_lines(port, http_mode=True):
+        # ADR-0004 D1b: with `host_network: true`, Docker no longer publishes
+        # `config.yaml`'s `ports:` mapping — nexus must reconstruct the add-on
+        # Network tab's semantics itself before it can even pick a socket to
+        # bind. Standalone/NEXUS_HTTP-without-Supervisor short-circuits back
+        # to today's single `0.0.0.0:<port>` (see `ListenPlan.standalone`).
+        # A Supervisor that stays unreachable, or answers with something this
+        # module doesn't recognize, aborts startup instead of guessing a
+        # plan — the same fail-closed pattern as `_apply_tool_policy_or_exit`
+        # above, for the same reason: a wrong guess here could either expose
+        # the LAN port an operator deliberately disabled, or leave nexus
+        # unreachable in a way that looks like a crash instead of a config
+        # problem.
+        try:
+            listen_plan = resolve_listen_plan(
+                supervisor_token=os.getenv("SUPERVISOR_TOKEN"),
+                nexus_port=port,
+            )
+        except AddonNetworkUnavailable as exc:
+            print(f"Nexus refused to start: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+
+        for line in _startup_log_lines_for_plan(listen_plan):
             print(line)
 
         # Redact ?token=... from uvicorn's access log before any request is logged.
@@ -255,7 +313,28 @@ def main():
 
         app = _build_app()
         setup_ui.set_policy(tool_policy)
-        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")  # noqa: S104 — HA add-on container must accept Supervisor's port-mapped connections, not just loopback
+        setup_ui.set_listen_plan(listen_plan)
+
+        # uvicorn.Server.run(sockets=[...]) serves one app on multiple
+        # pre-bound sockets — the officially supported mechanism behind both
+        # systemd socket activation and Gunicorn's multi-worker mode
+        # (uvicorn.server.Server.startup(): `for sock in sockets:
+        # loop.create_server(create_protocol, sock=sock, ...)`), so every
+        # socket in `listen_plan.sockets` is served by the identical ASGI
+        # app/middleware stack — never a second, differently-configured
+        # server. `uvicorn.Config(...).bind_socket()` is uvicorn's own helper
+        # for turning a (host, port) pair into a correctly configured
+        # `socket.socket` (SO_REUSEADDR, AF_INET6 for a literal IPv6 host,
+        # `set_inheritable(True)`) — using it keeps every socket's low-level
+        # setup identical to what `uvicorn.run()` itself would have produced
+        # for a single socket, the exact behaviour this preserves for the
+        # `host_network: false`-equivalent single-socket plans (default LAN
+        # port, or standalone/NEXUS_HTTP).
+        sockets = [
+            uvicorn.Config(app, host=sock_host, port=sock_port, log_level="info").bind_socket()
+            for sock_host, sock_port in listen_plan.sockets
+        ]
+        uvicorn.Server(uvicorn.Config(app, log_level="info")).run(sockets=sockets)
     else:
         # stdio mode for Claude Desktop / local MCP client
         for line in _startup_log_lines(port, http_mode=False):
