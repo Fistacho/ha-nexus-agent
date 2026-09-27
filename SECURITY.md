@@ -25,22 +25,14 @@ vulnerability privately:
 3. GitHub will notify the repository maintainer privately; no other users or
    search engines can see the report until it is published as an advisory.
 
-> **Note for the repository owner:** Private Vulnerability Reporting must be
-> enabled once under **Settings → Security → Private vulnerability reporting**
-> before the flow above works. If it is not enabled yet, please enable it and
-> update this note.
-
-If you are unable to use GitHub's private reporting flow, contact:
-
-> **TODO(owner): add a private contact channel (e.g. a dedicated security
-> email address) here.** Do not guess or invent one — leave this placeholder
-> until the maintainer fills it in.
+GitHub Private Vulnerability Reporting is the only reporting channel for this
+project — there is no separate contact address.
 
 ### What to expect
 
-- **Acknowledgement:** TODO(owner) — target response time (e.g. "within 3
-  business days") once decided.
-- **Status updates:** TODO(owner) — target cadence while a fix is in progress.
+- **Acknowledgement:** best effort — this is a single-maintainer project;
+  reports are typically acknowledged as soon as the maintainer sees them.
+- **Status updates:** posted in the advisory/report thread itself.
 - **Disclosure:** coordinated disclosure once a fix is released; credit given
   to the reporter unless they prefer to stay anonymous.
 
