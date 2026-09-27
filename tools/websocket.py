@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from collections.abc import Callable
 from fastmcp import FastMCP
 from dotenv import load_dotenv
 
@@ -20,8 +21,21 @@ def _get_token() -> str:
     return get_ha_token()
 
 
-async def _ws_send_recv(messages: list[dict], collect_events: int = 0, timeout: float = 10.0) -> list[dict]:
-    """Open WebSocket to HA, authenticate, send messages, collect responses."""
+async def _ws_send_recv(
+    messages: list[dict],
+    collect_events: int = 0,
+    timeout: float = 10.0,
+    event_filter: Callable[[dict], bool] | None = None,
+) -> list[dict]:
+    """Open WebSocket to HA, authenticate, send messages, collect responses.
+
+    Every message received is appended to the returned list regardless of
+    `event_filter`. `event_filter`, when given, only decides which `event`
+    messages count toward `collect_events` — this lets a subscription like
+    `state_changed` (which HA never filters server-side by entity) stop only
+    once the events a caller actually cares about have arrived, instead of
+    being displaced by unrelated traffic.
+    """
     import websockets
 
     results = []
@@ -55,9 +69,10 @@ async def _ws_send_recv(messages: list[dict], collect_events: int = 0, timeout: 
                 data = json.loads(raw)
                 results.append(data)
                 if data.get("type") == "event":
-                    collected += 1
-                    if collect_events > 0 and collected >= collect_events:
-                        break
+                    if event_filter is None or event_filter(data):
+                        collected += 1
+                        if collect_events > 0 and collected >= collect_events:
+                            break
                 if collect_events == 0 and data.get("type") == "result":
                     break
             except asyncio.TimeoutError:
@@ -91,7 +106,13 @@ def get_states() -> list[dict]:
 
 @mcp.tool()
 def call_service(domain: str, service: str, data: dict | None = None) -> dict:
-    """Call a HA service via WebSocket."""
+    """Call a Home Assistant action that returns response data (e.g. weather.get_forecasts,
+    calendar.get_events, todo.get_items) and return that response. Always sends
+    return_response=true, so actions without responses (light.turn_on, switch.toggle, most control
+    actions) fail with a validation error — use services_call_service for those. `data` is the
+    service data including targets. Returns the raw WS result {success, result: {context, response}}
+    or {success: false, error}.
+    """
     payload = {
         "type": "call_service",
         "domain": domain,
@@ -107,26 +128,42 @@ def call_service(domain: str, service: str, data: dict | None = None) -> dict:
 
 
 @mcp.tool()
-def render_template(template: str) -> str:
-    """Render a Jinja2 template via WebSocket."""
+def render_template(template: str, timeout: float = 10.0) -> str:
+    """Render a Jinja2 template through HA's WebSocket `render_template` subscription and return the
+    rendered value. HA acks the subscription with a null `result`, then streams the rendered value in
+    a follow-up `event`; this waits (up to `timeout` seconds) for that event and returns its `result`.
+    Raises RuntimeError if the template itself errors (e.g. undefined variable) or if no event arrives
+    within `timeout`. For a one-shot render, prefer services_render_template (plain REST call, no
+    subscription semantics) — use this one only when you specifically need the WS transport.
+    """
     payload = {"type": "render_template", "template": template}
-    results = _run(_ws_send_recv([payload]))
+    results = _run(_ws_send_recv([payload], collect_events=1, timeout=timeout))
     for r in results:
-        if r.get("type") == "result" and r.get("success"):
-            return r["result"]
-    raise RuntimeError("Template render failed")
+        if r.get("type") == "event":
+            event = r.get("event", {})
+            if "error" in event:
+                raise RuntimeError(f"Template render failed: {event['error']}")
+            return event.get("result")
+    raise RuntimeError("Template render timed out waiting for a result event")
 
 
 @mcp.tool()
 def listen_state_changes(entity_id: str, count: int = 5, timeout: float = 30.0) -> list[dict]:
-    """Listen for state change events for an entity. Returns up to `count` events within `timeout` seconds.
-    Useful for watching a sensor, waiting for a motion trigger, etc.
+    """Listen for state change events for one specific entity. Returns up to `count` events for
+    `entity_id` within `timeout` seconds. HA has no server-side entity filter for the `state_changed`
+    event type, so this subscribes to all of them and counts only the ones matching `entity_id` toward
+    `count` — on a busy instance, unrelated entities' events no longer displace the target's.
     """
+    def _is_target_entity(data: dict) -> bool:
+        return data.get("event", {}).get("data", {}).get("entity_id") == entity_id
+
     payload = {
         "type": "subscribe_events",
         "event_type": "state_changed",
     }
-    results = _run(_ws_send_recv([payload], collect_events=count, timeout=timeout))
+    results = _run(
+        _ws_send_recv([payload], collect_events=count, timeout=timeout, event_filter=_is_target_entity)
+    )
     events = []
     for r in results:
         if r.get("type") == "event":

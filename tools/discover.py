@@ -11,10 +11,12 @@ sibling already registered.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import math
 import re
 from collections import Counter
+from pathlib import Path
 from typing import Any, Iterable
 
 from fastmcp import FastMCP
@@ -26,12 +28,63 @@ _ROOT: FastMCP | None = None
 _INDEX: list[dict[str, Any]] | None = None
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]+")
 
+# server.py is the single source of truth for namespace prefixes (one
+# `mcp.mount(..., namespace="...")` call per tool module). Reading its
+# *source text* — instead of `import server` — avoids a circular import
+# (server.py imports this module at load time) and avoids keeping a second,
+# driftable copy of the namespace list in this file.
+_SERVER_PY = Path(__file__).resolve().parent.parent / "server.py"
+_KNOWN_NAMESPACES: list[str] | None = None
+
+
+def _known_namespaces(server_path: Path = _SERVER_PY) -> list[str]:
+    """Parse `mcp.mount(..., namespace="...")` calls out of server.py's source.
+
+    Longest-first so e.g. "card_builder" is tried before any shorter prefix
+    that could otherwise also match (naive `name.split("_", 1)[0]` used to
+    misfile every `card_builder_*` tool under namespace "card").
+    """
+    try:
+        source = server_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(server_path))
+    except OSError:
+        return []
+
+    namespaces: list[str] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "mount"):
+            continue
+        for kw in node.keywords:
+            if kw.arg == "namespace" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                namespaces.append(kw.value.value)
+    return sorted(set(namespaces), key=len, reverse=True)
+
+
+def _namespace_prefixes() -> list[str]:
+    global _KNOWN_NAMESPACES
+    if _KNOWN_NAMESPACES is None:
+        _KNOWN_NAMESPACES = _known_namespaces()
+    return _KNOWN_NAMESPACES
+
+
+def _namespace_for(name: str) -> str:
+    """Resolve a fully-qualified tool name (e.g. 'card_builder_create_card') to its
+    real mount namespace, matching the longest known prefix first."""
+    for ns in _namespace_prefixes():
+        if name == ns or name.startswith(ns + "_"):
+            return ns
+    # Fallback for anything mounted without a known namespace (shouldn't
+    # normally happen — every tool goes through server.py's mount() calls).
+    return name.split("_", 1)[0] if "_" in name else name
+
 
 def bind_root(root: FastMCP) -> None:
     """Register the root FastMCP whose tools we should index. Call after mount()s."""
-    global _ROOT, _INDEX
+    global _ROOT, _INDEX, _KNOWN_NAMESPACES
     _ROOT = root
     _INDEX = None  # lazy rebuild on next search
+    _KNOWN_NAMESPACES = None  # re-read server.py too, in case it changed
 
 
 def _tokenize(text: str) -> list[str]:
@@ -59,7 +112,7 @@ def _build_index(tools: Iterable[Any]) -> list[dict[str, Any]]:
     for t in tools:
         name = t.name
         desc = t.description or ""
-        namespace = name.split("_", 1)[0] if "_" in name else name
+        namespace = _namespace_for(name)
         tokens = _tokenize(name) + _tokenize(desc)
         index.append(
             {
@@ -129,7 +182,7 @@ def tool_search(query: str, top_k: int = 10, namespace: str | None = None) -> li
     matches. Each hit: `{name, namespace, summary, score}`.
 
     Use this to discover the right tool name before calling it — instead of
-    keeping the full ~250-tool surface in working memory.
+    keeping the whole tool surface in working memory.
     """
     index = _ensure_index()
     if namespace:

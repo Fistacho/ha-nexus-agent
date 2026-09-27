@@ -54,8 +54,9 @@ _BLOCKED_PATHS = {"secrets.yaml", ".storage"}
 
 def _safe_path(relative_path: str) -> Path:
     """Resolve path safely within HA config directory."""
+    config_root = _CONFIG_PATH.resolve()
     path = (_CONFIG_PATH / relative_path).resolve()
-    if not str(path).startswith(str(_CONFIG_PATH.resolve())):
+    if not path.is_relative_to(config_root):
         raise PermissionError(f"Path outside config directory: {path}")
     if path.suffix not in _ALLOWED_EXTENSIONS:
         raise PermissionError(f"File extension not allowed: {path.suffix}")
@@ -76,8 +77,10 @@ def read_config_file(relative_path: str) -> str:
 
 @mcp.tool()
 def write_config_file(relative_path: str, content: str, validate_yaml: bool = True) -> dict:
-    """Write content to a config file. Validates YAML syntax before saving (set validate_yaml=False to skip).
-    Creates parent directories as needed.
+    """Overwrite (or create, with parent directories) a file under /config with `content`. Only
+    .yaml/.yml/.json/.txt; secrets.yaml and .storage/ are refused. YAML is syntax-checked unless
+    validate_yaml=False (HA tags accepted). No backup — the previous content is lost (use
+    git_safe_write_with_checkpoint to keep one). Does not reload HA.
     """
     path = _safe_path(relative_path)
 
@@ -94,9 +97,17 @@ def write_config_file(relative_path: str, content: str, validate_yaml: bool = Tr
 
 @mcp.tool()
 def list_config_files(subdirectory: str = "") -> list[str]:
-    """List files in the HA config directory (or a subdirectory)."""
+    """Recursively list .yaml/.yml/.json/.txt files under /config or `subdirectory` (paths relative to
+    /config; secrets.yaml and .storage/ excluded). Output can be large for the /config root.
+    A `subdirectory` that resolves (after following symlinks) outside /config
+    (e.g. '..', an absolute path, or a symlink pointing out) returns [] instead
+    of listing files outside the config directory.
+    """
+    config_root = _CONFIG_PATH.resolve()
     base = _CONFIG_PATH / subdirectory if subdirectory else _CONFIG_PATH
     base = base.resolve()
+    if not base.is_relative_to(config_root):
+        return []
     if not base.exists():
         return []
     return [
@@ -109,10 +120,10 @@ def list_config_files(subdirectory: str = "") -> list[str]:
 
 @mcp.tool()
 def validate_yaml_content(content: str) -> dict:
-    """Validate YAML content without saving. Returns parsed result or error.
-
-    Tolerates Home Assistant custom tags (`!include`, `!secret`, `!env_var`, …)
-    so real HA config files validate cleanly.
+    """Check YAML syntax without writing anything. Returns {valid: true, type: 'dict'|'list'|…} (top-
+    level type only, not the parsed content) or {valid: false, error}. HA tags (!include*, !secret,
+    !env_var, !input) are accepted but not resolved, so this checks syntax only, not HA schema
+    validity (use system_check_config for that).
     """
     try:
         parsed = _ha_yaml_load(content)
@@ -123,7 +134,9 @@ def validate_yaml_content(content: str) -> dict:
 
 @mcp.tool()
 def delete_config_file(relative_path: str) -> dict:
-    """Delete a config file. Will NOT delete if it has no known safe extension."""
+    """Permanently delete a .yaml/.yml/.json/.txt file under /config (secrets.yaml and .storage/ are
+    refused). No confirmation, backup or undo.
+    """
     path = _safe_path(relative_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
@@ -133,7 +146,10 @@ def delete_config_file(relative_path: str) -> dict:
 
 @mcp.tool()
 def append_to_config_file(relative_path: str, content: str, validate_yaml: bool = False) -> dict:
-    """Append content to an existing config file (e.g. adding an automation entry to automations.yaml)."""
+    """Append `content` after a newline to an existing file under /config. YAML is NOT checked unless
+    validate_yaml=True. For automations prefer automations_set_automation_config; raw appends must
+    match the file's list indentation.
+    """
     path = _safe_path(relative_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")

@@ -23,18 +23,33 @@ def save_energy_prefs(
     currency: str | None = None,
     energy_per_unit: float | None = None,
 ) -> dict:
-    """Save Energy Dashboard preferences (WS `energy/save_prefs`); only the fields you pass are sent."""
+    """Save Energy Dashboard preferences (WS `energy/save_prefs`).
+
+    Only `energy_sources` and `device_consumption` are real fields of this WS
+    schema — each one you pass REPLACES the entire saved list (it is not
+    merged; use `add_grid_consumption`/`add_solar_source`/`remove_energy_source`
+    etc. below for incremental edits).
+
+    `currency` and `energy_per_unit` are kept as (deprecated) parameters for
+    backward compatibility only: neither is part of `energy/save_prefs` — HA's
+    currency is core config (`homeassistant.currency`), not an Energy
+    Dashboard pref, and `energy_per_unit` does not exist in this schema at
+    all. Passing either now returns an error instead of being silently
+    dropped, so a caller doesn't mistake `{"status": "saved"}` for the
+    currency actually having been changed.
+    """
+    if currency is not None or energy_per_unit is not None:
+        return {
+            "error": "currency and energy_per_unit are not fields of HA's energy/save_prefs WS schema; nothing was saved",
+            "hint": "currency is core config (homeassistant.currency), not an Energy Dashboard pref; these parameters are deprecated and ignored",
+        }
     payload: dict = {}
     if energy_sources is not None:
         payload["energy_sources"] = energy_sources
     if device_consumption is not None:
         payload["device_consumption"] = device_consumption
-    if currency is not None:
-        payload["currency"] = currency
-    if energy_per_unit is not None:
-        payload["energy_per_unit"] = energy_per_unit
     if not payload:
-        return {"error": "no fields to save", "hint": "pass at least one of energy_sources, device_consumption, currency, energy_per_unit"}
+        return {"error": "no fields to save", "hint": "pass at least one of energy_sources, device_consumption"}
     try:
         result = ha._ws_call("energy/save_prefs", **payload)
         return {"status": "saved", "result": result, "fields": list(payload.keys())}

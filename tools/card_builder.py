@@ -23,7 +23,10 @@ A "card" lives in HA storage and is referenced from a dashboard with
 from __future__ import annotations
 
 import base64
+import os
+import re
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +35,293 @@ from fastmcp import FastMCP
 import ha_client as ha
 
 mcp = FastMCP("card_builder")
+
+
+# =========================================================================
+# Media upload safety — shared between upload_media_from_path (local file)
+# and upload_image_from_url (remote fetch).
+# =========================================================================
+
+# Image/vector formats Card Builder's blocks actually consume
+# (block-image / block-weather-background `mediaReference`). Deliberately
+# excludes anything executable or text-based (no .py, .yaml, .json, ...).
+_ALLOWED_MEDIA_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}
+
+# Content-Type prefixes accepted from a remote download.
+_ALLOWED_MEDIA_CONTENT_TYPE_PREFIX = "image/"
+
+# Cap on a remote image download — background/SVG assets, not video.
+_MAX_URL_IMAGE_BYTES = 15 * 1024 * 1024  # 15 MiB
+
+# Cap on the decoded/raw bytes of a direct upload (upload_media, upload_svg).
+# Same ceiling as a remote download — these are card backgrounds/SVGs, not
+# video or archives — kept as one named constant so the two call sites can't
+# silently drift apart.
+_MAX_MEDIA_UPLOAD_BYTES = _MAX_URL_IMAGE_BYTES
+
+# Hard cap on the number of elements an uploaded SVG may contain, checked
+# right after XML parsing (in `sanitize_svg`, before the sanitizer recurses
+# into the tree). The DOCTYPE/ENTITY substring check above closes classic
+# XXE / "billion laughs" entity expansion, but a flat or deeply nested
+# element bomb (thousands of plain `<rect>`s, or `<g>` nested thousands of
+# levels deep) needs no entity declaration at all and would still cost the
+# sanitizer — and Home Assistant's own SVG renderer — O(n) time/memory
+# proportional to attacker input. A simple post-parse element count is the
+# cheapest guard that doesn't require re-implementing a streaming/depth-aware
+# parser: `sum(1 for _ in root.iter())` is O(n) over an already-parsed tree,
+# and 5000 elements is far beyond any legitimate card background, weather
+# SVG or icon this codebase generates.
+_SVG_MAX_ELEMENTS = 5000
+
+
+def _media_upload_roots() -> list[Path]:
+    """Directories `upload_media_from_path` may read from.
+
+    Limited to `<HA_CONFIG_PATH>/www` and `<HA_CONFIG_PATH>/media` — the only
+    directories this add-on is granted (`config:rw` in config.yaml) that are
+    also meant to hold user media. Explicitly excludes the rest of /config
+    (secrets.yaml, .storage/, packages, …) and anything under /data.
+    """
+    config_root = Path(os.getenv("HA_CONFIG_PATH", "/config")).resolve()
+    return [config_root / "www", config_root / "media"]
+
+
+def _resolve_media_source(local_path: str) -> tuple[Path | None, dict | None]:
+    """Resolve and validate `local_path` for upload_media_from_path.
+
+    Returns `(path, None)` on success or `(None, error_dict)` — never raises.
+    """
+    try:
+        src = Path(local_path).resolve()
+    except (OSError, RuntimeError) as err:
+        return None, {"error": "invalid_path", "local_path": local_path, "detail": str(err)}
+
+    roots = _media_upload_roots()
+    if not any(src.is_relative_to(root) for root in roots):
+        return None, {
+            "error": "path_not_allowed",
+            "local_path": local_path,
+            "detail": f"local_path must resolve under one of: {[str(r) for r in roots]}",
+        }
+
+    if src.suffix.lower() not in _ALLOWED_MEDIA_EXTENSIONS:
+        return None, {
+            "error": "extension_not_allowed",
+            "local_path": local_path,
+            "detail": f"Extension '{src.suffix}' not allowed; use one of {sorted(_ALLOWED_MEDIA_EXTENSIONS)}",
+        }
+
+    return src, None
+
+
+def _has_path_traversal(value: str) -> bool:
+    """True if `value` (the `path=` sub-folder arg to the media WS API)
+    contains a `..` segment, an absolute-path anchor (`/foo`), or a Windows
+    drive letter (`C:...`) — any of which could walk the upload outside
+    `www/card_builder/` on the HA side. `card_builder/media/upload` is an
+    integration-owned WS handler; this process has no visibility into
+    whether it re-validates `path` itself, so treat this check as the only
+    guard.
+    """
+    if not value:
+        return False
+    normalized = value.replace("\\", "/")
+    if normalized.startswith("/"):
+        return True
+    if re.match(r"^[A-Za-z]:", normalized):
+        return True
+    return any(part == ".." for part in normalized.split("/"))
+
+
+def _validate_upload_filename_and_path(filename: str, path: str) -> dict | None:
+    """Shared guard for `upload_media`/`upload_svg`: reject anything that
+    isn't a bare, allowlisted media filename, or a `path` that could escape
+    `www/card_builder/`. Returns an error dict, or `None` if `filename`/
+    `path` are both safe to hand to `card_builder/media/upload`.
+    """
+    if not filename or not filename.strip():
+        return {"error": "invalid_filename", "filename": filename}
+
+    if "/" in filename or "\\" in filename or "\x00" in filename:
+        return {
+            "error": "path_not_allowed",
+            "filename": filename,
+            "detail": "filename must be a bare name with no path separators — use `path=` for sub-folders",
+        }
+
+    suffix = Path(filename).suffix.lower()
+    if suffix not in _ALLOWED_MEDIA_EXTENSIONS:
+        return {
+            "error": "extension_not_allowed",
+            "filename": filename,
+            "detail": f"Extension '{suffix}' not allowed; use one of {sorted(_ALLOWED_MEDIA_EXTENSIONS)}",
+        }
+
+    if _has_path_traversal(path):
+        return {
+            "error": "path_not_allowed",
+            "path": path,
+            "detail": "path must not contain '..' segments, an absolute anchor, or a drive letter",
+        }
+
+    return None
+
+
+# =========================================================================
+# SVG sanitization — mandatory before ANY SVG reaches www/card_builder/.
+#
+# `<config>/www` is served by Home Assistant at `/local/...` with NO
+# authentication, in the same origin as the HA frontend. An SVG opened
+# directly (not as an <img>/background — as its own document, e.g. by
+# visiting the /local/ URL, or certain embed contexts) executes embedded
+# `<script>`, `on*=` handlers and `javascript:` URIs like any other HTML
+# document — a stored-XSS path into an authenticated HA admin session.
+# Every write of SVG bytes under www/card_builder/ MUST go through
+# `sanitize_svg()`.
+#
+# Design: allowlist, not blocklist. We parse with the stdlib
+# `xml.etree.ElementTree` (expat-backed) and rebuild the tree keeping only a
+# fixed set of SVG presentation elements — anything else (`script`,
+# `foreignObject`, `iframe`, `embed`, `object`, SMIL `animate*`, ...) is
+# dropped together with its whole subtree, so nothing can smuggle markup
+# inside an element we don't recognise.
+#
+# `xml.etree.ElementTree` is documented as NOT hardened against maliciously
+# crafted XML (XXE / "billion laughs" entity expansion). `defusedxml` is not
+# currently a dependency of this project (checked requirements.txt /
+# pyproject.toml) — adding it purely for this would be reasonable but is a
+# call for whoever owns dependency review, not made unilaterally here.
+# Instead we reject any `<!DOCTYPE` / `<!ENTITY` declaration by a raw
+# substring check on the input *before* it ever reaches the parser: a
+# legitimate SVG image has no use for either, so this closes the XXE and
+# entity-expansion vectors without adding a dependency — expat is only ever
+# asked to parse markup that has no DOCTYPE, so there is nothing for it to
+# resolve or expand.
+#
+# `<style>` is dropped entirely rather than sanitized in place: CSS can hide
+# the same `javascript:` / `@import` / `expression()` primitives an
+# attribute-value check would have to re-implement (nested `@import`,
+# comments splitting tokens, media queries, ...). The legitimate use cases in
+# this codebase (card backgrounds, weather SVGs) only need presentation
+# *attributes* (`fill`, `stroke`, gradients, ...), which stay fully
+# supported — so dropping `<style>` loses nothing we use while removing a
+# whole class of CSS-based smuggling.
+
+# Namespace prefixes used when re-serializing sanitized SVG — registered so
+# output reads as plain `xmlns="..."` instead of ElementTree's default
+# `ns0:` prefix. Process-wide (xml.etree module state); harmless to set more
+# than once.
+ET.register_namespace("", "http://www.w3.org/2000/svg")
+ET.register_namespace("xlink", "http://www.w3.org/1999/xlink")
+
+_SVG_ALLOWED_TAGS = {
+    "svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline",
+    "polygon", "text", "tspan", "defs", "lineargradient", "radialgradient",
+    "stop", "clippath", "mask", "pattern", "use", "symbol", "title", "desc",
+    "filter",
+    # SVG filter primitives (fe*)
+    "feblend", "fecolormatrix", "fecomponenttransfer", "fecomposite",
+    "feconvolvematrix", "fediffuselighting", "fedisplacementmap",
+    "fedistantlight", "fedropshadow", "feflood", "fefunca", "fefuncb",
+    "fefuncg", "fefuncr", "fegaussianblur", "feimage", "femerge",
+    "femergenode", "femorphology", "feoffset", "fepointlight",
+    "fespecularlighting", "fespotlight", "fetile", "feturbulence",
+}
+
+# Attribute-value substrings that make ANY attribute unsafe, wherever they
+# appear (not just href) — checked case-insensitively after stripping
+# whitespace/control characters used to dodge naive filters
+# (e.g. "java\tscript:", "java\nscript:").
+_SVG_UNSAFE_VALUE_SUBSTRINGS = (
+    "javascript:", "vbscript:", "data:text/html", "@import", "expression(",
+)
+
+# Raster data URIs allowed as href/xlink:href targets. Deliberately excludes
+# `data:image/svg+xml` (recursive SVG-in-SVG re-opens the same XSS surface).
+_SVG_HREF_DATA_PREFIXES = ("data:image/png", "data:image/jpeg", "data:image/gif", "data:image/webp")
+
+
+def _svg_local_name(tag: str) -> str:
+    return tag.split("}", 1)[-1].lower() if "}" in tag else tag.lower()
+
+
+def _svg_href_allowed(value: str) -> bool:
+    """`href`/`xlink:href` is safe only as a same-document fragment (`#id`,
+    e.g. `<use href="#icon">`) or a raster data: URI. Everything else
+    (http(s), javascript:, data:image/svg+xml, ...) is stripped."""
+    v = (value or "").strip()
+    if v.startswith("#"):
+        return True
+    return v.lower().startswith(_SVG_HREF_DATA_PREFIXES)
+
+
+def _sanitize_svg_tree(elem: ET.Element) -> ET.Element | None:
+    """Recursively keep only allowlisted elements/attributes.
+
+    Returns `None` to signal `elem` (and its whole subtree) must be dropped.
+    """
+    if _svg_local_name(elem.tag) not in _SVG_ALLOWED_TAGS:
+        return None
+
+    for key in list(elem.attrib.keys()):
+        attr_local = _svg_local_name(key)
+        raw_value = elem.attrib[key]
+        normalized = re.sub(r"[\s\x00-\x1f]+", "", raw_value or "").lower()
+
+        if attr_local.startswith("on"):
+            del elem.attrib[key]
+            continue
+        if attr_local == "href":
+            if not _svg_href_allowed(raw_value or ""):
+                del elem.attrib[key]
+            continue
+        if any(bad in normalized for bad in _SVG_UNSAFE_VALUE_SUBSTRINGS):
+            del elem.attrib[key]
+
+    for child in list(elem):
+        elem.remove(child)
+        sanitized_child = _sanitize_svg_tree(child)
+        if sanitized_child is not None:
+            elem.append(sanitized_child)
+
+    return elem
+
+
+def sanitize_svg(svg_text: str) -> tuple[str | None, dict | None]:
+    """Sanitize untrusted SVG markup before it is written under www/card_builder/.
+
+    Returns `(sanitized_text, None)` on success, or `(None, error_dict)` if
+    the input is rejected outright (DOCTYPE/ENTITY present, not well-formed
+    XML, or root element isn't `<svg>`). Never raises.
+    """
+    text = svg_text or ""
+    lowered = text.lower()
+    if "<!doctype" in lowered or "<!entity" in lowered:
+        return None, {
+            "error": "unsafe_svg",
+            "detail": "DOCTYPE/ENTITY declarations are not allowed in uploaded SVG (XXE / billion-laughs risk).",
+        }
+
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as err:
+        return None, {"error": "invalid_svg", "detail": str(err)}
+
+    if _svg_local_name(root.tag) != "svg":
+        return None, {"error": "not_svg", "detail": "Root element must be <svg>."}
+
+    element_count = sum(1 for _ in root.iter())
+    if element_count > _SVG_MAX_ELEMENTS:
+        return None, {
+            "error": "svg_too_complex",
+            "detail": f"SVG has {element_count} elements; limit is {_SVG_MAX_ELEMENTS}.",
+        }
+
+    sanitized_root = _sanitize_svg_tree(root)
+    if sanitized_root is None:
+        return None, {"error": "not_svg", "detail": "Root <svg> element was rejected by the sanitizer."}
+
+    return ET.tostring(sanitized_root, encoding="unicode"), None
 
 
 # =========================================================================
@@ -851,28 +1141,85 @@ def list_media(path: str = "") -> dict:
 def upload_media(filename: str, content_base64: str, path: str = "") -> dict:
     """Upload a file to the Card Builder media directory.
 
-    `content_base64` must be the raw bytes already base64-encoded. Returns the
-    `cb-media://` reference plus a `/local/...` URL usable in any card.
+    `content_base64` must be the raw bytes already base64-encoded. `filename`
+    must be a bare name (no `/`, `\\`, or `..` — use `path=` for sub-folders)
+    whose last extension is one of `_ALLOWED_MEDIA_EXTENSIONS`
+    (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.avif`), matched
+    case-insensitively; anything else (`.html`, `.htm`, `.xhtml`, `.js`,
+    `.mjs`, `.json`, a double extension like `a.png.html`, ...) is refused
+    with `{"error": "extension_not_allowed"}` before the payload is touched.
+    Decoded content over `_MAX_MEDIA_UPLOAD_BYTES` (15 MiB) is refused with
+    `{"error": "file_too_large"}`.
+
+    Returns the `cb-media://` reference plus a `/local/...` URL usable in any
+    card. The uploaded file becomes **public** under Home Assistant's
+    `/local/` path with **no authentication**, in the same origin as the HA
+    frontend. If `filename` ends in `.svg`, the decoded content is sanitized
+    (script/event-handler/unsafe-URL stripping, plus an element-count cap)
+    before upload — see `sanitize_svg`.
     """
+    filename_err = _validate_upload_filename_and_path(filename, path)
+    if filename_err:
+        return filename_err
+
     try:
-        base64.b64decode(content_base64, validate=True)
+        raw = base64.b64decode(content_base64, validate=True)
     except Exception as err:
         return {"error": "invalid_base64", "detail": str(err)}
+
+    if len(raw) > _MAX_MEDIA_UPLOAD_BYTES:
+        return {"error": "file_too_large", "filename": filename, "limit_bytes": _MAX_MEDIA_UPLOAD_BYTES}
+
+    content_b64 = content_base64
+    if filename.lower().endswith(".svg"):
+        try:
+            svg_text = raw.decode("utf-8")
+        except UnicodeDecodeError as err:
+            return {"error": "invalid_svg", "detail": f"SVG must be UTF-8 text: {err}"}
+        sanitized, err = sanitize_svg(svg_text)
+        if err:
+            return err
+        content_b64 = base64.b64encode(sanitized.encode("utf-8")).decode("ascii")
+
     return ha._ws_call(
         "card_builder/media/upload",
         path=path,
         filename=filename,
-        content=content_base64,
+        content=content_b64,
     )
 
 
 @mcp.tool()
 def upload_media_from_path(local_path: str, path: str = "", filename: str | None = None) -> dict:
-    """Upload a local file (on the nexus host) to the Card Builder media directory."""
-    src = Path(local_path)
+    """Upload a local image file to the Card Builder media directory.
+
+    `local_path` must resolve (after following symlinks) under `<config>/www`
+    or `<config>/media`, and have an image/SVG extension — see
+    `_ALLOWED_MEDIA_EXTENSIONS`. Anything else (e.g. `secrets.yaml`,
+    `/data/options.json`, a sibling directory) is refused before the file is
+    read. The uploaded file becomes public under Home Assistant's `/local/`
+    path with no authentication. `.svg` files are sanitized (script/event-
+    handler/unsafe-URL stripping) before upload — see `sanitize_svg`.
+    """
+    src, err = _resolve_media_source(local_path)
+    if err:
+        return err
     if not src.is_file():
         return {"error": "file_not_found", "local_path": local_path}
-    payload_b64 = base64.b64encode(src.read_bytes()).decode("ascii")
+
+    raw = src.read_bytes()
+    if src.suffix.lower() == ".svg":
+        try:
+            svg_text = raw.decode("utf-8")
+        except UnicodeDecodeError as decode_err:
+            return {"error": "invalid_svg", "detail": f"SVG must be UTF-8 text: {decode_err}"}
+        sanitized, sanitize_err = sanitize_svg(svg_text)
+        if sanitize_err:
+            return sanitize_err
+        payload_b64 = base64.b64encode(sanitized.encode("utf-8")).decode("ascii")
+    else:
+        payload_b64 = base64.b64encode(raw).decode("ascii")
+
     return ha._ws_call(
         "card_builder/media/upload",
         path=path,
@@ -883,22 +1230,50 @@ def upload_media_from_path(local_path: str, path: str = "", filename: str | None
 
 @mcp.tool()
 def upload_svg(svg_content: str, filename: str, path: str = "") -> dict:
-    """Upload an SVG drafted in-session straight to the Card Builder media library.
+    """Upload SVG markup to www/card_builder/.
 
-    Intended for AI clients (Claude, Cursor, …) that *design the SVG inline*
-    to match the card being built. No preset styles — each background is
-    crafted for its specific use case. Pass the SVG XML as `svg_content`
-    (must start with `<svg` or `<?xml`).
+    `svg_content` must start with `<svg` or `<?xml` — anything else is
+    rejected. `.svg` is appended to `filename` if missing. Stored under
+    `www/card_builder/<path>/<filename>`. `filename` must be a bare name
+    (no `/`, `\\`, or `..`) and `path` must not contain a `..` segment or an
+    absolute anchor. `svg_content` is capped at `_MAX_MEDIA_UPLOAD_BYTES`
+    (15 MiB, checked before parsing) and, after parsing, at `_SVG_MAX_ELEMENTS`
+    total elements — both refused with `{"error": "file_too_large"}` /
+    `{"error": "svg_too_complex"}` respectively.
 
-    Returns `{reference, path, url}` — the `reference` is the
-    `cb-media://local/card_builder/<filename>` URI you drop into a
-    block-image's `mediaReference` prop.
+    The uploaded file becomes public under Home Assistant's `/local/` path
+    with **no authentication**, in the same origin as the HA frontend — an
+    unsanitized SVG opened directly executes embedded script as a stored-XSS
+    vector into an admin session. `svg_content` is always sanitized before
+    upload: `<script>`, `<style>`, `<foreignObject>`, `<iframe>`, `<embed>`,
+    `<object>` and any other non-presentation element are stripped (with
+    their whole subtree), along with every `on*=` handler and any
+    `href`/`xlink:href`/other attribute pointing at `javascript:` or an
+    external/`data:image/svg+xml` URL. See `sanitize_svg` for the exact
+    allowlist. Only `#fragment` references and raster `data:image/...` URIs
+    are kept as link targets.
+
+    Returns `{reference, path, url}` — `reference` is the
+    `cb-media://local/card_builder/<filename>` URI for a block-image's
+    `mediaReference` prop.
     """
     txt = (svg_content or "").lstrip()
     if not (txt.startswith("<svg") or txt.startswith("<?xml")):
         return {"error": "not_svg", "detail": "Content must start with '<svg' or '<?xml ...'"}
+
+    raw_len = len((svg_content or "").encode("utf-8"))
+    if raw_len > _MAX_MEDIA_UPLOAD_BYTES:
+        return {"error": "file_too_large", "filename": filename, "limit_bytes": _MAX_MEDIA_UPLOAD_BYTES}
+
     final_name = filename if filename.lower().endswith(".svg") else f"{filename}.svg"
-    b64 = base64.b64encode(svg_content.encode("utf-8")).decode("ascii")
+    filename_err = _validate_upload_filename_and_path(final_name, path)
+    if filename_err:
+        return filename_err
+
+    sanitized, err = sanitize_svg(svg_content)
+    if err:
+        return err
+    b64 = base64.b64encode(sanitized.encode("utf-8")).decode("ascii")
     return ha._ws_call(
         "card_builder/media/upload",
         path=path,
@@ -909,37 +1284,60 @@ def upload_svg(svg_content: str, filename: str, path: str = "") -> dict:
 
 @mcp.tool()
 def upload_image_from_url(url: str, filename: str | None = None, path: str = "") -> dict:
-    """Download an image from any HTTP(S) URL and upload it to the Card Builder media library.
+    """Download an image from an http(s) URL and upload it to the Card Builder media library.
 
-    Useful when a marketplace card references a background image that didn't
-    come along with the card download, or when you want to reuse an image
-    from a public CDN. Falls back to deriving filename from the URL path.
+    Only `http`/`https` schemes are accepted (no `file://`, `ftp://`, ...). The
+    response must declare an `image/*` Content-Type (covers `image/svg+xml`)
+    and stay within `_MAX_URL_IMAGE_BYTES` (15 MiB); otherwise nothing is
+    uploaded. Falls back to deriving filename from the URL path.
+
+    The uploaded file becomes public under Home Assistant's `/local/` path
+    with no authentication. When the response is `image/svg+xml`, the
+    downloaded markup is sanitized (script/event-handler/unsafe-URL
+    stripping) before upload — see `sanitize_svg` — regardless of what
+    `filename`/extension was requested, since the untrusted remote server
+    controls the actual bytes.
     """
     import urllib.request
     from urllib.parse import urlparse
 
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return {"error": "scheme_not_allowed", "url": url, "detail": "Only http/https URLs are allowed"}
+
     final_name = filename
     if not final_name:
-        url_path = urlparse(url).path
-        final_name = url_path.rsplit("/", 1)[-1] or "image"
+        final_name = parsed.path.rsplit("/", 1)[-1] or "image"
 
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Nexus/0.11"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Nexus/0.20"})
         with urllib.request.urlopen(req, timeout=30) as r:
-            content = r.read()
+            content_type = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if not content_type.startswith(_ALLOWED_MEDIA_CONTENT_TYPE_PREFIX):
+                return {"error": "content_type_not_allowed", "url": url, "content_type": content_type or None}
+            content = r.read(_MAX_URL_IMAGE_BYTES + 1)
+            if len(content) > _MAX_URL_IMAGE_BYTES:
+                return {"error": "file_too_large", "url": url, "limit_bytes": _MAX_URL_IMAGE_BYTES}
     except Exception as err:
         return {"error": "download_failed", "url": url, "detail": str(err)}
 
-    if not final_name.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif")):
+    if not final_name.lower().endswith(tuple(_ALLOWED_MEDIA_EXTENSIONS)):
         # Guess extension from content-type if filename has no extension.
-        ct = ""
-        try:
-            ct = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
-        except Exception:
-            ct = ""
         ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "image/svg+xml": ".svg", "image/avif": ".avif"}
-        if ct in ext_map and not Path(final_name).suffix:
-            final_name = final_name + ext_map[ct]
+        if content_type in ext_map and not Path(final_name).suffix:
+            final_name = final_name + ext_map[content_type]
+
+    if content_type == "image/svg+xml" or final_name.lower().endswith(".svg"):
+        try:
+            svg_text = content.decode("utf-8")
+        except UnicodeDecodeError as err:
+            return {"error": "invalid_svg", "url": url, "detail": f"SVG must be UTF-8 text: {err}"}
+        sanitized, err = sanitize_svg(svg_text)
+        if err:
+            return {**err, "url": url}
+        content = sanitized.encode("utf-8")
+        if not final_name.lower().endswith(".svg"):
+            final_name += ".svg"
 
     b64 = base64.b64encode(content).decode("ascii")
     return ha._ws_call(
@@ -975,9 +1373,9 @@ def renderer_card_config(
     Returns:
         {"type": "custom:card-builder-renderer-card", "card_id": ..., "slot_entities": {...}, "slot_actions": {...}}
 
-    Use as a card in `dashboards_add_card_to_view`. `slot_entities` maps each
-    slot id defined in the card to a HA entity_id; `slot_actions` overrides
-    per-instance action configs.
+    Add it with dashboards_add_card_to_section (sections views) or dashboards_add_card_to_view
+    (masonry/panel views). `slot_entities` maps each slot id defined in the card to a HA entity_id;
+    `slot_actions` overrides per-instance action configs.
     """
     config: dict[str, Any] = {
         "type": "custom:card-builder-renderer-card",
@@ -1469,9 +1867,9 @@ custom property colours, and the right control props.
 def recipe_guide() -> str:
     """Embedded how-to for designing Card Builder cards programmatically.
 
-    Read this once at the start of a card-building task. Covers DocumentData
-    layout, block tree, entity inheritance, slots, drop-zones, dashboard
-    embedding, and the recipe shorthand consumed by `build_from_recipe`.
+    Returns a markdown reference covering DocumentData layout, the block
+    tree, entity inheritance, slots, drop-zones, dashboard embedding, and
+    the recipe shorthand consumed by `build_from_recipe`.
     """
     return _RECIPE_GUIDE_MD
 
@@ -1638,15 +2036,12 @@ Don't leave gaps when an entity is `unavailable` or `unknown`. Either:
 def design_principles() -> str:
     """Embedded UX design playbook for Card Builder cards.
 
-    Companion to `recipe_guide()` — that one covers HOW to build a card
-    (block tree, slots, props). This covers WHAT to build for the result
-    to feel polished: hierarchy, state feedback via binding, spacing
-    rhythm, typography scale, semantic colors, layout choice (grid vs
-    flow vs absolute), state badges, background images, empty states,
-    and the anti-patterns that produce flat-feeling cards.
-
-    Read this AFTER `recipe_guide()` when you're about to design a card
-    that needs to look polished rather than just functional.
+    Companion to `recipe_guide()`: that one covers HOW to build a card
+    (block tree, slots, props); this one covers WHAT to build for the
+    result to feel polished — hierarchy, state feedback via binding,
+    spacing rhythm, typography scale, semantic colors, layout choice
+    (grid vs flow vs absolute), state badges, background images, empty
+    states, and the anti-patterns that produce flat-feeling cards.
     """
     return _DESIGN_PRINCIPLES_MD
 

@@ -52,13 +52,33 @@ def reload_all() -> dict:
 
 @mcp.tool()
 def create_backup() -> dict:
-    """Create a full Home Assistant backup."""
-    return ha.call_service("backup", "create")
+    """Create an unnamed backup via the core `backup` integration's own service — no name, no
+    add-on/folder selection, no password. On Supervisor installs `backup.create` does not exist (the
+    Supervisor owns backup creation there), so this calls `backup.create_automatic` instead, which
+    runs a backup using the automatic-backup settings configured in Settings -> System -> Backups; on
+    HA Core/Container installs, where `backup.create` exists, that one is called. Returns
+    {"error": ...} if neither service is registered. For a named, partial, and/or password-protected
+    backup on a Supervisor install, use supervisor_create_backup instead.
+    """
+    domains = {d.get("domain"): (d.get("services") or {}) for d in ha.list_services()}
+    backup_services = domains.get("backup", {})
+    if "create" in backup_services:
+        return ha.call_service("backup", "create")
+    if "create_automatic" in backup_services:
+        return ha.call_service("backup", "create_automatic")
+    return {
+        "error": (
+            "Neither backup.create nor backup.create_automatic is registered on this Home "
+            "Assistant instance."
+        )
+    }
 
 
 @mcp.tool()
 def list_integrations() -> list[dict]:
-    """List all loaded integrations (config entries)."""
+    """Return every config entry (raw WS config_entries/get), whatever its state (loaded, not_loaded,
+    setup_error, disabled). Large; prefer system_get_all_integrations.
+    """
     return ha.get_config_entries()
 
 
@@ -77,7 +97,9 @@ def ping_ha() -> dict:
 
 @mcp.tool()
 def get_all_integrations() -> list[dict]:
-    """Get all active config entries (integrations, their state and domain)."""
+    """Compact list of every config entry: {entry_id, domain, title, state, source}, whatever its state
+    — filter on `state` yourself.
+    """
     entries = ha.get_config_entries()
     return [
         {

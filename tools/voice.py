@@ -42,11 +42,10 @@ def create_pipeline(
     wake_word_entity: str | None = None,
     wake_word_id: str | None = None,
 ) -> dict:
-    """Create a new Assist pipeline.
-
-    Engines are entity ids of the relevant providers (e.g. `stt.faster_whisper`,
-    `tts.piper`, `wake_word.openwakeword`). Use list_services or list_entities
-    to discover what's installed.
+    """Create a new Assist pipeline. Engines are entity ids of the relevant providers (e.g.
+    `stt.faster_whisper`, `tts.piper`, `wake_word.openwakeword`); discover installed ones with
+    voice_list_stt_engines, voice_list_tts_engines, voice_list_wake_word_engines and
+    voice_list_conversation_agents.
     """
     payload: dict = {
         "name": name,

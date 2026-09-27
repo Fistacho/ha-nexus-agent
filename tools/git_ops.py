@@ -10,6 +10,29 @@ mcp = FastMCP("git_ops")
 _CONFIG_PATH = Path(os.getenv("HA_CONFIG_PATH", "/config"))
 
 
+def _resolve_within_config(relative_path: str) -> tuple[Path | None, dict | None]:
+    """Guard a path handed to a raw `git` command against escaping /config.
+
+    Defense in depth: `tools.files._safe_path` already blocks this for direct
+    file reads/writes, but git tools build pathspecs from user input too
+    (e.g. `git checkout <sha> -- <relative_path>`), so the same boundary
+    check is applied here before the path reaches `repo.git.*`.
+    Returns `(resolved_path, None)` on success or `(None, error_dict)`.
+    """
+    config_root = _CONFIG_PATH.resolve()
+    try:
+        candidate = (_CONFIG_PATH / relative_path).resolve()
+    except (OSError, RuntimeError) as err:
+        return None, {"error": "invalid_path", "relative_path": relative_path, "detail": str(err)}
+    if not candidate.is_relative_to(config_root):
+        return None, {
+            "error": "path_outside_config",
+            "relative_path": relative_path,
+            "detail": f"'{relative_path}' resolves outside {config_root}",
+        }
+    return candidate, None
+
+
 def _repo():
     """Get or initialize git repo for HA config directory."""
     try:
@@ -86,7 +109,11 @@ def git_log(limit: int = 20) -> list[dict]:
 
 @mcp.tool()
 def git_diff(sha: str | None = None) -> str:
-    """Show diff of uncommitted changes, or diff of a specific commit (by SHA)."""
+    """Without `sha`: unified diff of unstaged changes to tracked files in /config (`git diff`);
+    excludes staged changes and untracked new files (see git_status). With `sha`: `git show --stat
+    <sha>` — the commit header and per-file changed-line counts, not the patch. Raw text, can be
+    large.
+    """
     repo = _repo()
     if sha:
         commit = repo.commit(sha)
@@ -98,8 +125,14 @@ def git_diff(sha: str | None = None) -> str:
 def git_rollback_file(relative_path: str, sha: str = "HEAD", confirm: bool = False) -> dict:
     """Restore a single file to its state at a specific commit (default: HEAD = undo uncommitted changes).
 
-    Set confirm=True to proceed; without it returns a safety prompt.
+    `relative_path` must resolve (after following symlinks) inside /config;
+    anything else (e.g. '..', an absolute path outside /config) is refused
+    before any git command runs. Set confirm=True to proceed; without it
+    returns a safety prompt.
     """
+    _, path_err = _resolve_within_config(relative_path)
+    if path_err:
+        return path_err
     if not confirm:
         return {
             "error": "confirmation_required",
@@ -138,7 +171,9 @@ def git_rollback_to_commit(sha: str, confirm: bool = False) -> dict:
 
 @mcp.tool()
 def git_create_branch(branch_name: str) -> dict:
-    """Create a new branch (useful before experimental changes)."""
+    """Create a branch from the current HEAD and switch to it. Uncommitted changes carry over; live
+    /config files now follow this branch.
+    """
     repo = _repo()
     branch = repo.create_head(branch_name)
     branch.checkout()
@@ -162,8 +197,10 @@ def git_list_branches() -> list[str]:
 
 @mcp.tool()
 def safe_write_with_checkpoint(relative_path: str, content: str, commit_message: str | None = None) -> dict:
-    """Write a config file AND automatically git-commit the current state before writing.
-    This is the safest way to modify config files — you always have a rollback point.
+    """Write one config file (same extension/path limits and YAML check as files_write_config_file),
+    wrapped in two commits: first every uncommitted change in /config (`git add -A`) is committed as
+    a checkpoint, then the new content is committed with `commit_message`. Requires a repo from
+    git_init_config. Does not reload HA.
     """
     from tools.files import write_config_file
 

@@ -69,12 +69,9 @@ def create_theme(
     overwrite: bool = False,
     reload: bool = True,
 ) -> dict:
-    """Create a new theme file at `themes/<name>.yaml` with the given CSS variables.
-
-    The HA frontend stores themes as a dict keyed by theme name. Standard variables
-    include `primary-color`, `accent-color`, `text-primary-color`, etc.
-    For dark/light variants use modes: `{"name": {"modes": {"light": {...}, "dark": {...}}}}`.
-
+    """Create themes/<name>.yaml, written as {<name>: variables}. `variables` is the inner map, e.g.
+    {'primary-color': '#…'} or {'modes': {'light': {…}, 'dark': {…}}} — do not wrap it in the theme
+    name. Loaded only if configuration.yaml has `frontend: themes: !include_dir_merge_named themes`.
     Set `overwrite=True` to replace an existing theme. By default reload_themes is called.
     """
     path = _theme_path(name)
@@ -94,9 +91,8 @@ def create_theme(
 
 @mcp.tool()
 def update_theme(name: str, variables: dict, merge: bool = True, reload: bool = True) -> dict:
-    """Update an existing theme file.
-
-    `merge=True` (default) merges new variables into existing ones; `merge=False`
+    """Update an existing theme file. `merge=True` (default) merges new top-level variables into
+    existing ones (shallow: a passed `modes` key replaces the whole modes block); `merge=False`
     replaces the whole variable set. Calls reload_themes unless reload=False.
     """
     path = _theme_path(name)

@@ -151,7 +151,7 @@ def get_energy_statistics(days: int = 30, period: str = "day") -> dict:
     """Get sum statistics for all energy-related sensors (kWh, gas m³) for the last N days.
 
     Convenience wrapper around get_statistics — auto-discovers 'sum' statistic IDs.
-    Useful for EON energy consumption analysis.
+    Useful for tracking overall energy consumption trends.
     """
     if days < 1 or days > 365:
         return {"error": "days must be between 1 and 365"}
@@ -163,8 +163,10 @@ def get_energy_statistics(days: int = 30, period: str = "day") -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-    # Filter for energy-related units
-    energy_units = {"kWh", "MWh", "Wh", "m³", "ft³", "L", "gal", "W"}
+    # Filter for energy-related units. 'W' (instantaneous power) is deliberately
+    # excluded — it's not an energy unit and recorder 'sum' statistics for a
+    # power sensor are not meaningful energy consumption.
+    energy_units = {"kWh", "MWh", "Wh", "m³", "ft³", "L", "gal"}
     ids = [
         r["statistic_id"]
         for r in all_stats

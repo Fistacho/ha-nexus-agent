@@ -40,7 +40,11 @@ def get_error_log() -> str:
 
 @mcp.tool()
 def get_system_info() -> dict:
-    """Get Home Assistant system/version info."""
+    """Return HA's API liveness message (GET /api/, e.g. {'message': 'API running.'}); it contains no
+    version or system data. For version, location, units and loaded components use
+    history_get_ha_config; for subsystem health system_get_system_health; for Core/OS details
+    supervisor_get_core_info / supervisor_get_host_info.
+    """
     import ha_client as hac
     with hac._client() as c:
         r = c.get("/api/")

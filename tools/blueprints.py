@@ -12,8 +12,36 @@ def list_blueprints(domain: str = "automation") -> dict:
 
 @mcp.tool()
 def import_blueprint(url: str, domain: str = "automation") -> dict:
-    """Import a blueprint from a URL (e.g. GitHub raw or community forum) into /config/blueprints/<domain>/..."""
+    """Fetch and validate a blueprint from a URL (e.g. GitHub raw or community forum).
+
+    This only downloads and validates — it does NOT save anything to disk. Returns
+    `suggested_filename`, `raw_data` (the blueprint YAML text), `blueprint.metadata`,
+    `validation_errors` and `exists` (whether a blueprint already sits at that path).
+    To actually persist it under /config/blueprints/<domain>/..., pass `raw_data` and
+    `suggested_filename` to `blueprints_save_blueprint`.
+    """
     return ha._ws_call("blueprint/import", domain=domain, url=url)
+
+
+@mcp.tool()
+def save_blueprint(
+    path: str,
+    yaml_content: str,
+    domain: str = "automation",
+    source_url: str | None = None,
+    overwrite: bool = False,
+) -> dict:
+    """Save blueprint YAML to /config/blueprints/<domain>/<path>.
+
+    `path` is the relative filename (e.g. 'author/blueprint_name.yaml') — typically the
+    `suggested_filename` from `blueprints_import_blueprint`. `yaml_content` is the raw
+    blueprint YAML text (e.g. `raw_data` from `blueprints_import_blueprint`).
+    Does NOT overwrite an existing file unless `overwrite=True`.
+    """
+    kwargs: dict = {"domain": domain, "path": path, "yaml": yaml_content, "allow_override": overwrite}
+    if source_url:
+        kwargs["source_url"] = source_url
+    return ha._ws_call("blueprint/save", **kwargs)
 
 
 @mcp.tool()

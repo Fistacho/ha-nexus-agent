@@ -29,7 +29,9 @@ def list_automations() -> list[dict]:
 
 @mcp.tool()
 def trigger_automation(entity_id: str) -> list[dict]:
-    """Manually trigger an automation."""
+    """Run an automation's actions now via automation.trigger; HA skips the automation's conditions by
+    default (skip_condition=true).
+    """
     return ha.call_service("automation", "trigger", {"entity_id": entity_id})
 
 
@@ -69,7 +71,9 @@ def list_scripts() -> list[dict]:
 
 @mcp.tool()
 def run_script(entity_id: str, variables: dict | None = None) -> list[dict]:
-    """Run a script, optionally with variables."""
+    """Start a script via script.turn_on: returns immediately, does not wait for the script to finish
+    and does not return its response variables. `variables` are passed as script fields.
+    """
     data: dict = {"entity_id": entity_id}
     if variables:
         data["variables"] = variables
@@ -128,9 +132,9 @@ def set_scene_config(scene_id: str, name: str, entities: dict) -> dict:
 
     entities format — keys are entity_ids, values are the target state dict:
       {
-        "light.living_room": {"state": "on", "brightness": 76},
-        "cover.roleta":      {"state": "closed", "position": 0},
-        "switch.fan":        {"state": "off"}
+        "light.living_room":   {"state": "on", "brightness": 76},
+        "cover.bedroom_blind": {"state": "closed", "position": 0},
+        "switch.fan":          {"state": "off"}
       }
 
     brightness range is 0-255 (30% ≈ 76, 50% ≈ 128, 100% = 255).
@@ -174,14 +178,25 @@ def delete_scene(scene_id: str, confirm: bool = False) -> dict:
 
 @mcp.tool()
 def get_automation_config(automation_id: str) -> dict | None:
-    """Get an automation's YAML config as a dict. Accepts bare id or 'automation.<id>'. Returns None if not found."""
+    """Get the stored config of one automation (automations.yaml) as a dict. `automation_id` is the
+    automation's config `id` — the entity's `id` attribute, e.g. '1733294456585' — not its
+    entity_id; a leading 'automation.' is stripped, but the rest must still be the config id, which
+    differs from the entity's object_id for UI-created automations. Returns None when no automation
+    has that id, including automations defined in packages/YAML without an id. Read the id with
+    entities_get_entity(entity_id) → attributes.id.
+    """
     aid = _strip_prefix(automation_id, "automation")
     return ha.get_automation_config(aid)
 
 
 @mcp.tool()
 def set_automation_config(automation_id: str, config: dict) -> dict:
-    """Create or overwrite an automation YAML config (alias, trigger, action, condition, ...). Auto-reloads automations."""
+    """Create or replace the automation whose config `id` is `automation_id`, then reload automations.
+    An id that does not exist creates a NEW automation — it does not edit or rename an existing one,
+    so read the config id from the entity's `id` attribute before editing. `config` replaces the
+    whole stored config (alias, triggers, conditions, actions, mode) and must contain 'alias' or
+    'trigger'/'triggers'.
+    """
     if not isinstance(config, dict):
         return {"error": "config must be a dict"}
     if "alias" not in config and "trigger" not in config and "triggers" not in config:
@@ -429,7 +444,11 @@ _MESSAGES: dict[str, str] = {
 def validate_best_practices(yaml_content: str) -> dict:
     """Validate automation YAML against HA best practices (static linter).
 
-    Accepts a single automation dict or a list of automation dicts.
+    Accepts a single automation dict or a list of automation dicts. Parsed with
+    plain `yaml.safe_load` — HA-only tags like `!input` and `!secret` are NOT
+    resolved and make parsing fail with a YAML parse error, same as any other
+    unknown tag. Extract blueprint/`!secret` values to plain YAML first if you
+    need to lint that content.
 
     Checks:
     - state trigger without 'for:' (bounce risk)
@@ -533,7 +552,14 @@ def validate_automation_references(yaml_content: str) -> dict:
 
     Unlike validate_best_practices (static), this tool calls Home Assistant to verify
     that every referenced entity_id exists and every service is registered.
-    Template values ({{ ... }}) are skipped — they can't be resolved statically.
+
+    Parsed with plain `yaml.safe_load` — `!input`/`!secret` tags are NOT resolved
+    and make parsing fail with a YAML parse error. Reference extraction only
+    looks at literal `entity_id` values and literal `service:`/`action:` strings;
+    it does NOT resolve `device_id`, `area_id`, `label_id`, or any templated
+    reference — those are silently not checked, not just the ones containing
+    `{{ ... }}` (which are explicitly skipped and counted in
+    `template_refs_skipped`).
 
     Returns: {
         valid_yaml, entities_checked, services_checked,
@@ -641,9 +667,12 @@ def set_group(
     add_entities: list[str] | None = None,
     remove_entities: list[str] | None = None,
 ) -> dict:
-    """Create or update a Home Assistant entity group.
-
-    Wraps the group.set service. Group is stored in groups.yaml and persists restarts.
+    """Create or update an old-style group.* entity at runtime via the group.set action. It is NOT
+    written to groups.yaml and disappears on restart or group reload; for a persistent group use a
+    Group helper or add it to groups.yaml with the files tools. `entities` replaces the member list;
+    `add_entities`/`remove_entities` edit it (do not combine with `entities`). `all_entities=True`
+    sets all:true; False does not clear an existing all:true. Does not create light/switch/cover
+    group helpers.
 
     Args:
         group_id: Bare group id (e.g. 'living_room_lights') — no 'group.' prefix.
@@ -675,7 +704,8 @@ def set_group(
 
 @mcp.tool()
 def remove_group(group_id: str, confirm: bool = False) -> dict:
-    """Remove a Home Assistant entity group. Set confirm=True to proceed.
+    """Remove a group created with group.set. Groups defined in YAML come back on the next restart or
+    reload. Set confirm=True to proceed.
 
     Args:
         group_id: Bare group id or 'group.<id>'.

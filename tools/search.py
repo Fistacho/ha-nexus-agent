@@ -39,7 +39,9 @@ def _safe_ws(msg_type: str, **kwargs) -> list[dict]:
 
 @mcp.tool()
 def search_entities(query: str, limit: int = 20) -> list[dict]:
-    """Fuzzy search entities by entity_id, friendly_name, and device_id."""
+    """Fuzzy-rank entities by entity_id and friendly_name. Returns up to `limit` rows best first; every
+    row with a score above 0 is kept, so low scores are noise.
+    """
     states = ha.get_states() or []
     results: list[dict] = []
     for s in states:
@@ -220,7 +222,10 @@ def _parse_iso(ts: str | None):
 
 @mcp.tool()
 def find_unused_entities() -> list[dict]:
-    """Heuristic: entities that look unused (unavailable/unknown for >7 days, or orphan with no device)."""
+    """Heuristic list of entities that are unavailable/unknown for more than 7 days, plus registry
+    entities without a device_id (normally helpers, automations and template entities — not proof of
+    disuse). Can be long; review before deleting anything.
+    """
     states = ha.get_states() or []
     try:
         entity_registry = ha._ws_call("config/entity_registry/list") or []

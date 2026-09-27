@@ -43,10 +43,10 @@ def update_device(
     area_id: str | None = None,
     disabled_by: str | None = None,
 ) -> dict:
-    """Update a device registry entry.
-
-    Pass only the fields you want to change. `disabled_by` should be "user"
-    or None (to re-enable). Uses WS `config/device_registry/update`.
+    """Update a device registry entry (WS config/device_registry/update); omitted or null fields are
+    left unchanged. `disabled_by`: 'user' disables the device and its entities, '' (empty string)
+    re-enables it. `area_id`: assign an area (clearing is not supported here). `name_by_user`: user-
+    facing name override. Returns the updated device (slim fields).
     """
     payload: dict = {"device_id": device_id}
     if name_by_user is not None:

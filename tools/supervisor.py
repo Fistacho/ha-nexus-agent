@@ -138,7 +138,11 @@ def get_addon_logs(slug: str, lines: int = 100) -> dict:
 
 @mcp.tool()
 def set_addon_options(slug: str, options: dict) -> dict:
-    """Set configuration options for an add-on (sent as {"options": options})."""
+    """Send an add-on's options object (POST as {"options": options}); the Supervisor validates it
+    against the add-on schema and stores it as the new options. Read current values via
+    supervisor_get_addon, modify, and send the full dict. Takes effect after
+    supervisor_restart_addon.
+    """
     return _supervisor_request("POST", f"/addons/{slug}/options", json={"options": options})
 
 
@@ -178,7 +182,9 @@ def restart_core(confirm: bool = False) -> dict:
 
 @mcp.tool()
 def restart_host(confirm: bool = False) -> dict:
-    """Reboot the host machine. VERY DANGEROUS — requires confirm=True."""
+    """Reboot the whole host: Home Assistant, all add-ons and this nexus add-on go offline for minutes.
+    Requires confirm=True.
+    """
     if not confirm:
         return {"error": "set confirm=True to proceed"}
     return _supervisor_request("POST", "/host/reboot")
@@ -199,7 +205,11 @@ def create_backup(
     folders: list[str] | None = None,
     password: str | None = None,
 ) -> dict:
-    """Create a full backup, or partial when addons/folders are provided."""
+    """Create a Supervisor backup named `name`: full when neither `addons` nor `folders` is given,
+    otherwise partial with those add-on slugs and folders (e.g. 'share', 'ssl', 'media',
+    'addons/local'). `password` encrypts it. Full backups can take minutes; on a timeout error check
+    supervisor_list_backups before retrying.
+    """
     payload: dict = {"name": name}
     if password:
         payload["password"] = password
@@ -214,7 +224,11 @@ def create_backup(
 
 @mcp.tool()
 def restore_backup(slug: str, password: str | None = None, confirm: bool = False) -> dict:
-    """Restore a full backup by slug. DANGEROUS — requires confirm=True."""
+    """Restore a FULL backup (POST /backups/<slug>/restore/full): replaces HA configuration, all add-
+    ons with their data, and folders with the backup contents; everything changed since then is
+    lost. Core and this nexus add-on restart, so the call may drop before replying. `password` is
+    needed for encrypted backups. Without confirm=True it returns {error} and does nothing.
+    """
     if not confirm:
         return {"error": "set confirm=True to proceed"}
     payload: dict = {}
@@ -225,5 +239,5 @@ def restore_backup(slug: str, password: str | None = None, confirm: bool = False
 
 @mcp.tool()
 def delete_backup(slug: str) -> dict:
-    """Delete a backup by slug."""
+    """Permanently delete a backup (slug from supervisor_list_backups). No confirmation, no undo."""
     return _supervisor_request("DELETE", f"/backups/{slug}")

@@ -6,7 +6,12 @@ mcp = FastMCP("services")
 
 @mcp.tool()
 def call_service(domain: str, service: str, data: dict | None = None) -> list[dict]:
-    """Call any Home Assistant service. E.g. domain='light', service='turn_on', data={'entity_id':'light.living_room','brightness':200}."""
+    """Call any Home Assistant action via REST (POST /api/services/<domain>/<service>), e.g.
+    domain='light', service='turn_on', data={'entity_id': 'light.living_room', 'brightness': 200}.
+    `data` holds service fields and targets (entity_id/area_id/device_id). Returns the list of
+    states changed during the call, not the action's response data — use ws_call_service for actions
+    that return data.
+    """
     return ha.call_service(domain, service, data or {})
 
 
@@ -62,13 +67,27 @@ def set_climate_mode(entity_id: str, hvac_mode: str) -> list[dict]:
 
 
 @mcp.tool()
-def set_light_color(entity_id: str, rgb_color: list[int] | None = None, color_temp: int | None = None, brightness: int | None = None) -> list[dict]:
-    """Set light color, color temperature and/or brightness."""
+def set_light_color(
+    entity_id: str,
+    rgb_color: list[int] | None = None,
+    color_temp: int | None = None,
+    color_temp_kelvin: int | None = None,
+    brightness: int | None = None,
+) -> list[dict]:
+    """Set light color, color temperature and/or brightness.
+
+    `color_temp` (mireds) is deprecated — Home Assistant's `light.turn_on`
+    no longer accepts mireds (removed in HA 2026.3), only
+    `color_temp_kelvin`. If given, it is converted to Kelvin
+    (`kelvin = round(1_000_000 / mireds)`). Prefer `color_temp_kelvin`.
+    """
     data: dict = {"entity_id": entity_id}
     if rgb_color:
         data["rgb_color"] = rgb_color
-    if color_temp:
-        data["color_temp"] = color_temp
+    if color_temp_kelvin is not None:
+        data["color_temp_kelvin"] = color_temp_kelvin
+    elif color_temp:
+        data["color_temp_kelvin"] = round(1_000_000 / color_temp)
     if brightness is not None:
         data["brightness"] = brightness
     return ha.call_service("light", "turn_on", data)

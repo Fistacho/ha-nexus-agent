@@ -68,17 +68,28 @@ def create_event(
 
 
 @mcp.tool()
-def delete_event(entity_id: str, uid: str) -> dict:
-    """Delete a calendar event by its `uid`.
+def delete_event(
+    entity_id: str,
+    uid: str,
+    recurrence_id: str | None = None,
+    recurrence_range: str | None = None,
+) -> dict:
+    """Delete a calendar event by its `uid` via WS `calendar/event/delete`.
 
-    HA does not expose a stable `calendar.delete_event` service in core; this
-    attempts the call and otherwise reports `not_implemented`.
+    Only works for calendar platforms that declare
+    `CalendarEntityFeature.DELETE_EVENT` support (e.g. local/CalDAV calendars);
+    read-only integrations (like Google Calendar) reject it and this returns
+    `ok: False` with HA's error. `recurrence_id` narrows deletion to one
+    instance of a recurring event; `recurrence_range` (e.g. "THISANDFUTURE")
+    extends that to a range.
     """
+    payload: dict = {"entity_id": entity_id, "uid": uid}
+    if recurrence_id is not None:
+        payload["recurrence_id"] = recurrence_id
+    if recurrence_range is not None:
+        payload["recurrence_range"] = recurrence_range
     try:
-        result = ha.call_service(
-            "calendar", "delete_event",
-            {"entity_id": entity_id, "uid": uid},
-        )
+        result = ha._ws_call("calendar/event/delete", **payload)
         return {"entity_id": entity_id, "uid": uid, "result": result, "ok": True}
     except Exception as e:
         return {
@@ -86,5 +97,4 @@ def delete_event(entity_id: str, uid: str) -> dict:
             "uid": uid,
             "ok": False,
             "error": str(e),
-            "note": "calendar.delete_event is not a core HA service; not implemented for this calendar.",
         }

@@ -1,14 +1,37 @@
 """ESPHome device management tools.
 
 Read configs from /config/esphome/, query HA device/entity registry,
-and drive compile / validate / OTA upload via ESPHome Dashboard API.
+and drive compile / validate / OTA upload via the ESPHome dashboard API.
 
 Dashboard URL: set ESPHOME_DASHBOARD_URL env var (default: http://homeassistant.local:6052).
 Inside HA add-on context the default works if ESPHome add-on is installed.
+
+Add-on identity & protocol (re-verified 2026-09-27 against the live add-on list and
+GitHub, since the pip `esphome` package dropped its built-in dashboard for the
+standalone "ESPHome Device Builder" between esphome 2026.5.0 and 2026.7.0):
+- The add-on's Supervisor slug is NOT one of a fixed set of hashes — it is looked up
+  dynamically from `GET /addons` (see `_discover_esphome_slug`) instead of guessing.
+- `esphome/device-builder` (github.com/esphome/device-builder) is the new dashboard.
+  Its `esphome_device_builder/api/legacy.py` keeps exactly six HA-compat routes:
+  GET /devices, GET /ping, GET /json-config, POST /encryption-key, and two
+  WebSocket routes — GET /compile and GET /upload — confirmed (raw file read
+  2026-09-27) to use the *same* spawn wire protocol as the old dashboard
+  (`{"type": "spawn", "configuration": ..., "port": ...}` in, `{"event": "line"/"exit"}`
+  out), just re-routed through Device Builder's firmware job queue. There is no
+  legacy `/validate` or `/clean-mqtt` WebSocket route anymore.
+- Validate now goes through Device Builder's newer multiplexed `/ws` command API
+  (docs/API.md: `devices/validate` command) — see `_dash_ws_command`.
+- Clean-mqtt has no confirmed equivalent in Device Builder at all (searched
+  docs/API.md for every mqtt/clean-related command; the closest, `firmware/clean`,
+  is a build-artifact clean, not an MQTT discovery-topic clean) — see
+  `clean_mqtt`'s docstring for the resulting open risk.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import os
+import shutil
 import httpx
 from pathlib import Path
 from fastmcp import FastMCP
@@ -19,6 +42,11 @@ mcp = FastMCP("esphome")
 _CONFIG_PATH = Path(os.getenv("HA_CONFIG_PATH", "/config"))
 _ESPHOME_DIR = _CONFIG_PATH / "esphome"
 _DASH_URL = os.getenv("ESPHOME_DASHBOARD_URL", "http://homeassistant.local:6052")
+
+# Historical hard-coded guesses — kept only as a last-ditch fallback for
+# _esphome_slug_candidates() when the live `/addons` listing itself is unreachable
+# (e.g. SUPERVISOR_TOKEN unset). Real slug resolution is dynamic: see
+# _discover_esphome_slug().
 _ESPHOME_SLUGS = ["a0d7b954_esphome", "esphome_esphome"]
 
 
@@ -70,6 +98,250 @@ def _dash(method: str, path: str, body: dict | None = None, timeout: int = 120) 
         return {"error": f"HTTP {e.response.status_code}", "detail": e.response.text[:200]}
     except Exception as e:
         return {"error": str(e)}
+
+
+def _dash_ws_url(path: str) -> str:
+    return _DASH_URL.replace("https://", "wss://").replace("http://", "ws://") + path
+
+
+async def _dash_ws_spawn_async(path: str, payload: dict, timeout: float, tail_lines: int) -> dict:
+    """Spawn a command on the ESPHome dashboard over its WebSocket API.
+
+    Protocol (esphome/dashboard/web_server.py, `EsphomeCommandWebSocket`): the
+    client sends one `{"type": "spawn", ...payload}` message; the server then
+    streams `{"event": "line", "data": <str>}` per output line and finishes
+    with `{"event": "exit", "code": <int>}`. There is no auth handshake (the
+    dashboard's own cookie/basic auth applies at the HTTP upgrade, not here).
+    """
+    import websockets
+
+    lines: list[str] = []
+    try:
+        async with websockets.connect(_dash_ws_url(path), max_size=None) as ws:
+            await ws.send(json.dumps({"type": "spawn", **payload}))
+            deadline = asyncio.get_running_loop().time() + timeout
+            while True:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    return {
+                        "error": "timeout",
+                        "timeout": timeout,
+                        "log_tail": lines[-tail_lines:],
+                        "log_lines": len(lines),
+                    }
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    return {
+                        "error": "timeout",
+                        "timeout": timeout,
+                        "log_tail": lines[-tail_lines:],
+                        "log_lines": len(lines),
+                    }
+                message = json.loads(raw)
+                event = message.get("event")
+                if event == "line":
+                    lines.append(message.get("data", ""))
+                elif event == "exit":
+                    code = message.get("code")
+                    return {
+                        "exit_code": code,
+                        "success": code == 0,
+                        "log_tail": lines[-tail_lines:],
+                        "log_lines": len(lines),
+                    }
+    except OSError as e:
+        return {"error": f"Cannot connect to ESPHome dashboard at {_DASH_URL}: {e}"}
+
+
+def _dash_ws_spawn(path: str, payload: dict, timeout: float = 120, tail_lines: int = 200) -> dict:
+    coro_factory = lambda: _dash_ws_spawn_async(path, payload, timeout, tail_lines)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro_factory())
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        return pool.submit(asyncio.run, coro_factory()).result()
+
+
+async def _dash_ws_command_async(command: str, args: dict, timeout: float, tail_lines: int) -> dict:
+    """Run one command on the ESPHome Device Builder multiplexed WebSocket API (`/ws`).
+
+    Protocol (esphome/device-builder, docs/API.md, confirmed on GitHub 2026-09-27):
+    on connect the server sends a `ServerInfoMessage` first (checked here for
+    `requires_auth` — if the dashboard has a username/password set, this bails out
+    immediately with a clear error rather than hanging or guessing credentials, since
+    no ESPHOME_USERNAME/ESPHOME_PASSWORD plumbing exists yet). The client then sends
+    one `{"command": ..., "message_id": ..., "args": ...}`; the server replies either
+    a single `{"message_id", "result"}`, an `{"message_id", "error_code", "details"}`,
+    or streams `{"message_id", "event": "output", "data": <str>}` lines followed by a
+    terminal `{"message_id", "event": "result", "data": {...}}`.
+    """
+    import websockets
+
+    message_id = "1"
+    lines: list[str] = []
+    deadline = asyncio.get_running_loop().time() + timeout
+
+    async def _recv(ws):
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            raise asyncio.TimeoutError
+        return await asyncio.wait_for(ws.recv(), timeout=remaining)
+
+    try:
+        async with websockets.connect(_dash_ws_url("/ws"), max_size=None) as ws:
+            try:
+                raw = await _recv(ws)
+            except asyncio.TimeoutError:
+                return {"error": "timeout", "timeout": timeout, "log_tail": [], "log_lines": 0}
+            server_info = json.loads(raw)
+            if server_info.get("requires_auth"):
+                return {
+                    "error": "Dashboard requires authentication (ESPHOME_USERNAME/"
+                             "ESPHOME_PASSWORD) — not supported by this tool.",
+                }
+
+            await ws.send(json.dumps({"command": command, "message_id": message_id, "args": args}))
+
+            while True:
+                try:
+                    raw = await _recv(ws)
+                except asyncio.TimeoutError:
+                    return {
+                        "error": "timeout",
+                        "timeout": timeout,
+                        "log_tail": lines[-tail_lines:],
+                        "log_lines": len(lines),
+                    }
+                message = json.loads(raw)
+                if message.get("message_id") != message_id:
+                    continue
+                if "error_code" in message:
+                    return {
+                        "error": message.get("error_code"),
+                        "details": message.get("details"),
+                        "log_tail": lines[-tail_lines:],
+                        "log_lines": len(lines),
+                    }
+                if "result" in message:
+                    return {
+                        "success": True,
+                        "result": message["result"],
+                        "log_tail": lines[-tail_lines:],
+                        "log_lines": len(lines),
+                    }
+                event = message.get("event")
+                if event == "output":
+                    lines.append(message.get("data", ""))
+                elif event == "result":
+                    data = message.get("data") or {}
+                    success = data.get("success")
+                    return {
+                        "success": bool(success) if success is not None else None,
+                        "exit_code": data.get("code"),
+                        "result": data,
+                        "log_tail": lines[-tail_lines:],
+                        "log_lines": len(lines),
+                    }
+    except OSError as e:
+        return {"error": f"Cannot connect to ESPHome dashboard at {_DASH_URL}: {e}"}
+
+
+def _dash_ws_command(command: str, args: dict, timeout: float = 60, tail_lines: int = 200) -> dict:
+    coro_factory = lambda: _dash_ws_command_async(command, args, timeout, tail_lines)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro_factory())
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        return pool.submit(asyncio.run, coro_factory()).result()
+
+
+def _looks_like_esphome_slug(slug: str) -> bool:
+    """True if `slug` matches a known ESPHome add-on naming pattern.
+
+    Add-on slugs are `<repo_hash>_<addon_slug>` — the hash prefix comes from the
+    add-on store repository and differs per installation/fork (the official add-on,
+    a HACS-style add-on repo, or a community fork such as the historical "ESPHome
+    Device Builder" add-on all mint their own hash). Match on suffix/known names
+    instead of hard-coding hashes.
+    """
+    return slug in _ESPHOME_SLUGS or slug == "esphome" or slug.endswith("_esphome")
+
+
+def _discover_esphome_slug() -> str | None:
+    """Find the installed ESPHome add-on's Supervisor slug from the live add-on list.
+
+    Returns None when the Supervisor `/addons` listing itself is unavailable (e.g.
+    SUPERVISOR_TOKEN unset) or no add-on matches — callers fall back to
+    `_ESPHOME_SLUGS` in that case via `_esphome_slug_candidates()`.
+    When several installed add-ons match (e.g. leftover uninstalled-but-cached
+    entries, or both an old and new ESPHome add-on side by side), a started one is
+    preferred over a stopped one; ties are broken by slug for a stable, repeatable
+    result across calls.
+    """
+    result = _sup_json("GET", "/addons")
+    if "error" in result:
+        return None
+    addons = ((result.get("data") or {}).get("addons")) or []
+    matches = [
+        a for a in addons
+        if isinstance(a, dict) and _looks_like_esphome_slug(a.get("slug") or "")
+    ]
+    if not matches:
+        return None
+    matches.sort(key=lambda a: (a.get("state") != "started", a.get("slug") or ""))
+    return matches[0].get("slug")
+
+
+def _esphome_slug_candidates() -> list[str]:
+    """Slugs to try, in order, for a Supervisor call against the ESPHome add-on.
+
+    Prefers the dynamically discovered slug (see `_discover_esphome_slug`); falls
+    back to the historical hard-coded guesses only when discovery itself couldn't
+    reach `/addons` at all (in which case a direct `/addons/<slug>/...` call would
+    fail identically for any slug, so this changes nothing in that scenario — it
+    only helps if `/addons` is reachable but, for some reason, doesn't include a
+    match, e.g. a permissions-scoped Supervisor token).
+    """
+    discovered = _discover_esphome_slug()
+    if discovered:
+        return [discovered]
+    return list(_ESPHOME_SLUGS)
+
+
+def _safe_filename(name: str) -> str:
+    """Validate a user-supplied ESPHome device name and return its `<name>.yaml` filename.
+
+    Rejects path separators, a leading dot, and blank input (same policy as
+    `tools/themes.py::_theme_path`) — this is the boundary that stops
+    `write_config(name="../../../etc/cron.d/x", ...)`-style path traversal, applied
+    to every device-name parameter in this module (get/write_config, compile/
+    validate/upload/clean_mqtt, the LVGL editor tools) before it reaches disk or is
+    forwarded to the dashboard as a `configuration` argument.
+    """
+    if "/" in name or "\\" in name or name.startswith(".") or not name.strip():
+        raise ValueError(f"Invalid device name: {name!r}")
+    return name if name.endswith(".yaml") else f"{name}.yaml"
+
+
+def _device_path(name: str) -> Path:
+    """Resolve a validated device name to its absolute path under `_ESPHOME_DIR`.
+
+    Defense in depth beyond `_safe_filename`'s separator/dot checks: the resolved
+    path must still land inside `_ESPHOME_DIR` after `Path.resolve()` (symlinks,
+    a platform-specific separator `_safe_filename` didn't account for, etc.).
+    Raises ValueError — callers turn that into `{"error": ...}`.
+    """
+    filename = _safe_filename(name)
+    esphome_root = _ESPHOME_DIR.resolve()
+    path = (_ESPHOME_DIR / filename).resolve()
+    if not path.is_relative_to(esphome_root):
+        raise ValueError(f"Invalid device name: {name!r}")
+    return path
 
 
 def _yaml_names() -> list[str]:
@@ -156,11 +428,13 @@ def list_devices() -> dict:
 @mcp.tool()
 def get_config(name: str) -> dict:
     """Read ESPHome device YAML config from /config/esphome/. Pass name with or without .yaml."""
-    filename = name if name.endswith(".yaml") else f"{name}.yaml"
-    path = _ESPHOME_DIR / filename
+    try:
+        path = _device_path(name)
+    except ValueError as e:
+        return {"error": str(e)}
     if not path.exists():
-        return {"error": f"Not found: {filename}", "esphome_dir": str(_ESPHOME_DIR)}
-    return {"name": filename, "content": path.read_text(encoding="utf-8")}
+        return {"error": f"Not found: {path.name}", "esphome_dir": str(_ESPHOME_DIR)}
+    return {"name": path.name, "content": path.read_text(encoding="utf-8")}
 
 
 @mcp.tool()
@@ -190,11 +464,13 @@ def write_config(name: str, content: str) -> dict:
     except yaml.YAMLError as e:
         return {"success": False, "error": f"YAML validation failed: {e}"}
 
-    filename = name if name.endswith(".yaml") else f"{name}.yaml"
-    path = _ESPHOME_DIR / filename
+    try:
+        path = _device_path(name)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-    return {"success": True, "name": filename, "path": str(path), "bytes": len(content.encode())}
+    return {"success": True, "name": path.name, "path": str(path), "bytes": len(content.encode())}
 
 
 @mcp.tool()
@@ -224,40 +500,109 @@ def get_device_entities(device_name: str) -> list[dict]:
 
 
 @mcp.tool()
-def compile_device(name: str) -> dict:
-    """Compile ESPHome firmware for a device via Dashboard API. Blocks until done (~60-120s)."""
-    filename = name if name.endswith(".yaml") else f"{name}.yaml"
-    return {"device": name, "action": "compile", **_dash("POST", "/compile", {"configuration": filename}, timeout=180)}
+def compile_device(name: str, only_generate: bool = False, timeout: float = 180, log_lines: int = 200) -> dict:
+    """Compile ESPHome firmware for a device via the dashboard WebSocket API (/compile).
 
+    Blocks until the compile process exits (~60-180s). Returns the exit code and the
+    last `log_lines` lines of build output (not the full log — it can be very large).
+    `only_generate=True` only generates the C++ source, skipping the platform build.
 
-@mcp.tool()
-def validate_config(name: str) -> dict:
-    """Validate ESPHome YAML config via Dashboard API (no compile, fast)."""
-    filename = name if name.endswith(".yaml") else f"{name}.yaml"
-    return {"device": name, "action": "validate", **_dash("POST", "/validate", {"configuration": filename})}
-
-
-@mcp.tool()
-def upload_device(name: str) -> dict:
-    """OTA flash compiled firmware to an ESPHome device via Dashboard API.
-
-    Requires device on the network and matching OTA password. Blocks until done (~30-60s).
+    Verified compatible with the "ESPHome Device Builder" add-on (github.com/esphome/
+    device-builder, api/legacy.py read on GitHub 2026-09-27): /compile is one of the
+    two WebSocket routes it keeps for HA back-compat, with the same
+    `{"type": "spawn", ...}` in / `{"event": "line"/"exit"}` out wire protocol as the
+    old dashboard — internally it now runs through Device Builder's firmware job
+    queue instead of a bare subprocess, but the wire shape is unchanged.
     """
-    filename = name if name.endswith(".yaml") else f"{name}.yaml"
-    return {"device": name, "action": "upload", **_dash("POST", "/upload", {"configuration": filename}, timeout=240)}
+    try:
+        filename = _safe_filename(name)
+    except ValueError as e:
+        return {"device": name, "action": "compile", "error": str(e)}
+    payload = {"configuration": filename}
+    if only_generate:
+        payload["only_generate"] = True
+    result = _dash_ws_spawn("/compile", payload, timeout=timeout, tail_lines=log_lines)
+    return {"device": name, "action": "compile", **result}
 
 
 @mcp.tool()
-def clean_mqtt(name: str) -> dict:
-    """Remove stale MQTT discovery entries for an ESPHome device (MQTT mode only)."""
-    filename = name if name.endswith(".yaml") else f"{name}.yaml"
-    return {"device": name, "action": "clean_mqtt", **_dash("POST", "/clean-mqtt", {"configuration": filename})}
+def validate_config(name: str, timeout: float = 60, log_lines: int = 200) -> dict:
+    """Validate ESPHome YAML config (no compile, fast) via the dashboard's `/ws` API.
+
+    Uses the `devices/validate` command on Device Builder's newer multiplexed `/ws`
+    protocol (github.com/esphome/device-builder, docs/API.md, confirmed 2026-09-27) —
+    the legacy per-endpoint `/validate` WebSocket route from the old ESPHome dashboard
+    does NOT exist in Device Builder's `api/legacy.py` (it keeps only /compile and
+    /upload for HA back-compat), so this can no longer use the old spawn protocol.
+    If the dashboard has a username/password configured, this fails fast with a clear
+    error instead of hanging (no ESPHOME_USERNAME/ESPHOME_PASSWORD credential wiring
+    exists yet). Not yet exercised against a live add-on — only against the
+    documented protocol — so treat a failure here as a signal to check
+    esphome_get_addon_logs / esphome_ping_dashboard before assuming the config itself
+    is bad.
+    """
+    try:
+        filename = _safe_filename(name)
+    except ValueError as e:
+        return {"device": name, "action": "validate", "error": str(e)}
+    result = _dash_ws_command("devices/validate", {"configuration": filename}, timeout=timeout, tail_lines=log_lines)
+    return {"device": name, "action": "validate", **result}
+
+
+@mcp.tool()
+def upload_device(name: str, port: str = "OTA", timeout: float = 240, log_lines: int = 200) -> dict:
+    """OTA flash compiled firmware to an ESPHome device via the dashboard WebSocket API (/upload).
+
+    `port` is "OTA" (default, wireless flash) or a serial device path (e.g. "/dev/ttyUSB0").
+    Requires the device to be on the network (for OTA) and a matching OTA password.
+    Blocks until done (~30-240s).
+
+    Verified compatible with the "ESPHome Device Builder" add-on (github.com/esphome/
+    device-builder, api/legacy.py read on GitHub 2026-09-27): /upload is the other
+    WebSocket route it keeps for HA back-compat, with the same spawn wire protocol
+    as before (see esphome_compile_device's docstring for details).
+    """
+    try:
+        filename = _safe_filename(name)
+    except ValueError as e:
+        return {"device": name, "action": "upload", "error": str(e)}
+    payload = {"configuration": filename, "port": port}
+    result = _dash_ws_spawn("/upload", payload, timeout=timeout, tail_lines=log_lines)
+    return {"device": name, "action": "upload", **result}
+
+
+@mcp.tool()
+def clean_mqtt(name: str, timeout: float = 60, log_lines: int = 200) -> dict:
+    """Remove stale MQTT discovery entries for an ESPHome device (MQTT mode only).
+
+    OPEN RISK — unverified / likely broken against the currently installed add-on:
+    this still calls the old dashboard's `/clean-mqtt` WebSocket spawn endpoint, but
+    that route does not exist in Device Builder's `api/legacy.py` (github.com/esphome/
+    device-builder, read on GitHub 2026-09-27 — it keeps exactly six HA-compat routes:
+    /devices, /ping, /json-config, /encryption-key, /compile, /upload; no /validate,
+    no /clean-mqtt). Its docs/API.md's `/ws` command list has no MQTT-discovery-clean
+    equivalent either — the closest command, `firmware/clean`, clears build artifacts,
+    not MQTT discovery topics. Verified compatible only with the legacy ESPHome pip
+    dashboard (esphome <= 2026.5.0). Expect this to fail (connection/timeout/404-style
+    error) against Device Builder until an equivalent is found or ESPHome restores one.
+    """
+    try:
+        filename = _safe_filename(name)
+    except ValueError as e:
+        return {"device": name, "action": "clean_mqtt", "error": str(e)}
+    result = _dash_ws_spawn("/clean-mqtt", {"configuration": filename}, timeout=timeout, tail_lines=log_lines)
+    return {"device": name, "action": "clean_mqtt", **result}
 
 
 @mcp.tool()
 def get_addon_info() -> dict:
-    """Get ESPHome add-on status, version, and update availability via Supervisor API."""
-    for slug in _ESPHOME_SLUGS:
+    """Get ESPHome add-on status, version, and update availability via Supervisor API.
+
+    The add-on slug is discovered dynamically from the live `/addons` list (see
+    `_discover_esphome_slug`) rather than guessed from a fixed set of hashes — the
+    hash prefix in `<hash>_esphome` differs per add-on-store repository/installation.
+    """
+    for slug in _esphome_slug_candidates():
         result = _sup_json("GET", f"/addons/{slug}/info")
         if "error" not in result:
             data = result.get("data", {})
@@ -270,13 +615,17 @@ def get_addon_info() -> dict:
                 "update_available": data.get("update_available"),
                 "ingress_url": data.get("ingress_url"),
             }
-    return {"error": f"ESPHome add-on not found. Tried: {_ESPHOME_SLUGS}"}
+    return {"error": f"ESPHome add-on not found. Tried: {_esphome_slug_candidates()}"}
 
 
 @mcp.tool()
 def get_addon_logs(lines: int = 150) -> dict:
-    """Get ESPHome add-on log output (last N lines). Shows compile errors, OTA status, device connections."""
-    for slug in _ESPHOME_SLUGS:
+    """Get ESPHome add-on log output (last N lines). Shows compile errors, OTA status, device connections.
+
+    The add-on slug is discovered dynamically — see `esphome_get_addon_info`.
+    """
+    candidates = _esphome_slug_candidates()
+    for slug in candidates:
         try:
             text = _sup_text(f"/addons/{slug}/logs")
             if text:
@@ -288,12 +637,22 @@ def get_addon_logs(lines: int = 150) -> dict:
             return {"error": f"HTTP {e.response.status_code}"}
         except Exception as e:
             return {"error": str(e)}
-    return {"error": f"ESPHome add-on not found. Tried: {_ESPHOME_SLUGS}"}
+    return {"error": f"ESPHome add-on not found. Tried: {candidates}"}
 
 
 @mcp.tool()
 def ping_dashboard() -> dict:
-    """Check ESPHome dashboard reachability at ESPHOME_DASHBOARD_URL."""
+    """Check ESPHome dashboard reachability at ESPHOME_DASHBOARD_URL (default
+    http://homeassistant.local:6052, override via that env var).
+
+    `reachable: false` here does NOT necessarily mean the add-on is down — it means
+    this URL/port isn't reachable from nexus's container. Two live-only things to
+    check next (not verifiable from this module alone): whether `mDNS
+    homeassistant.local` actually resolves inside the nexus container, and whether
+    the add-on's `ingress_url`/host port from esphome_get_addon_info matches
+    ESPHOME_DASHBOARD_URL — an ingress-only add-on (no host-network port exposed)
+    would need ESPHOME_DASHBOARD_URL pointed at that ingress path instead.
+    """
     result = _dash("GET", "/ping", timeout=5)
     return {"url": _DASH_URL, "reachable": "error" not in result, "result": result}
 
@@ -319,10 +678,12 @@ def _lvgl_load(name: str) -> tuple[dict | None, str]:
     for _t in ("!secret", "!include", "!lambda", "!extend", "!remove"):
         _L.add_constructor(_t, lambda l, n, t=_t: _tag_ctor(l, t, n))
 
-    filename = name if name.endswith(".yaml") else f"{name}.yaml"
-    path = _ESPHOME_DIR / filename
+    try:
+        path = _device_path(name)
+    except ValueError as e:
+        return None, str(e)
     if not path.exists():
-        return None, f"Not found: {filename}"
+        return None, f"Not found: {path.name}"
     try:
         parsed = yaml.load(path.read_text(encoding="utf-8"), Loader=_L)
         return parsed, ""
@@ -331,7 +692,13 @@ def _lvgl_load(name: str) -> tuple[dict | None, str]:
 
 
 def _lvgl_save(name: str, config: dict) -> dict:
-    """Dump ESPHome config dict back to YAML, restoring NUL-encoded !tag markers."""
+    """Dump ESPHome config dict back to YAML, restoring NUL-encoded !tag markers.
+
+    This is a full-file rewrite via `yaml.dump` — comments, blank lines and YAML
+    anchors/aliases in the original file are NOT preserved. If the file already
+    exists, a `<file>.bak` copy of the pre-rewrite content is written first so the
+    original formatting can be recovered manually.
+    """
     import yaml
 
     class _D(yaml.SafeDumper):
@@ -350,13 +717,24 @@ def _lvgl_save(name: str, config: dict) -> dict:
 
     _D.add_representer(str, _str_repr)
 
-    filename = name if name.endswith(".yaml") else f"{name}.yaml"
-    path = _ESPHOME_DIR / filename
     try:
+        path = _device_path(name)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    backup_path: Path | None = None
+    try:
+        if path.exists():
+            backup_path = path.with_name(path.name + ".bak")
+            shutil.copy2(path, backup_path)
         content = yaml.dump(config, Dumper=_D, default_flow_style=False,
                             allow_unicode=True, sort_keys=False)
         path.write_text(content, encoding="utf-8")
-        return {"success": True, "name": filename, "bytes": len(content.encode())}
+        return {
+            "success": True,
+            "name": path.name,
+            "bytes": len(content.encode()),
+            "backup": str(backup_path) if backup_path else None,
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -536,6 +914,10 @@ def lvgl_add_widget(device_name: str, page_id: str, widget_type: str, properties
     Lambda callbacks (on_click, on_value_changed) are not supported here — add them manually
     via esphome_get_config / esphome_write_config. After adding, run esphome_validate_config
     then esphome_compile_device + esphome_upload_device to deploy.
+
+    WARNING: this rewrites the entire device YAML file — comments, blank lines and YAML
+    anchors/aliases elsewhere in the file are NOT preserved. A `<file>.bak` copy of the
+    previous content is written first so you can recover the original formatting.
     """
     parsed, err = _lvgl_load(device_name)
     if err:
@@ -560,6 +942,10 @@ def lvgl_delete_widget(device_name: str, page_id: str, widget_id: str) -> dict:
     """Delete an LVGL widget by id from a page on an ESPHome device and save the config.
 
     After deleting, run esphome_validate_config then esphome_compile_device + esphome_upload_device.
+
+    WARNING: this rewrites the entire device YAML file — comments, blank lines and YAML
+    anchors/aliases elsewhere in the file are NOT preserved. A `<file>.bak` copy of the
+    previous content is written first so you can recover the original formatting.
     """
     parsed, err = _lvgl_load(device_name)
     if err:

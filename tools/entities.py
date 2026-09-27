@@ -70,14 +70,46 @@ def get_entity(entity_id: str) -> dict:
 
 
 @mcp.tool()
-def turn_on(entity_id: str, brightness: int | None = None, color_temp: int | None = None, rgb_color: list[int] | None = None) -> list[dict]:
-    """Turn on an entity. Optional: brightness (0-255), color_temp (mireds), rgb_color ([r,g,b])."""
+def turn_on(
+    entity_id: str,
+    brightness: int | None = None,
+    color_temp: int | None = None,
+    color_temp_kelvin: int | None = None,
+    rgb_color: list[int] | None = None,
+) -> list[dict] | dict:
+    """Turn on an entity.
+
+    `brightness` (0-255), `color_temp_kelvin` (Kelvin) and `rgb_color`
+    ([r,g,b]) are light-only options; passing any of them for a non-light
+    entity returns `{"error": ...}` instead of calling the service, since
+    e.g. `switch.turn_on` rejects unknown fields.
+
+    `color_temp` (mireds) is deprecated — Home Assistant's `light.turn_on`
+    no longer accepts mireds (removed in HA 2026.3), only
+    `color_temp_kelvin`. If given, it is converted to Kelvin
+    (`kelvin = round(1_000_000 / mireds)`). Prefer `color_temp_kelvin`.
+    """
     domain = entity_id.split(".")[0]
+    has_light_only_opts = (
+        brightness is not None
+        or color_temp is not None
+        or color_temp_kelvin is not None
+        or rgb_color is not None
+    )
+    if has_light_only_opts and domain != "light":
+        return {
+            "error": (
+                f"brightness/color_temp/color_temp_kelvin/rgb_color are light-only "
+                f"options and are not supported for domain '{domain}'"
+            )
+        }
     data: dict = {"entity_id": entity_id}
     if brightness is not None:
         data["brightness"] = brightness
-    if color_temp is not None:
-        data["color_temp"] = color_temp
+    if color_temp_kelvin is not None:
+        data["color_temp_kelvin"] = color_temp_kelvin
+    elif color_temp is not None:
+        data["color_temp_kelvin"] = round(1_000_000 / color_temp)
     if rgb_color is not None:
         data["rgb_color"] = rgb_color
     return ha.call_service(domain, "turn_on", data)
@@ -235,9 +267,17 @@ def set_entity_exposure(entity_id: str, assistant: str, should_expose: bool) -> 
 
 @mcp.tool()
 def get_entity_exposure(entity_id: str) -> dict:
-    """Get exposure flags for an entity across all voice assistants."""
-    result = ha._ws_call("homeassistant/expose/get", entity_id=entity_id)
-    return {"entity_id": entity_id, "exposure": result}
+    """Get exposure flags for an entity across all voice assistants.
+
+    HA has no per-entity exposure query; this fetches the full exposure map
+    via WS `homeassistant/expose_entity/list` and filters it client-side.
+    Entities with no exposure at all are absent from that map and are
+    reported here as `False` for every assistant.
+    """
+    result = ha._ws_call("homeassistant/expose_entity/list")
+    entity_exposure = (result.get("exposed_entities") or {}).get(entity_id, {})
+    exposure = {assistant: bool(entity_exposure.get(assistant, False)) for assistant in _ASSISTANTS}
+    return {"entity_id": entity_id, "exposure": exposure}
 
 
 @mcp.tool()
@@ -245,11 +285,15 @@ def list_exposed_entities(assistant: str) -> dict:
     """List all entities exposed to a given voice assistant.
 
     `assistant` must be one of: "conversation", "cloud.alexa", "cloud.google_assistant".
+    HA has no per-assistant exposure query; this fetches the full exposure
+    map via WS `homeassistant/expose_entity/list` and filters it client-side.
     """
     if assistant not in _ASSISTANTS:
         raise ValueError(f"assistant must be one of {_ASSISTANTS}")
-    result = ha._ws_call("homeassistant/expose/list", assistant=assistant)
-    return {"assistant": assistant, "exposed": result}
+    result = ha._ws_call("homeassistant/expose_entity/list")
+    exposed_entities = result.get("exposed_entities") or {}
+    exposed = [eid for eid, flags in exposed_entities.items() if flags.get(assistant)]
+    return {"assistant": assistant, "exposed": exposed}
 
 
 @mcp.tool()

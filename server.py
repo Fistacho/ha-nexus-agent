@@ -1,4 +1,6 @@
+import logging
 import os
+import re
 from fastmcp import FastMCP
 from dotenv import load_dotenv
 
@@ -72,10 +74,56 @@ mcp.mount(discover_mcp, namespace="discover")
 discover_mod.bind_root(mcp)
 
 
+# uvicorn's access logger logs the full request line, including the raw query
+# string — so `GET /mcp?token=<API_KEY>` would otherwise be written to the
+# add-on log in plaintext on every request. Both uvicorn HTTP protocol
+# implementations (h11, httptools) log via
+# `access_logger.info('%s - "%s %s HTTP/%s" %d', client_addr, method,
+# full_path, http_version, status_code)` — `full_path` (args[2]) is where the
+# query string lives.
+_TOKEN_QS_RE = re.compile(r"([?&]token=)[^&\s]+", re.IGNORECASE)
+
+
+class RedactTokenFilter(logging.Filter):
+    """Mask `?token=...` in uvicorn.access log records before they're emitted."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple) and len(record.args) == 5:
+            full_path = record.args[2]
+            if isinstance(full_path, str) and "token=" in full_path:
+                args = list(record.args)
+                args[2] = _TOKEN_QS_RE.sub(r"\1***", full_path)
+                record.args = tuple(args)
+        return True
+
+
+def _startup_log_lines(port: int, http_mode: bool) -> list[str]:
+    """Startup banner lines — deliberately never include the raw API key.
+
+    It used to be printed with `print(f"API key → {API_KEY}")` on every
+    start, landing in the add-on's persisted log (and any terminal history in
+    standalone mode) in plaintext.
+    """
+    from auth import _KEY_FILE
+
+    if http_mode:
+        lines = [
+            f"Nexus starting (HTTP) on port {port}",
+            f"Setup UI  → http://localhost:{port}",
+            f"MCP       → http://localhost:{port}/mcp",
+        ]
+    else:
+        lines = ["Nexus starting (stdio)"]
+
+    lines.append(f"API key stored in {_KEY_FILE}; open the Nexus panel (ingress) to see client config")
+    return lines
+
+
 def _build_app():
     """Combine MCP + setup UI into one ASGI app for HTTP mode."""
     from fastapi import FastAPI
     from fastapi.responses import HTMLResponse
+    import setup_ui
     from setup_ui import setup_page, health, regenerate
     from auth import API_KEY
     from urllib.parse import parse_qs
@@ -105,6 +153,8 @@ def _build_app():
     app = FastAPI(title="Nexus", docs_url=None, redoc_url=None, lifespan=mcp_app.lifespan)
     app.add_middleware(TokenAuthMiddleware)
 
+    setup_ui.set_mcp(mcp)
+
     app.get("/", response_class=HTMLResponse)(setup_page)
     app.get("/health")(health)
     app.post("/regenerate")(regenerate)
@@ -115,22 +165,24 @@ def _build_app():
 
 
 def main():
-    from auth import API_KEY
     port = int(os.getenv("NEXUS_PORT", "7123"))
 
     # HTTP mode: add-on or explicit NEXUS_HTTP=1
     if os.getenv("SUPERVISOR_TOKEN") or os.getenv("NEXUS_HTTP"):
         import uvicorn
-        print(f"Nexus starting (HTTP) on port {port}")
-        print(f"Setup UI  → http://localhost:{port}")
-        print(f"MCP       → http://localhost:{port}/mcp")
-        print(f"API key   → {API_KEY}")
+
+        for line in _startup_log_lines(port, http_mode=True):
+            print(line)
+
+        # Redact ?token=... from uvicorn's access log before any request is logged.
+        logging.getLogger("uvicorn.access").addFilter(RedactTokenFilter())
+
         app = _build_app()
         uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
     else:
         # stdio mode for Claude Desktop / local MCP client
-        print(f"Nexus starting (stdio)")
-        print(f"API key → {API_KEY}")
+        for line in _startup_log_lines(port, http_mode=False):
+            print(line)
         mcp.run()
 
 
