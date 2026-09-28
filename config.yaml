@@ -1,7 +1,7 @@
 name: Nexus Agent
-version: "0.25.0"
+version: "0.25.1"
 slug: nexus_agent
-description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.25.0: pre-built signed image, confirm-guarded service calls, Origin validation, path hardening"
+description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.25.1: fixed HACS install/update/uninstall/add-custom-repository tools to use HACS's real WebSocket API"
 url: https://github.com/Fistacho/ha-nexus-agent
 # ADR-0005 (orchestrator decision, 2026-09-28): single multi-arch manifest,
 # per current HA guidance (developers.home-assistant.io/docs/apps/publishing)

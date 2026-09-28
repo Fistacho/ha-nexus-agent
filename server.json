@@ -3,7 +3,7 @@
   "name": "io.github.Fistacho/ha-nexus-agent",
   "title": "Nexus Agent",
   "description": "MCP server for Home Assistant: entities, automations, dashboards, ESPHome, energy, HACS",
-  "version": "0.25.0",
+  "version": "0.25.1",
   "websiteUrl": "https://github.com/Fistacho/ha-nexus-agent#readme",
   "repository": {
     "url": "https://github.com/Fistacho/ha-nexus-agent",
@@ -13,8 +13,8 @@
     {
       "registryType": "oci",
       "registryBaseUrl": "https://ghcr.io",
-      "identifier": "ghcr.io/fistacho/nexus-agent:0.25.0",
-      "version": "0.25.0",
+      "identifier": "ghcr.io/fistacho/nexus-agent:0.25.1",
+      "version": "0.25.1",
       "transport": {
         "type": "stdio"
       },

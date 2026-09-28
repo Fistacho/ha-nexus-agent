@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.25.1
+
+**Fixed**
+
+- HACS write tools (`hacs_update_hacs_repository`, `hacs_install_hacs_repository`,
+  `hacs_uninstall_hacs_repository`, `hacs_add_custom_repository`) were sending
+  WebSocket commands HACS doesn't implement (`hacs/repository/install`,
+  `hacs/repository/update`, `hacs/repository/uninstall` — all answered
+  `{"code": "unknown_command"}` when called live against HA 2026.9.3). They now
+  use HACS's real API: `hacs/repository/download` (install and update — HACS
+  has no separate command for either), `hacs/repository/remove`, and
+  `hacs/repositories/add` for custom repositories. `hacs_get_hacs_repository`
+  now sends the `repository_id` field `hacs/repository/info` actually expects
+  instead of `repository`. Update is now `hacs/repository/refresh` (re-fetch)
+  followed by `hacs/repository/info` (read `available_version`) and
+  `hacs/repository/download` with that version. Tool names and parameters are
+  unchanged.
+
 ## 0.25.0
 
 **Added**

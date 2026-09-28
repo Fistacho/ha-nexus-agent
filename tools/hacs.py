@@ -1,8 +1,28 @@
 """HACS (Home Assistant Community Store) integration via WebSocket commands.
 
-Requires HACS to be installed in Home Assistant. WS message names below are based
-on the public HACS API as of 2024+. If HACS changes them, the exact strings may
-need to be re-verified against /config/custom_components/hacs/websocket/.
+Requires HACS to be installed in Home Assistant. WS message names below were
+re-verified 2026-09-28 against hacs/integration
+`custom_components/hacs/websocket/repository.py` and `repositories.py`
+(main branch) after `hacs/repository/install`, `hacs/repository/update` and
+`hacs/repository/uninstall` were found to be non-existent commands — HACS
+answered `{"code": "unknown_command"}` for all three when called live
+against HA 2026.9.3. The real commands:
+
+* `hacs/repository/info`      — field `repository_id` (not `repository`).
+* `hacs/repository/download`  — field `repository` + optional `version`;
+  this is both "install" (not yet installed) and "update in place"
+  (already installed) in HACS's own model — there is no separate command
+  for either.
+* `hacs/repository/remove`    — field `repository`; uninstalls.
+* `hacs/repository/refresh`   — field `repository`; re-fetches repo data
+  and always returns `{}` (no version info in the response).
+* `hacs/repositories/add`     — plural; fields `repository` (URL) +
+  `category`; registers a *custom* repository (distinct from the singular,
+  installed-repository commands above).
+* `hacs/repositories/list`    — plural; unchanged, already correct.
+
+If HACS changes these again, re-verify against
+`/config/custom_components/hacs/websocket/` on a live instance.
 """
 from __future__ import annotations
 
@@ -71,7 +91,7 @@ def get_hacs_repository(
     """Get details about a single HACS repository.
 
     Calls the `hacs/repository/info` WebSocket command for the given
-    `repo_id`.
+    `repo_id`, passed as its `repository_id` field.
 
     Use when: checking one repository's installed/available version or
     metadata before installing or updating it.
@@ -83,7 +103,7 @@ def get_hacs_repository(
     or the WS command name has changed"}` when `repo_id` is unknown or the
     WebSocket command fails.
     """
-    return _safe_ws("hacs/repository/info", repository=repo_id)
+    return _safe_ws("hacs/repository/info", repository_id=repo_id)
 
 
 @mcp.tool(annotations=write("Install a HACS repository", idempotent=True, open_world=True))
@@ -99,9 +119,11 @@ def install_hacs_repository(
 ) -> dict | list:
     """Install a HACS repository, optionally pinning a version.
 
-    Calls the `hacs/repository/install` WebSocket command, which downloads
-    the repository's release from its source (typically GitHub) — an
-    outbound fetch beyond this HA instance and its host.
+    Calls the `hacs/repository/download` WebSocket command (HACS has no
+    separate "install" command — `download` installs when not yet
+    installed, or re-downloads in place when it is), which fetches the
+    repository's release from its source (typically GitHub) — an outbound
+    fetch beyond this HA instance and its host.
 
     Use when: adding a HACS-managed integration/plugin/theme that is already
     known to HACS (via the default store or `hacs_add_custom_repository`).
@@ -118,7 +140,7 @@ def install_hacs_repository(
     kwargs: dict = {"repository": repo_id}
     if version:
         kwargs["version"] = version
-    return _safe_ws("hacs/repository/install", **kwargs)
+    return _safe_ws("hacs/repository/download", **kwargs)
 
 
 @mcp.tool(annotations=destructive("Uninstall a HACS repository", idempotent=True))
@@ -130,20 +152,21 @@ def uninstall_hacs_repository(
 ) -> dict | list:
     """Uninstall a HACS repository.
 
-    Calls the `hacs/repository/uninstall` WebSocket command, which removes
-    the installed files for `repo_id`; the integration/plugin/theme stops
-    working until reinstalled.
+    Calls the `hacs/repository/remove` WebSocket command (HACS has no
+    separate "uninstall" command), which removes the installed files for
+    `repo_id`; the integration/plugin/theme stops working until
+    reinstalled.
 
     Use when: removing a HACS-managed component that is no longer needed.
     Not for: only skipping an update while keeping it installed — there is
     no such option exposed here.
-    Returns: HACS's uninstall result, or `{"error": ..., "hint": ...}` if
+    Returns: HACS's remove result, or `{"error": ..., "hint": ...}` if
     the WebSocket call fails.
     Errors: `{"error": str(exception), "hint": "HACS may not be installed,
     or the WS command name has changed"}` when `repo_id` is not installed or
     the WebSocket command fails.
     """
-    return _safe_ws("hacs/repository/uninstall", repository=repo_id)
+    return _safe_ws("hacs/repository/remove", repository=repo_id)
 
 
 @mcp.tool(annotations=destructive("Update a HACS repository", idempotent=False, open_world=True))
@@ -155,24 +178,46 @@ def update_hacs_repository(
 ) -> dict | list:
     """Update an installed HACS repository to its latest available version.
 
-    Calls the `hacs/repository/update` WebSocket command, which downloads
-    and installs the newest release over the network; the previous version
-    is only recoverable from a backup taken beforehand.
+    HACS has no single "update" WebSocket command. This performs the three
+    calls HACS's own frontend makes for an update: `hacs/repository/refresh`
+    (re-fetches repository data; always returns `{}`, no version info),
+    then `hacs/repository/info` (reads the resulting `available_version`),
+    then `hacs/repository/download` with that version — which downloads and
+    installs the newest release over the network; the previous version is
+    only recoverable from a backup taken beforehand.
 
     Use when: `pending_upgrade` is set for the repository (see
     `hacs_list_hacs_critical_updates`) and the new version should be
     applied.
     Not for: pinning a specific version instead of the latest — use
     `hacs_install_hacs_repository` with `version` set.
-    Returns: HACS's update result, or `{"error": ..., "hint": ...}` if the
-    WebSocket call fails.
+    Returns: HACS's download result, or `{"error": ..., "hint": ...}` if
+    any of the three WebSocket calls fails.
     Errors: `{"error": str(exception), "hint": "HACS may not be installed,
-    or the WS command name has changed"}` when `repo_id` is not installed or
-    the WebSocket command fails.
+    or the WS command name has changed"}` when the refresh or info call
+    fails (the download call is then never made); `{"error": "HACS did not
+    report an available_version for this repository", "raw": ...}` when
+    info succeeds but has nothing to update to.
     Limits: downloads the new release over the network; no automatic
-    rollback on failure.
+    rollback on failure; three sequential WebSocket round-trips instead of
+    one.
     """
-    return _safe_ws("hacs/repository/update", repository=repo_id)
+    refresh_result = _safe_ws("hacs/repository/refresh", repository=repo_id)
+    if isinstance(refresh_result, dict) and "error" in refresh_result:
+        return refresh_result
+
+    info_result = _safe_ws("hacs/repository/info", repository_id=repo_id)
+    if isinstance(info_result, dict) and "error" in info_result:
+        return info_result
+
+    available_version = info_result.get("available_version") if isinstance(info_result, dict) else None
+    if not available_version:
+        return {
+            "error": "HACS did not report an available_version for this repository",
+            "raw": info_result,
+        }
+
+    return _safe_ws("hacs/repository/download", repository=repo_id, version=available_version)
 
 
 @mcp.tool(annotations=write("Add a custom HACS repository", idempotent=True, open_world=True))
@@ -193,9 +238,10 @@ def add_custom_repository(
 ) -> dict | list:
     """Register a custom repository with HACS so it becomes installable.
 
-    Calls the `hacs/repository/add` WebSocket command with `url` and
-    `category`. This only registers the repository — it does not install
-    it.
+    Calls the `hacs/repositories/add` WebSocket command (plural — distinct
+    from the singular `hacs/repository/*` commands used elsewhere in this
+    namespace) with `url` as its `repository` field and `category`. This
+    only registers the repository — it does not install it.
 
     Use when: a repository is not in HACS's default store and needs adding
     before it can be installed.
@@ -207,7 +253,7 @@ def add_custom_repository(
     or the WS command name has changed"}` when `url`/`category` is invalid
     or the WebSocket command fails.
     """
-    return _safe_ws("hacs/repository/add", repository=url, category=category)
+    return _safe_ws("hacs/repositories/add", repository=url, category=category)
 
 
 @mcp.tool(annotations=read("List HACS pending upgrades"))
