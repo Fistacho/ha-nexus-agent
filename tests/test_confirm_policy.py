@@ -1,6 +1,6 @@
 """Registry test for the shared `confirm` safety gate (ADR-0003 D1).
 
-Seventeen destructive tools across seven modules refuse to run without
+Eighteen destructive tools across eight modules refuse to run without
 `confirm=True` and, when refused, all return the exact same shape:
 `{"error": "confirmation_required", "message": ..., "action": ...}`, with
 zero I/O performed before that check. This is the common convention
@@ -12,13 +12,20 @@ whose refusal shape was unified (`automations_delete_scene`, previously
 `esphome_upload_device` (ADR-0004 D5, 0.23.0) — it flashes firmware with no
 automatic rollback and, in add-on mode, never actually reached the dashboard
 before ADR-0004's rewrite, so this is the first release where it does
-anything at all.
+anything at all. `services_call_service` (ADR-0006 D4, 0.25.0) is the
+eighteenth: unlike the other seventeen, its `confirm` only applies when
+`domain.service` is one of the eight ADR-0006 `GUARDED_SERVICES` — the row
+below exercises that with `homeassistant.restart`, the same effect
+`system_restart_ha` already guards, to prove the two tools share one gate
+instead of drifting apart (see `tests/test_service_guard.py` for the
+completeness check that `services_call_service`'s presence here is
+mandatory, not incidental).
 
 This test does not enumerate every `delete_*`/`remove_*`/`stop_*` tool in the
 add-on — ADR-0003 D1 deliberately leaves the rest (e.g. `areas_delete_area`,
 `supervisor_stop_addon`) without `confirm` until a follow-up ADR. The
-registry here is exactly the 17 tools that count as `confirm`-guarded after
-this change (16 pre-existing + 1 new).
+registry here is exactly the 18 tools that count as `confirm`-guarded after
+this change (17 pre-existing + 1 new).
 """
 from __future__ import annotations
 
@@ -50,6 +57,7 @@ _REGISTRY: list[tuple[str, str, dict[str, Any]]] = [
     ("system", "stop_ha", {}),
     ("files", "delete_config_file", {"relative_path": "packages/old.yaml"}),
     ("esphome", "upload_device", {"name": "kitchen_sensor"}),
+    ("services", "call_service", {"domain": "homeassistant", "service": "restart"}),
 ]
 _IDS = [f"{mod}.{name}" for mod, name, _ in _REGISTRY]
 

@@ -31,12 +31,26 @@
 # rejected — the legacy per-arch `*-base-python:3.12-alpine3.18` hasn't been rebuilt
 # since 2024-12-09, and the current multi-arch `base-python` image only covers
 # amd64/arm64, dropping armhf/armv7/i386). Verified via the Docker Hub registry API
-# (anonymous token) that `python:3.12-alpine`'s manifest list covers all 5
-# architectures this add-on declares in config.yaml: linux/amd64, linux/arm64/v8
+# (anonymous token) that `python:3.12-alpine`'s manifest list covers all 5 of the
+# architectures this add-on has historically supported: linux/amd64, linux/arm64/v8
 # (aarch64), linux/arm/v7 (armv7), linux/arm/v6 (armhf), linux/386 (i386) — `docker
 # buildx build --platform <target>` (what Supervisor's AppBuild.get_docker_args()
-# always passes) picks the right manifest entry from this single literal FROM.
+# always passes) picks the right manifest entry from this single literal FROM. This
+# local-build path (Supervisor building the Dockerfile itself, no `image:` key) still
+# supports all 5; ADR-0005's pre-built ghcr.io images (ARCHITECTURES in
+# .github/workflows/publish-image.yml, config.yaml's own `arch:` list) cover only
+# aarch64/amd64 going forward — see config.yaml's own comment for why, and
+# CHANGELOG.md's 0.25.0 entry for the user-facing breaking-change note.
 FROM python:3.12-alpine
+
+# MCP Registry ownership verification (ADR-0005 D2): the registry confirms a
+# publisher controls an `oci` package by checking this label on the pushed
+# image against server.json's own `name` — both must read exactly
+# "io.github.Fistacho/ha-nexus-agent". A literal LABEL here (not fed by an
+# ARG) so it survives Supervisor's own local build path unchanged too; see
+# tests/test_release_consistency.py::test_image_arch_label_consistency and
+# tests/test_build_image_consistency.py::test_dockerfile_has_literal_mcp_registry_label.
+LABEL io.modelcontextprotocol.server.name="io.github.Fistacho/ha-nexus-agent"
 
 # python:3.12-alpine ships neither an init system nor these CLI tools — installed
 # explicitly: git (GitPython, tools/git_ops.py), bash + jq (run.sh reads

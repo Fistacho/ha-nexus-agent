@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from typing import Any
 from dotenv import load_dotenv
 
+import service_guard
+
 load_dotenv()
 
 _HA_URL = os.getenv("HA_URL", "http://homeassistant.local:8123").rstrip("/")
@@ -256,6 +258,17 @@ def get_states() -> list[dict]:
 
 
 def get_state(entity_id: str) -> dict:
+    """Call `GET /api/states/<entity_id>`.
+
+    Security review follow-up (2026-09-28, "same class as F3"): raises
+    `ValueError` for an `entity_id` that fails HA Core's own
+    `valid_entity_id` pattern (`service_guard.valid_entity_id`), before the
+    URL is built -- otherwise a value like `"../services/hassio/
+    addon_stop"` would resolve to a different endpoint than
+    `/api/states/<entity_id>`, the same structural bug ADR-0006 F3 closed
+    for `services_call_service`.
+    """
+    entity_id = service_guard.path_segment(entity_id, "entity_id")
     with _client() as c:
         r = c.get(f"/api/states/{entity_id}")
         r.raise_for_status()
@@ -263,6 +276,10 @@ def get_state(entity_id: str) -> dict:
 
 
 def set_state(entity_id: str, state: str, attributes: dict | None = None) -> dict:
+    """Call `POST /api/states/<entity_id>`. Same `entity_id` validation as
+    `get_state` (see its docstring), raising `ValueError` before any
+    request is made."""
+    entity_id = service_guard.path_segment(entity_id, "entity_id")
     payload: dict[str, Any] = {"state": state}
     if attributes:
         payload["attributes"] = attributes
@@ -275,6 +292,18 @@ def set_state(entity_id: str, state: str, attributes: dict | None = None) -> dic
 # --- Services ---
 
 def call_service(domain: str, service: str, data: dict | None = None) -> list[dict]:
+    """Call `POST /api/services/<domain>/<service>`.
+
+    ADR-0006 D3 (obrona w glab): raises `ValueError` for a `domain`/`service`
+    that isn't a bare `[A-Za-z0-9_]+` identifier, before the URL is built --
+    every call site in `tools/` already passes either a hardcoded literal or
+    a name validated one layer up (`service_guard.validate_service_name` in
+    `tools/services.py`/`tools/websocket.py`), so this only ever fires for a
+    caller that skipped that check, not for the normal literal-name calls
+    made throughout the rest of `tools/`.
+    """
+    if not (service_guard.validate_service_name(domain) and service_guard.validate_service_name(service)):
+        raise ValueError(f"invalid service name: domain={domain!r} service={service!r}")
     with _client() as c:
         r = c.post(f"/api/services/{domain}/{service}", json=data or {})
         r.raise_for_status()
@@ -291,6 +320,14 @@ def list_services() -> list[dict]:
 # --- Events ---
 
 def fire_event(event_type: str, data: dict | None = None) -> dict:
+    """Call `POST /api/events/<event_type>`. `event_type` is percent-encoded
+    via `service_guard.path_segment(event_type, "identifier")` first (Security
+    review follow-up, 2026-09-28) -- unlike a service `domain`/`service`, a
+    real HA event type has no single fixed character-class validator to
+    reproduce, so it is encoded rather than whitelisted; raises `ValueError`
+    for an empty/non-string `event_type` before any request is made.
+    """
+    event_type = service_guard.path_segment(event_type, "identifier")
     with _client() as c:
         r = c.post(f"/api/events/{event_type}", json=data or {})
         r.raise_for_status()
@@ -309,8 +346,17 @@ def get_config() -> dict:
 # --- Logbook & History ---
 
 def get_history(entity_id: str | None = None, hours: int = 24) -> list:
+    """Call `GET /api/history/period/<start>`. `start` is always computed
+    here from `hours` (an `int`, never a caller-supplied path string) via
+    `datetime.isoformat()`, then still routed through
+    `service_guard.path_segment(start, "identifier")` before use (Security
+    review follow-up, 2026-09-28) as defense in depth against a future
+    refactor that accepts a raw `start` string directly.
+    """
     from datetime import datetime, timedelta, timezone
-    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    start = service_guard.path_segment(
+        (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(), "identifier"
+    )
     url = f"/api/history/period/{start}"
     params = {}
     if entity_id:
@@ -322,8 +368,12 @@ def get_history(entity_id: str | None = None, hours: int = 24) -> list:
 
 
 def get_logbook(entity_id: str | None = None, hours: int = 24) -> list:
+    """Call `GET /api/logbook/<start>`. Same `start` handling as
+    `get_history` (see its docstring)."""
     from datetime import datetime, timedelta, timezone
-    start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    start = service_guard.path_segment(
+        (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(), "identifier"
+    )
     url = f"/api/logbook/{start}"
     params = {}
     if entity_id:
@@ -414,7 +464,14 @@ def get_statistics_metadata(statistic_ids: list[str] | None = None) -> list[dict
 # --- Automation config CRUD (REST) ---
 
 def get_automation_config(automation_id: str) -> dict | None:
-    """Fetch a single automation YAML config as a dict. Returns None if not found."""
+    """Fetch a single automation YAML config as a dict. Returns None if not found.
+
+    Security review follow-up (2026-09-28, "same class as F3"):
+    `automation_id` is percent-encoded via `service_guard.path_segment(...,
+    "identifier")` before use, raising `ValueError` for an empty/non-string
+    id before any request is made.
+    """
+    automation_id = service_guard.path_segment(automation_id, "identifier")
     with _client() as c:
         r = c.get(f"/api/config/automation/config/{automation_id}")
         if r.status_code == 404:
@@ -424,7 +481,9 @@ def get_automation_config(automation_id: str) -> dict | None:
 
 
 def set_automation_config(automation_id: str, config: dict) -> dict:
-    """Create or overwrite an automation. `config` is the YAML-as-dict payload."""
+    """Create or overwrite an automation. `config` is the YAML-as-dict
+    payload. Same `automation_id` handling as `get_automation_config`."""
+    automation_id = service_guard.path_segment(automation_id, "identifier")
     with _client() as c:
         r = c.post(f"/api/config/automation/config/{automation_id}", json=config)
         r.raise_for_status()
@@ -435,7 +494,10 @@ def set_automation_config(automation_id: str, config: dict) -> dict:
 
 
 def delete_automation_config(automation_id: str) -> dict:
-    """Delete an automation config by ID. Returns {'status': 'not_found'} if it does not exist."""
+    """Delete an automation config by ID. Returns {'status': 'not_found'} if
+    it does not exist. Same `automation_id` handling as
+    `get_automation_config`."""
+    automation_id = service_guard.path_segment(automation_id, "identifier")
     with _client() as c:
         r = c.delete(f"/api/config/automation/config/{automation_id}")
         if r.status_code == 404:
@@ -450,7 +512,10 @@ def delete_automation_config(automation_id: str) -> dict:
 # --- Script config CRUD (REST) ---
 
 def get_script_config(script_id: str) -> dict | None:
-    """Fetch a single script YAML config as a dict. Returns None if not found."""
+    """Fetch a single script YAML config as a dict. Returns None if not
+    found. Same `service_guard.path_segment` treatment as
+    `get_automation_config` (see its docstring), applied to `script_id`."""
+    script_id = service_guard.path_segment(script_id, "identifier")
     with _client() as c:
         r = c.get(f"/api/config/script/config/{script_id}")
         if r.status_code == 404:
@@ -460,7 +525,9 @@ def get_script_config(script_id: str) -> dict | None:
 
 
 def set_script_config(script_id: str, config: dict) -> dict:
-    """Create or overwrite a script. `config` is the YAML-as-dict payload."""
+    """Create or overwrite a script. `config` is the YAML-as-dict payload.
+    Same `script_id` handling as `get_script_config`."""
+    script_id = service_guard.path_segment(script_id, "identifier")
     with _client() as c:
         r = c.post(f"/api/config/script/config/{script_id}", json=config)
         r.raise_for_status()
@@ -471,7 +538,9 @@ def set_script_config(script_id: str, config: dict) -> dict:
 
 
 def delete_script_config(script_id: str) -> dict:
-    """Delete a script config by ID. Returns {'status': 'not_found'} if it does not exist."""
+    """Delete a script config by ID. Returns {'status': 'not_found'} if it
+    does not exist. Same `script_id` handling as `get_script_config`."""
+    script_id = service_guard.path_segment(script_id, "identifier")
     with _client() as c:
         r = c.delete(f"/api/config/script/config/{script_id}")
         if r.status_code == 404:

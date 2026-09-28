@@ -11,6 +11,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 import self_protection
+import service_guard
 from tools._contract import destructive, read
 
 load_dotenv()
@@ -207,32 +208,45 @@ def call_service(
 
     Sends `call_service` with `return_response=True` always set, so actions
     that support a response (e.g. `weather.get_forecasts`,
-    `calendar.get_events`, `todo.get_items`) return it; actions without a
-    response (`light.turn_on`, `switch.toggle`, most control actions) fail
-    with a validation error under `return_response=True`. Refuses
-    `hassio.addon_stop`/`app_stop`/`addon_stdin`/`app_stdin` when the
-    `addon`/`app` slug in `data` is nexus's own add-on
-    (`self_protection.is_own_addon`) — same block as `services_call_service`
-    and `supervisor_stop_addon`; `hassio.addon_restart`/`app_restart` stay
-    allowed.
+    `calendar.get_events`) return it; actions without one (`light.turn_on`,
+    most control actions) fail with a validation error. `domain`/`service`
+    must match `[A-Za-z0-9_]+` (ADR-0006 D3) or the call is refused first.
+    Refuses `hassio.addon_stop`/`app_stop`/`addon_stdin`/`app_stdin` against
+    nexus's own add-on (`self_protection.is_own_addon`); `addon_restart`/
+    `app_restart` stay allowed. Outright refuses the eight services
+    `services_call_service` gates behind `confirm` (ADR-0006 D5) — none
+    support a response (F1).
 
     Use when: the action's response payload is needed, not just the changed
     states.
-    Not for: a plain control action with no response data — use
-    `services_call_service`.
-    Returns: the raw WS result: `{success, result: {context, response}}` on
-    success, or a failure dict from HA on failure; `{"success": False}` with
-    no other keys if no `result` message arrives at all.
-    Errors: raises `RuntimeError` when the WebSocket handshake does not
-    complete within `timeout`; `{"error":
-    "self_addon_hassio_service_blocked", "message": ...}` for the blocked
-    `hassio.*` cases above.
+    Not for: a plain control action, or one of the eight guarded services —
+    use `services_call_service` for both.
+    Returns: raw WS result: `{success, result: {context, response}}` on
+    success, or a failure dict from HA; `{"success": False}` if no `result`
+    message arrives.
+    Errors: raises `RuntimeError` on a handshake timeout; `{"error":
+    "invalid_service_name"}` for a malformed domain/service; `{"error":
+    "self_addon_hassio_service_blocked", "message": ...}` for a blocked
+    `hassio.*` case; `{"error": "guarded_service_refused", "message": ...,
+    "use": "services_call_service"}` for a guarded service.
     Limits: blocks for up to `timeout` seconds (default 10), including the
     initial handshake.
     """
+    if not (service_guard.validate_service_name(domain) and service_guard.validate_service_name(service)):
+        return {"error": "invalid_service_name"}
     blocked = self_protection.blocked_hassio_service_call(domain, service, data)
     if blocked is not None:
         return blocked
+    if service_guard.is_guarded(domain, service):
+        return {
+            "error": "guarded_service_refused",
+            "message": (
+                f"'{domain}.{service}' is a guarded Home Assistant service (ADR-0006) that "
+                "never returns a response payload. Use services_call_service instead, which "
+                "accepts confirm=True for it."
+            ),
+            "use": "services_call_service",
+        }
     payload = {
         "type": "call_service",
         "domain": domain,

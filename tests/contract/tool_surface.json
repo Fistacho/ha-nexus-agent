@@ -4418,6 +4418,10 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "confirm": {
+            "default": false,
+            "type": "boolean"
+          },
           "data": {
             "anyOf": [
               {

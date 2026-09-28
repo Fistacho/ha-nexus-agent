@@ -134,6 +134,25 @@ def check_build_from_would_fail_supervisor_validation(value: str) -> bool:
     return not _RE_SUPERVISOR_BUILD_FROM.match(value)
 
 
+def check_dockerfile_has_literal_mcp_label(dockerfile_path: Path) -> list[str]:
+    """ADR-0005: the MCP Registry label must be a literal LABEL, not fed by an
+    ARG -- same reasoning as `check_dockerfile_has_no_build_arg_from` above,
+    the label needs to be identical whether Supervisor builds this Dockerfile
+    locally (pre-ghcr.io users on 0.24.x) or CI builds/pushes it for ghcr.io.
+    """
+    text = dockerfile_path.read_text(encoding="utf-8")
+    if not re.search(
+        r'^LABEL\s+io\.modelcontextprotocol\.server\.name\s*=\s*"io\.github\.Fistacho/ha-nexus-agent"',
+        text,
+        re.MULTILINE,
+    ):
+        return [
+            "Dockerfile is missing a literal "
+            'LABEL io.modelcontextprotocol.server.name="io.github.Fistacho/ha-nexus-agent"'
+        ]
+    return []
+
+
 def check_no_build_yaml(repo_root: Path) -> list[str]:
     """This add-on ships no `build.yaml` — see module docstring for why."""
     if (repo_root / "build.yaml").exists():
@@ -157,6 +176,11 @@ def test_dockerfile_has_no_build_arg_from():
 
 def test_dockerfile_installs_curl_jq_bash_git():
     problems = check_dockerfile_installs_required_packages(REPO_ROOT / "Dockerfile")
+    assert not problems, problems
+
+
+def test_dockerfile_has_literal_mcp_registry_label():
+    problems = check_dockerfile_has_literal_mcp_label(REPO_ROOT / "Dockerfile")
     assert not problems, problems
 
 
@@ -186,6 +210,16 @@ def test_detects_arg_sourced_from_regression(tmp_path):
 
     problems = check_dockerfile_has_no_build_arg_from(tmp_path / "Dockerfile")
     assert problems, "expected an ARG-sourced FROM to be reported"
+
+
+def test_detects_missing_mcp_registry_label(tmp_path):
+    (tmp_path / "Dockerfile").write_text(
+        "FROM python:3.12-alpine\n\nRUN apk add --no-cache git bash curl jq\n",
+        encoding="utf-8",
+    )
+
+    problems = check_dockerfile_has_literal_mcp_label(tmp_path / "Dockerfile")
+    assert problems, "expected a missing MCP Registry LABEL to be reported"
 
 
 def test_detects_missing_required_package(tmp_path):

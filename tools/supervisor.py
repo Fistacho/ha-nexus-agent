@@ -14,6 +14,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 import self_protection
+import service_guard
 from tools._contract import destructive, read, write
 
 mcp = FastMCP("supervisor")
@@ -305,6 +306,36 @@ def _sanitize_error_detail(resp: dict) -> dict:
     return sanitized
 
 
+def _invalid_slug_error(slug: str) -> dict:
+    return {
+        "error": "invalid_slug",
+        "message": (
+            f"Invalid add-on/backup slug: {slug!r}. Slugs must not contain "
+            "'/', '\\\\', '?', '#' or '..'."
+        ),
+    }
+
+
+def _validate_slug(slug: str) -> dict | None:
+    """ADR-0006 follow-up (Security review, 2026-09-28, "same class as
+    F3"): validate `slug` via `service_guard.path_segment(slug,
+    "identifier")` before it is spliced into an f-string Supervisor REST
+    path (`_supervisor_request`/`_supervisor_get_text`) -- otherwise a
+    value like `"../host/shutdown"` could resolve to a different
+    Supervisor endpoint than the add-on/backup one named. Returns
+    `{"error": "invalid_slug", "message": ...}` (this module's own error
+    convention, not a raised exception) when invalid, `None` when `slug`
+    may be used as-is. Every slug-taking tool below calls this first --
+    before `self_protection`/`confirm` -- so a malicious slug is refused
+    with zero Supervisor requests regardless of either.
+    """
+    try:
+        service_guard.path_segment(slug, "identifier")
+    except ValueError:
+        return _invalid_slug_error(slug)
+    return None
+
+
 def _supervisor_request(method: str, path: str, json: dict | None = None) -> dict:
     """Internal: call Supervisor REST API with bearer token from env."""
     token = os.getenv("SUPERVISOR_TOKEN")
@@ -400,9 +431,7 @@ def get_addon(
     is a URL with inline credentials (`scheme://user:pass@host`) — covers
     nexus's own API key and other add-ons' secrets/connection strings
     alike, recursively through nested groups and lists. An empty/unset
-    value stays empty. Adds `redacted_fields`: `{"path", "reason"}` dicts,
-    `reason` one of `schema_password`, `key_name_heuristic`,
-    `credentials_in_url`.
+    value stays empty. Adds `redacted_fields`: `{"path", "reason"}` dicts.
 
     Use when: the full add-on record is needed, e.g. before editing its
     options with `supervisor_set_addon_options`, which accepts the same
@@ -411,10 +440,14 @@ def get_addon(
     `supervisor_list_addons`.
     Returns: Supervisor's add-on info payload with secret-looking `options`
     values replaced by a placeholder, plus `redacted_fields`.
-    Errors: `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
-    add-on for Supervisor API"}` when the token env var is missing;
-    `{"error": "HTTP <status>", "detail": ...}` if the slug does not exist.
+    Errors: `{"error": "invalid_slug"}` for a bad slug; `{"error":
+    "SUPERVISOR_TOKEN not set — Nexus must run as HA add-on for Supervisor
+    API"}` when the token env var is missing; `{"error": "HTTP <status>",
+    "detail": ...}` if the slug does not exist.
     """
+    invalid = _validate_slug(slug)
+    if invalid is not None:
+        return invalid
     resp = _supervisor_request("GET", f"/addons/{slug}/info")
     if "error" in resp:
         return resp
@@ -453,12 +486,15 @@ def install_addon(
     Not for: starting/stopping an already-installed add-on — use
     `supervisor_start_addon`/`supervisor_stop_addon`.
     Returns: Supervisor's install-job result.
-    Errors: `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
+    Errors: `{"error": "invalid_slug"}` for a bad slug; `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
     add-on for Supervisor API"}` when the token env var is missing;
     `{"error": "HTTP <status>", "detail": ...}` if the slug is unknown.
     Limits: downloads the add-on image over the network; can take a while
     on a slow connection.
     """
+    invalid = _validate_slug(slug)
+    if invalid is not None:
+        return invalid
     return _supervisor_request("POST", f"/addons/{slug}/install")
 
 
@@ -493,7 +529,7 @@ def uninstall_addon(
     Not for: temporarily stopping it while keeping its data and config — use
     `supervisor_stop_addon`.
     Returns: Supervisor's uninstall-job result when confirmed.
-    Errors: `{"error": "self_addon_uninstall_blocked", "message": ...}` when
+    Errors: `{"error": "invalid_slug"}` for a bad slug; `{"error": "self_addon_uninstall_blocked", "message": ...}` when
     `slug` is nexus's own add-on; returns `{"error":
     "confirmation_required", "message": ..., "action": ...}` when `confirm`
     is false; `{"error": "HTTP <status>", "detail": ...}` on a Supervisor
@@ -501,6 +537,9 @@ def uninstall_addon(
     Limits: WARNING: deletes the add-on's data with no separate backup step;
     requires `confirm=True`.
     """
+    invalid = _validate_slug(slug)
+    if invalid is not None:
+        return invalid
     if self_protection.is_own_addon(slug):
         return {
             "error": "self_addon_uninstall_blocked",
@@ -536,11 +575,14 @@ def start_addon(
     Not for: installing a new add-on — use `supervisor_install_addon`; for
     stopping it — use `supervisor_stop_addon`.
     Returns: Supervisor's start-job result.
-    Errors: `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
+    Errors: `{"error": "invalid_slug"}` for a bad slug; `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
     add-on for Supervisor API"}` when the token env var is missing;
     `{"error": "HTTP <status>", "detail": ...}` if the slug is unknown or
     already running.
     """
+    invalid = _validate_slug(slug)
+    if invalid is not None:
+        return invalid
     return _supervisor_request("POST", f"/addons/{slug}/start")
 
 
@@ -567,7 +609,7 @@ def stop_addon(
     bringing it back — use `supervisor_start_addon`; for a brief restart of
     nexus itself — use `supervisor_restart_addon` instead, which is allowed.
     Returns: Supervisor's stop-job result.
-    Errors: `{"error": "self_addon_stop_blocked", "message": ...}` when
+    Errors: `{"error": "invalid_slug"}` for a bad slug; `{"error": "self_addon_stop_blocked", "message": ...}` when
     `slug` is nexus's own add-on; `{"error": "SUPERVISOR_TOKEN not set —
     Nexus must run as HA add-on for Supervisor API"}` when the token env var
     is missing; `{"error": "HTTP <status>", "detail": ...}` if the slug is
@@ -575,6 +617,9 @@ def stop_addon(
     Limits: interrupts the add-on's availability, and anything depending on
     it, until it is started again.
     """
+    invalid = _validate_slug(slug)
+    if invalid is not None:
+        return invalid
     if self_protection.is_own_addon(slug):
         return {
             "error": "self_addon_stop_blocked",
@@ -606,11 +651,14 @@ def restart_addon(
     Not for: a one-way stop — use `supervisor_stop_addon`; for restarting
     Core instead — use `supervisor_restart_core`.
     Returns: Supervisor's restart-job result.
-    Errors: `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
+    Errors: `{"error": "invalid_slug"}` for a bad slug; `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
     add-on for Supervisor API"}` when the token env var is missing;
     `{"error": "HTTP <status>", "detail": ...}` if the slug is unknown.
     Limits: briefly interrupts the add-on's availability.
     """
+    invalid = _validate_slug(slug)
+    if invalid is not None:
+        return invalid
     return _supervisor_request("POST", f"/addons/{slug}/restart")
 
 
@@ -633,12 +681,15 @@ def update_addon(
     `supervisor_restore_backup` instead; there is no dedicated rollback
     call.
     Returns: Supervisor's update-job result.
-    Errors: `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
+    Errors: `{"error": "invalid_slug"}` for a bad slug; `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
     add-on for Supervisor API"}` when the token env var is missing;
     `{"error": "HTTP <status>", "detail": ...}` on a failed update.
     Limits: downloads the new version over the network; no automatic
     rollback on failure.
     """
+    invalid = _validate_slug(slug)
+    if invalid is not None:
+        return invalid
     return _supervisor_request("POST", f"/addons/{slug}/update")
 
 
@@ -667,10 +718,13 @@ def get_addon_logs(
     Not for: the ESPHome add-on's per-device compile/upload logs — use
     `esphome_get_addon_logs` if that distinction matters to the caller.
     Returns: `{"logs": "<joined log lines>"}`.
-    Errors: `{"error": "SUPERVISOR_TOKEN not set or empty response"}` when
+    Errors: `{"error": "invalid_slug"}` for a bad slug; `{"error": "SUPERVISOR_TOKEN not set or empty response"}` when
     the token is missing; `{"error": "HTTP <status>", "detail": ...}` on a
     Supervisor API error.
     """
+    invalid = _validate_slug(slug)
+    if invalid is not None:
+        return invalid
     try:
         text = _supervisor_get_text(f"/addons/{slug}/logs")
     except httpx.HTTPStatusError as e:
@@ -712,24 +766,26 @@ def set_addon_options(
     swapped for the real stored value first, so echoing it back unchanged
     never overwrites the secret — a list containing it must keep every
     item's order/count as read, or the call is refused rather than guessed.
-    Once a placeholder was resolved, any Supervisor error comes back with
-    `detail` stripped (it can otherwise echo the rejected payload, secret
-    included). Takes effect after `supervisor_restart_addon`. Refuses to
-    run against nexus's own add-on (real slug or the Supervisor
-    self-alias) — could otherwise lift this add-on's own restrictions.
+    Once a placeholder was resolved, a Supervisor error strips `detail`
+    (it can otherwise echo the rejected payload, secret included). Takes
+    effect after `supervisor_restart_addon`. Refuses to run against
+    nexus's own add-on — could otherwise lift its own restrictions.
 
     Use when: changing an add-on's configuration programmatically.
     Not for: reading the current options first — use
     `supervisor_get_addon`; for changing nexus's own configuration — use the
     Home Assistant Supervisor UI instead.
     Returns: Supervisor's options-update result.
-    Errors: `self_addon_options_blocked` for nexus's own add-on;
+    Errors: `{"error": "invalid_slug"}` for a bad slug; `self_addon_options_blocked` for nexus's own add-on;
     `redaction_marker_list_length_mismatch` on a placeholder list-length
     mismatch; `SUPERVISOR_TOKEN not set` when the token is missing;
     `{"error": "HTTP <status>"}` on a schema-validation or placeholder
     read-back failure.
     Limits: does not apply until the add-on is restarted.
     """
+    invalid = _validate_slug(slug)
+    if invalid is not None:
+        return invalid
     if self_protection.is_own_addon(slug):
         return {
             "error": "self_addon_options_blocked",
@@ -777,11 +833,14 @@ def get_addon_stats(
     Not for: historical usage over time — this returns only a snapshot.
     Returns: Supervisor's raw stats payload (CPU percent, memory
     usage/limit, network and block I/O counters).
-    Errors: `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
+    Errors: `{"error": "invalid_slug"}` for a bad slug; `{"error": "SUPERVISOR_TOKEN not set — Nexus must run as HA
     add-on for Supervisor API"}` when the token env var is missing;
     `{"error": "HTTP <status>", "detail": ...}` if the add-on is not
     running.
     """
+    invalid = _validate_slug(slug)
+    if invalid is not None:
+        return invalid
     return _supervisor_request("GET", f"/addons/{slug}/stats")
 
 
@@ -1048,12 +1107,15 @@ def restore_backup(
     restore is not exposed by this tool.
     Returns: Supervisor's restore-job result when confirmed; the reply may
     never arrive because the add-on restarts mid-call.
-    Errors: returns `{"error": "confirmation_required", "message": ...,
+    Errors: `{"error": "invalid_slug"}` for a bad slug; returns `{"error": "confirmation_required", "message": ...,
     "action": ...}` when `confirm` is false; `{"error": "HTTP <status>",
     "detail": ...}` if the slug or password is wrong.
     Limits: WARNING: discards every change made since the backup; requires
     `confirm=True`.
     """
+    invalid = _validate_slug(slug)
+    if invalid is not None:
+        return invalid
     if not confirm:
         return {
             "error": "confirmation_required",
@@ -1100,7 +1162,7 @@ def delete_backup(
     is no recovery after this call, even with `confirm=True`.
     Returns: Supervisor's delete result when confirmed, otherwise a
     confirmation prompt.
-    Errors: returns `{"error": "confirmation_required", "message": ...,
+    Errors: `{"error": "invalid_slug"}` for a bad slug; returns `{"error": "confirmation_required", "message": ...,
     "action": ...}` when `confirm` is false; `{"error": "SUPERVISOR_TOKEN
     not set — Nexus must run as HA add-on for Supervisor API"}` when the
     token env var is missing; `{"error": "HTTP <status>", "detail": ...}`
@@ -1108,6 +1170,9 @@ def delete_backup(
     Limits: requires `confirm=True`; deletion is immediate and permanent
     with no undo once confirmed.
     """
+    invalid = _validate_slug(slug)
+    if invalid is not None:
+        return invalid
     if not confirm:
         return {
             "error": "confirmation_required",

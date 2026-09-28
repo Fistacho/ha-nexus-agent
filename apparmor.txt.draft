@@ -1,0 +1,140 @@
+# DRAFT — NOT ACTIVE. Do not rename this file to `apparmor.txt` without first
+# testing it on a live HA instance and getting an explicit release sign-off.
+#
+# Why the `.draft` suffix matters (verified against home-assistant/supervisor
+# `main`, 2026-09-28, not assumed):
+#
+#   - `App.install_apparmor()` (supervisor/apps/app.py) checks *only* whether
+#     `<addon_dir>/apparmor.txt` exists (`self.path_apparmor.exists()`) — it is
+#     NOT gated by config.yaml's `apparmor:` key. The literal filename
+#     `apparmor.txt` being present in this repo is what makes Supervisor load
+#     it into the host's AppArmor as a profile named after this add-on's slug
+#     (`nexus_agent`), the very next time the add-on installs/updates —
+#     independent of anything else in config.yaml.
+#   - Whether that *loaded* profile is actually *applied* to the container
+#     (`docker/app.py`'s `security_opt`) is separately gated by
+#     `App.apparmor` (supervisor/apps/model.py): reads config.yaml's
+#     `apparmor` key (schema default `True`) and returns `SECURITY_PROFILE`
+#     (profile enforced) when true and a profile exists, `SECURITY_DISABLE`
+#     (`apparmor=unconfined`) when the config key is `false`.
+#   - Net effect: naming this file `apparmor.txt` today would start enforcing
+#     it on the very next install/update, immediately, for every user — there
+#     is no "loaded but inert" state to test in without an owner already
+#     having verified the profile against a real running add-on. That is
+#     exactly backwards from how a security-tightening change like this
+#     should ship.
+#
+# Planned two-step rollout (ADR-0005 D2):
+#   1. This release (0.25.0 infra batch): profile drafted here, inert,
+#      reviewed. No config.yaml change needed — `apparmor: true` (the
+#      existing default) with no `apparmor.txt` present behaves exactly as
+#      every release through 0.24.0 already does (Docker's own generic
+#      `docker-default` profile, unrelated to this file).
+#   2. A later release, after testing this exact profile against a live add-on
+#      install (watch `dmesg`/`journalctl -k` for `apparmor="DENIED"` entries
+#      across a normal session: startup, a git commit via `git_*` tools, an
+#      ESPHome compile, a dashboard screenshot round-trip through Puppet, a
+#      Supervisor API call): rename to `apparmor.txt`, note it in CHANGELOG.md
+#      as a security hardening change, and be ready to ship a fast hotfix
+#      (loosen the profile) if a real user's environment trips a rule this
+#      draft didn't anticipate — an over-tight profile fails closed (denied
+#      syscalls/file access), not with an obvious error message pointing at
+#      AppArmor; it looks like an unrelated crash or hang.
+#
+# Scope this profile is written for (nexus 0.24.0's actual runtime shape —
+# see Dockerfile, run.sh, ha_client.py, tools/git_ops.py):
+#   - `python3 server.py` as PID 1's child (run.sh `exec`s it), FastAPI/uvicorn
+#     HTTP server (add-on mode) or a stdio MCP server (standalone), never both.
+#   - GitPython (tools/git_ops.py) shells out to the `git` binary directly —
+#     needs `ix` on it, not just read.
+#   - run.sh itself needs `bash`, `jq` (options.json parsing), `curl` (only
+#     used by the Dockerfile HEALTHCHECK, which execs inside this same
+#     container/profile).
+#   - `host_network: true` (ADR-0004) — AppArmor's network mediation is
+#     coarse (address family / socket type, not host/port), so it cannot
+#     itself restrict *which* hosts nexus reaches on the LAN; that boundary is
+#     `read_only`/`disabled_namespaces` plus the SSRF guards already in
+#     tools/card_builder.py, not this profile. Treat the `network` rules below
+#     as "allow the process to use sockets at all", not host-network
+#     confinement.
+#   - `/config` (rw, Supervisor `map: config:rw`) and `/data` (rw, this add-on's
+#     own persistent dir: `.nexus_api_key`, git repo state) are the only
+#     bind-mounted paths that need write access.
+#
+# Not covered / explicitly out of scope for this draft: capability-level
+# hardening (`no_new_privileges`, dropped Linux capabilities) — those are
+# Supervisor/`docker create` flags, not AppArmor rules, and are unaffected by
+# whether this file is ever renamed live.
+
+#include <tunables/global>
+
+profile nexus_agent flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/python>
+
+  # --- Network ------------------------------------------------------------
+  # Coarse-grained on purpose (see header): nexus needs outbound HTTP(S) to
+  # Home Assistant Core / the Supervisor API / the ESPHome Device Builder's
+  # loopback ingress, and inbound on its own MCP/Setup-UI port. AppArmor
+  # cannot scope this to "only 127.0.0.1 and the Supervisor" the way a
+  # firewall rule could.
+  network inet stream,
+  network inet6 stream,
+  network unix stream,
+
+  # --- Interpreter and the tools run.sh/healthcheck exec -------------------
+  /usr/bin/python3.12 ix,
+  /usr/bin/python3 ix,
+  /usr/bin/git ix,
+  /bin/bash ix,
+  /usr/bin/jq ix,
+  /usr/bin/curl ix,
+
+  # --- App code (read-only; nothing under /app should be written at
+  # runtime) ----------------------------------------------------------------
+  /app/ r,
+  /app/** r,
+
+  # --- Add-on's own persistent + Supervisor-supplied data -------------------
+  /data/ rw,
+  /data/** rw,
+  /data/options.json r,
+
+  # --- Home Assistant config directory (Supervisor `map: config:rw`) -------
+  /config/ rw,
+  /config/** rw,
+
+  # --- Python / libc / package runtime needs --------------------------------
+  /usr/lib/python3.12/** r,
+  /usr/lib/python3.12/site-packages/** r,
+  /etc/hostname r,
+  /etc/hosts r,
+  /etc/resolv.conf r,
+  /etc/ssl/** r,
+  /tmp/ rw,
+  /tmp/** rw,
+
+  # /proc: needed for Python's own runtime introspection (threading, asyncio
+  # event loop, subprocess wait) and GitPython's subprocess handling — scoped
+  # to the process's own PID tree, not the whole host's /proc.
+  owner @{PROC}/@{pid}/** rw,
+  @{PROC}/sys/kernel/random/uuid r,
+  deny @{PROC}/sys/kernel/** w,
+  deny @{PROC}/sysrq-trigger rw,
+
+  # --- Explicit denials for things this add-on has no legitimate reason to
+  # touch, even though it runs on host_network and with `/config` rw --------
+  deny /sys/kernel/security/** rw,
+  deny /boot/** rw,
+  deny mount,
+  deny umount,
+  deny ptrace (trace) peer=unconfined,
+  deny /dev/mem rw,
+  deny /dev/kmem rw,
+  deny /dev/port rw,
+
+  # Signals: run.sh/uvicorn's own graceful-shutdown handling needs to send
+  # itself signals; nothing here needs to signal processes outside this
+  # container.
+  signal (send, receive) peer=nexus_agent,
+}

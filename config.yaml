@@ -1,14 +1,35 @@
 name: Nexus Agent
-version: "0.24.0"
+version: "0.25.0"
 slug: nexus_agent
-description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.24.0: optional tool_mode=search, secret redaction in supervisor_get_addon, self-protection of the add-on, bounded WebSocket timeouts"
+description: "MCP server for Home Assistant — 323 tools across 29 domains. New in 0.25.0: pre-built signed image, confirm-guarded service calls, Origin validation, path hardening"
 url: https://github.com/Fistacho/ha-nexus-agent
+# ADR-0005 (orchestrator decision, 2026-09-28): single multi-arch manifest,
+# per current HA guidance (developers.home-assistant.io/docs/apps/publishing)
+# — the `{arch}`-per-tag form is documented there as a legacy fallback, not
+# the recommended shape. Supervisor does not need `{arch}` in `image:` to
+# pick the right architecture: `Interface.install()` (supervisor/docker/
+# interface.py) always passes an explicit `platform=` (from `MAP_ARCH[...]`)
+# to the Docker Engine pull itself, and `App._image()` (supervisor/apps/
+# model.py) does `config[ATTR_IMAGE].format(arch=arch)` — a plain
+# `str.format()` call that returns a string unchanged when it contains no
+# `{arch}` placeholder to substitute. Verified against home-assistant/
+# supervisor `main` (2026-09-28), not assumed — see the release report for
+# both source excerpts. `.github/workflows/publish-image.yml` still builds
+# per-arch images as intermediate sources (required by `home-assistant/
+# builder`'s own `publish-multi-arch-manifest` action) and combines them into
+# this same `nexus-agent` tag — see that workflow and server.json.
+image: "ghcr.io/fistacho/nexus-agent"
+# Dropping armhf/armv7/i386 is the breaking half of this change (ADR-0005,
+# owner-accepted 2026-09-27): home-assistant/builder's own
+# actions/prepare-multi-arch-matrix only knows amd64 (ubuntu-24.04, native) and
+# aarch64 (ubuntu-24.04-arm, native runner — no QEMU) — there is no supported,
+# CI-buildable path to a signed 32-bit image today. Users on those
+# architectures keep working through 0.24.x (which still builds locally via
+# the Dockerfile, no `image:` key) but cannot update past it. Document in
+# CHANGELOG.md's 0.25.0 "Changed" section before release.
 arch:
   - aarch64
   - amd64
-  - armhf
-  - armv7
-  - i386
 init: false
 startup: application
 boot: auto

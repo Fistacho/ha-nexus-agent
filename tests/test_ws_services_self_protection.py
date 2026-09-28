@@ -92,3 +92,69 @@ def test_inert_outside_addon_mode(monkeypatch):
     result = call_service("hassio", "addon_stop", {"addon": "core_mosquitto"})
 
     assert result == {"type": "result", "success": True, "result": {}}
+
+
+# ---------------------------------------------------------------------------
+# ADR-0006 D3/D5: name validation and the guarded-service refusal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "domain,service",
+    [
+        ("light", "turn_on?x"),
+        ("hassio", "../addon_stop"),
+        ("light", "turn.on"),
+        ("", "turn_on"),
+    ],
+)
+def test_ws_call_service_rejects_malformed_names_without_io(monkeypatch, domain, service):
+    _boom_ws_send_recv(monkeypatch)
+
+    result = call_service(domain, service, {})
+
+    assert result == {"error": "invalid_service_name"}
+
+
+@pytest.mark.parametrize(
+    "domain,service",
+    [
+        ("homeassistant", "restart"),
+        ("homeassistant", "stop"),
+        ("hassio", "host_reboot"),
+        ("hassio", "host_shutdown"),
+        ("hassio", "restore_full"),
+        ("hassio", "restore_partial"),
+        ("update", "install"),
+        ("group", "remove"),
+    ],
+)
+def test_ws_call_service_refuses_every_guarded_service_without_io(monkeypatch, domain, service):
+    _boom_ws_send_recv(monkeypatch)
+
+    result = call_service(domain, service, {})
+
+    assert result["error"] == "guarded_service_refused"
+    assert result["use"] == "services_call_service"
+
+
+def test_ws_call_service_refuses_guarded_service_case_insensitively(monkeypatch):
+    _boom_ws_send_recv(monkeypatch)
+
+    result = call_service("HOMEASSISTANT", "RESTART", {})
+
+    assert result["error"] == "guarded_service_refused"
+
+
+def test_ws_call_service_self_protection_takes_priority_over_guarded_refusal(monkeypatch):
+    """`hassio.host_reboot` (guarded) and a self-protection-blocked
+    `hassio.addon_stop` are different services -- this instead proves
+    self_protection still runs (and still wins) ahead of the guarded-service
+    check for a service that is both self-protection-relevant and, here,
+    NOT itself in GUARDED_SERVICES, since `addon_stop` never is."""
+    self_protection.set_own_slug(_OWN_SLUG)
+    _boom_ws_send_recv(monkeypatch)
+
+    result = call_service("hassio", "addon_stop", {"addon": _OWN_SLUG})
+
+    assert result["error"] == "self_addon_hassio_service_blocked"

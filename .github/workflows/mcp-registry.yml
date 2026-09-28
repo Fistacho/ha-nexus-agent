@@ -1,0 +1,93 @@
+name: MCP Registry
+
+# ADR-0005 "Kanaly dystrybucji", decision point 3: server.json is validated on
+# every tagged release from day one, but actual publication to the official
+# MCP Registry (still in preview -- "breaking changes or data resets may
+# occur") is deliberately held back until nexus 1.0.0. This file is the single
+# place that gate lives: `jobs.publish-registry.if` below, not a commented-out
+# step, so the exact shape of the publish step stays lint-checked and
+# actionlint-clean the whole time it's dormant, instead of bit-rotting as dead
+# YAML-in-a-comment until someone has to resurrect it under release pressure.
+#
+# Runs after publish-image.yml's tag-triggered workflow completes successfully
+# -- server.json's `packages[0].identifier` names the *combined* manifest tag
+# (`ghcr.io/fistacho/nexus-agent:<version>`) that job publishes, so validating
+# (and, later, publishing) before that image exists would registry-check a
+# reference nothing backs yet.
+
+on:
+  workflow_run:
+    workflows: ["Publish image"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate server.json against the registry schema
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Derive version and cross-check server.json/pyproject.toml/config.yaml
+        id: version
+        run: |
+          set -eu
+          tag_version="${{ github.event.workflow_run.head_branch }}"
+          tag_version="${tag_version#v}"
+
+          server_json_version=$(python3 -c "import json; print(json.load(open('server.json'))['version'])")
+          pyproject_version=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+
+          if [ "${tag_version}" != "${server_json_version}" ] || [ "${tag_version}" != "${pyproject_version}" ]; then
+            echo "::error::Tag v${tag_version} does not match server.json (${server_json_version}) and/or pyproject.toml (${pyproject_version})."
+            exit 1
+          fi
+
+          echo "version=${tag_version}" >> "$GITHUB_OUTPUT"
+
+      # Install method per modelcontextprotocol.io/registry/github-actions
+      # (checked 2026-09-28): a released binary tarball, not a package
+      # manager -- there is no apt/npm package for this CLI today.
+      - name: Install mcp-publisher
+        run: |
+          set -eu
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Validate server.json (schema + semantic rules, no network publish)
+        run: ./mcp-publisher validate server.json
+
+  publish-registry:
+    name: Publish to the MCP Registry (dormant until 1.0.0)
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # GitHub OIDC login for mcp-publisher, no stored secret
+      contents: read
+    # DO NOT flip this to `true` or drop the condition without owner sign-off:
+    # ADR-0005 decision point 3 explicitly defers the first real registry
+    # publish to 1.0.0, since the registry itself is in preview. A version
+    # like "0.25.0" fails this condition by construction (starts with "0.");
+    # bumping past 1.0.0 is what turns it on, not a separate flag to remember.
+    if: ${{ !startsWith(needs.validate.outputs.version, '0.') }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Install mcp-publisher
+        run: |
+          set -eu
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Authenticate to MCP Registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish

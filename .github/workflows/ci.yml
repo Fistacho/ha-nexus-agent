@@ -78,17 +78,25 @@ jobs:
       - name: Smoke test — run the image and poll /health
         run: |
           set -eu
-          # run.sh always exports HA_URL=http://supervisor/core itself (Supervisor
-          # add-on mode) regardless of any -e HA_URL passed here, so there's no
-          # point setting it; HA_TOKEN is passed through untouched by run.sh and is
-          # only needed so auth.get_ha_token() doesn't raise during startup — /health
-          # itself doesn't require reaching a real HA instance. Without SUPERVISOR_TOKEN
-          # set (this container isn't started by the real Supervisor), server.py's main()
-          # only enters HTTP/uvicorn mode when NEXUS_HTTP is also set — otherwise it runs
-          # as a stdio MCP server and never binds port 7123 at all (see server.py, "HTTP
-          # mode: add-on or explicit NEXUS_HTTP=1").
+          # This container has no /data/options.json (not started by the real
+          # Supervisor), so run.sh takes its standalone branch and now honors
+          # -e HA_URL instead of forcing http://supervisor/core (fixed in
+          # 0.25.0 -- see run.sh and tests/test_run_sh_standalone.py; every
+          # release through 0.24.0 silently discarded this). Setting it here
+          # doubles as a standalone-mode container smoke check per ADR-0005
+          # condition (b): the container must still come up healthy with a
+          # real-looking standalone HA_URL, even though /health itself
+          # doesn't expose HA_URL's value to confirm it was honored -- that
+          # is proven at the unit level instead. HA_TOKEN is passed through
+          # untouched by run.sh and is only needed so auth.get_ha_token()
+          # doesn't raise during startup — /health itself doesn't require
+          # reaching a real HA instance. Without SUPERVISOR_TOKEN set, server.py's
+          # main() only enters HTTP/uvicorn mode when NEXUS_HTTP is also set —
+          # otherwise it runs as a stdio MCP server and never binds port 7123
+          # at all (see server.py, "HTTP mode: add-on or explicit NEXUS_HTTP=1").
           docker run -d --name nexus-smoke \
             -p 7123:7123 \
+            -e HA_URL=http://standalone-smoke.example:8123 \
             -e HA_TOKEN=smoke-test-token \
             -e NEXUS_HTTP=1 \
             nexus-ci-smoke:smoke

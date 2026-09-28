@@ -27,6 +27,32 @@ Once connected, just talk to your AI assistant:
 
 ---
 
+## What's New in v0.25.0
+
+- **Pre-built, signed Docker image on ghcr.io** — the add-on now pulls
+  `ghcr.io/fistacho/nexus-agent` instead of building locally, and the same
+  image works standalone/HA Container. See [Docker Image](#docker-image).
+- **`confirm` gate on `services_call_service`** — the generic
+  domain/service dispatcher now requires `confirm=True` for eight guarded
+  HA/Supervisor services (`homeassistant.restart`/`stop`,
+  `hassio.host_reboot`/`host_shutdown`/`restore_full`/`restore_partial`,
+  `update.install`, `group.remove`), closing the gap where those effects
+  were reachable without confirmation even though the equivalent dedicated
+  tool already required it. `ws_call_service` now refuses them outright.
+  See [Confirmation Gates](#confirmation-gates).
+- **`Origin` header validation** — the HTTP transport now rejects a
+  disallowed, `null` or repeated `Origin` header with `403`, per the MCP
+  spec's DNS-rebinding protection. HA ingress and `GET /health` are exempt.
+- **Path/service-name hardening** — `entity_id`, automation/script IDs,
+  event types and Supervisor slugs are now validated before being spliced
+  into a request URL; `domain`/`service` names are restricted to
+  `[A-Za-z0-9_]+`; `areas_control_area` and `services_send_notification`
+  no longer accept an arbitrary action/target.
+- **Breaking:** `armhf`/`armv7`/`i386` are no longer published as pre-built
+  images — those architectures stay on 0.24.x (still builds locally via
+  the Dockerfile).
+- Full details in [CHANGELOG.md](CHANGELOG.md#0250).
+
 ## What's New in v0.24.0
 
 - **Optional `tool_mode=search` add-on option** — replaces `tools/list` with a
@@ -187,6 +213,48 @@ Open <http://localhost:7123> to get your API key and MCP client configs.
 
 ---
 
+## Docker Image
+
+Starting with 0.25.0, nexus also ships as a pre-built, cosign-signed image on
+ghcr.io — no local clone/build needed for standalone/HA Container use:
+
+```bash
+docker run -d --name nexus \
+  -p 7123:7123 \
+  -e HA_URL=http://homeassistant.local:8123 \
+  -e HA_TOKEN=your_long_lived_token \
+  ghcr.io/fistacho/nexus-agent:<version>
+```
+
+`run.sh` detects the absence of `/data/options.json` (only present under the
+real Supervisor) and falls back to `HA_URL`/`HA_TOKEN` from the environment
+instead. Verify the signature before trusting a pulled image:
+
+```bash
+cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/Fistacho/ha-nexus-agent/' \
+  ghcr.io/fistacho/nexus-agent:<version>
+```
+
+The add-on itself (config.yaml's `image:`) points at this exact same
+multi-arch manifest tag — Supervisor picks the right architecture at pull
+time regardless of the image *name* (an explicit `platform=` argument to the
+Docker Engine pull itself), so no per-architecture image name is needed. Only
+`aarch64` and `amd64` are published as of 0.25.0 (see
+[CHANGELOG.md](CHANGELOG.md#0250) — HA itself dropped Core/Supervised support
+for 32-bit hosts in 2025.12, and the build tooling this repo uses for signed
+images has no supported path to add `armhf`/`armv7`/`i386` back). Everyone on
+those architectures keeps working on 0.24.x, which still builds locally via
+the Dockerfile, but cannot update past it.
+
+`server.json` in this repo also declares this same image as an
+[MCP Registry](https://modelcontextprotocol.io/registry) OCI package —
+registry publication itself starts at nexus 1.0.0 (see ADR-0005), but the
+image is pullable from every tagged release regardless. Full operational
+details (options, security posture, ESPHome): [DOCS.md](DOCS.md).
+
+---
+
 ## Connecting MCP Clients
 
 Open Nexus with the **Open Web UI** button on the add-on's page (Settings → Add-ons → Nexus Agent) after starting it — that page shows your real API key and the exact, ready-to-paste config for every client below. This works over HA's ingress proxy whether or not you've also enabled **Show in sidebar** on that same add-on page — the sidebar entry is just a shortcut to the same URL. Outside of ingress (or without a valid `Authorization: Bearer` header), the same page hides the key.
@@ -312,7 +380,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | Category | Tools | Highlights |
 | --- | --- | --- |
 | `entities_*` | 18 | list (paginated + field selection), turn on/off/toggle, **bulk_control**, voice expose, set_value |
-| `services_*` | 19 | call_service, notify, light color, camera snapshot/record, media controls |
+| `services_*` | 19 | call_service (**`confirm` gate** on 8 guarded services — restart/stop/host reboot/host shutdown/restore backup/`update.install`/`group.remove`, see [Confirmation Gates](#confirmation-gates)), notify, light color, camera snapshot/record, media controls |
 | `automations_*` | 31 | CRUD + full YAML, traces, scripts, scenes, **scene CRUD** (`get/set/delete_scene_config`), **validate_best_practices** (static linter), **validate_automation_references** (live registry check), **list/set/remove groups**, confirm gates on delete |
 | `blueprints_*` | 5 | list, import from URL, **save** (persist imported YAML), delete, instantiate |
 | `areas_*` | 8 | list, create, get_states, **control_area** |
@@ -347,7 +415,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 - **323 MCP tools** across 29 categories — the most complete HA MCP server available
 - **Built-in tool search** — `discover_tool_search("query")` finds the right tool without flooding the AI's context
-- **Confirmation gates** — all destructive operations require `confirm=True`; without it they return the exact command to re-run
+- **Confirmation gates** — 18 destructive tools, plus 8 guarded services reachable via `services_call_service`, require `confirm=True`; without it they return the exact command to re-run. See [Confirmation Gates](#confirmation-gates).
 - **Automation linter** — `automations_validate_best_practices` catches 7 common YAML mistakes before they cause issues
 - **Live reference validator** — `automations_validate_automation_references` cross-checks every entity_id and service call against the running HA instance
 - **Updates monitor** — `system_get_updates` lists all pending updates across core, add-ons and HACS
@@ -379,6 +447,47 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 - **Startup logs never print the raw key** — only the path of the file it's stored in (`/config/.nexus_api_key`).
 - **Tool-exposure policy** (`read_only`, `disabled_namespaces`) — see [Add-on Options](#add-on-options) — narrows what a client can see/call at the MCP protocol level itself: a hidden tool is refused at `tools/call`, not merely omitted from `tools/list`. `read_only` does not restrict what an already-visible read tool can read (e.g. `files_read_config_file`, `git_log`, `supervisor_get_addon_logs`); combine with `disabled_namespaces` to also narrow that.
 - Found a vulnerability? See [SECURITY.md](SECURITY.md) for how to report it privately.
+
+---
+
+## Confirmation Gates
+
+`confirm` is a human-in-the-loop checkpoint, not a security boundary — it
+stops an AI assistant from running a disruptive action without the caller
+explicitly asking twice; it does not stop a script, automation, YAML file +
+reload, blueprint, `services_fire_event` or `button.press` from reaching the
+same effect indirectly (an accepted residual risk — the indirect paths run
+inside HA Core's own automation engine, outside anything nexus mediates).
+The actual security boundary is [`read_only`/`disabled_namespaces`](#add-on-options),
+which hides the tool (or the guarded services below) entirely.
+
+18 tools require `confirm=True` before they do anything:
+
+| Tool | Effect gated |
+| --- | --- |
+| `system_restart_ha` | restarts HA Core |
+| `system_stop_ha` | stops HA Core |
+| `supervisor_restart_core` | restarts HA Core |
+| `supervisor_restart_host` | reboots the host |
+| `supervisor_restore_backup` | restores a full backup, discarding changes since |
+| `supervisor_delete_backup` | permanently deletes a backup |
+| `supervisor_uninstall_addon` | deletes an add-on and its data |
+| `automations_delete_automation` | deletes an automation config |
+| `automations_delete_script` | deletes a script config |
+| `automations_remove_group` | removes an automation/script group |
+| `automations_delete_scene` | deletes a scene config |
+| `dashboards_remove_dashboard_resource` | removes a Lovelace JS/CSS resource |
+| `git_rollback_file` | reverts one file in `/config` to a prior commit |
+| `git_rollback_to_commit` | reverts all of `/config` to a prior commit |
+| `integrations_remove_integration` | removes a config entry |
+| `files_delete_config_file` | deletes a file under `/config` |
+| `esphome_upload_device` | flashes new firmware, no automatic rollback |
+| `services_call_service` | **only** when `domain.service` is one of eight guarded services: `homeassistant.restart`/`stop`, `hassio.host_reboot`/`host_shutdown`/`restore_full`/`restore_partial`, `update.install`, `group.remove` — ignored for every other service |
+
+`ws_call_service` never accepts `confirm` for those same eight guarded
+services — it refuses them outright with `{"error":
+"guarded_service_refused", "use": "services_call_service"}`, since none of
+them return a response payload anyway.
 
 ---
 
@@ -425,7 +534,7 @@ above.
 
 ## Dashboard Screenshots
 
-`dashboards_screenshot` renders any Lovelace view to a base64-encoded PNG by delegating to the **Puppet** headless Chromium add-on. Nexus itself contains no browser dependencies — this approach works on every architecture (amd64, aarch64, armv7, armhf).
+`dashboards_screenshot` renders any Lovelace view to a base64-encoded PNG by delegating to the **Puppet** headless Chromium add-on. Nexus itself contains no browser dependencies — this approach works on every architecture nexus ships for (`aarch64`, `amd64` — see [Docker Image](#docker-image) for why 32-bit dropped in 0.25.0).
 
 ### Setup
 

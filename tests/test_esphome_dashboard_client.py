@@ -11,17 +11,24 @@ Covers, in order:
    true`, a non-JSON frame, a dashboard `error_code`, and timeouts.
 4. The closed public method set on `DashboardClient` (S5).
 
-WebSocket-level tests run a local `websockets.serve` server and the
-(synchronous) `DashboardClient` call against it on the *same* event loop
-(`_drive_ws_test`, same overall shape as `tests/test_ws_timeouts.py`'s
-`_run_against_fake_server`) — the synchronous client call itself runs on
-a worker thread via `loop.run_in_executor` so it can block without
-starving the loop that's servicing the fake server's handler. Calling
-`DashboardClient` directly from the server's own loop/thread would
-deadlock it: `_run_sync` (see `esphome_dashboard.py`) opens its own
-nested event loop on whatever thread it's called from, and that thread
-being the one and only thread servicing the fake server means the fake
-server can never run while the client call blocks waiting for it.
+WebSocket-level tests that only assert a frame-shape -> exception/result
+mapping (ServerInfo, non-JSON frames, `error_code`, successful results,
+spawn protocol) are driven through `_FakeDashboardConnection`, an
+in-process stand-in for the dashboard side of the session — no real
+socket, no second thread, no close-handshake to race. Only the tests that
+need genuine concurrent client/server behaviour a fake can't produce (a
+real timeout elapsing, an actual TCP refusal) still run a local
+`websockets.serve` server and the (synchronous) `DashboardClient` call
+against it on the *same* event loop (`_drive_ws_test`, same overall shape
+as `tests/test_ws_timeouts.py`'s `_run_against_fake_server`) — the
+synchronous client call itself runs on a worker thread via
+`loop.run_in_executor` so it can block without starving the loop that's
+servicing the fake server's handler. Calling `DashboardClient` directly
+from the server's own loop/thread would deadlock it: `_run_sync` (see
+`esphome_dashboard.py`) opens its own nested event loop on whatever thread
+it's called from, and that thread being the one and only thread servicing
+the fake server means the fake server can never run while the client call
+blocks waiting for it.
 
 HTTP-level tests (`ping`) don't have that problem — `httpx`'s blocking
 `Client.get` and Python's threaded `http.server` are already on separate
@@ -524,66 +531,75 @@ def test_validate_other_invalid_handshake_is_protocol_error(monkeypatch):
     assert exc_info.value.code == "esphome_protocol_error"
 
 
-def test_validate_requires_auth_true_in_server_info_is_auth_required():
+def test_validate_requires_auth_true_in_server_info_is_auth_required(monkeypatch):
     """`requires_auth: true` must fail fast before anything else is sent —
     asserted explicitly here (not just "an `AuthRequiredError` was raised
     eventually") because `NoAuth.check_server_info` runs *before*
     `_run_command_session` sends the `devices/validate` command; a
     regression that reordered those two statements would still raise
-    `AuthRequiredError` (from the fake server closing the connection once
-    it receives an unexpected frame) but would have leaked a command frame
-    to a dashboard this client just told the caller it refuses to talk to."""
+    `AuthRequiredError` eventually but would have leaked a command frame to
+    a dashboard this client just told the caller it refuses to talk to.
 
-    received_after_server_info: list[str] = []
+    Driven through `_FakeDashboardConnection` rather than a real local
+    `websockets.serve` server: this only asserts the ServerInfo -> exception
+    mapping (no real socket behaviour is under test), and the previous
+    real-socket version was flaky on this sandbox — `_validate_async`'s own
+    `finally: await ws.close()` (see `esphome_dashboard.py`) waits up to
+    `_CLOSE_TIMEOUT` (5s) for the peer's close-handshake acknowledgement,
+    and that handshake between two real local sockets on this sandbox
+    sporadically didn't complete promptly, intermittently stalling this
+    test by ~5s instead of failing it outright (same class of loopback
+    flakiness already documented on the 401/403 handshake test above)."""
 
-    async def handler(ws):
-        await ws.send(json.dumps({"requires_auth": True}))
-        try:
-            extra = await asyncio.wait_for(ws.recv(), timeout=1.0)
-            received_after_server_info.append(extra)
-        except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
-            pass
-        await ws.wait_closed()
+    conn = _FakeDashboardConnection([json.dumps({"requires_auth": True})])
+    monkeypatch.setattr(dash.websockets, "connect", _fake_connect_returning(conn))
 
-    def run_client(port):
-        _client_for_ws_server(port).validate("device.yaml", timeout=3)
+    locator = _make_locator(env={"ESPHOME_DASHBOARD_URL": "http://dashboard.invalid"})
+    client = dash.DashboardClient(locator)
 
     with pytest.raises(dash.AuthRequiredError) as exc_info:
-        asyncio.run(_drive_ws_test(handler, run_client))
+        client.validate("device.yaml", timeout=3)
     assert exc_info.value.code == "esphome_auth_required"
-    assert received_after_server_info == []
+    assert conn.sent == []
 
 
-def test_validate_non_json_frame_is_protocol_error():
-    async def handler(ws):
-        await ws.send("not json at all {{{")
-        await ws.wait_closed()
+def test_validate_non_json_frame_is_protocol_error(monkeypatch):
+    """Driven through `_FakeDashboardConnection` (see the previous test's
+    docstring for why): this only asserts the non-JSON-frame -> exception
+    mapping, not any real socket/close-handshake behaviour."""
 
-    def run_client(port):
-        _client_for_ws_server(port).validate("device.yaml", timeout=3)
+    conn = _FakeDashboardConnection(["not json at all {{{"])
+    monkeypatch.setattr(dash.websockets, "connect", _fake_connect_returning(conn))
+
+    locator = _make_locator(env={"ESPHOME_DASHBOARD_URL": "http://dashboard.invalid"})
+    client = dash.DashboardClient(locator)
 
     with pytest.raises(dash.ProtocolError) as exc_info:
-        asyncio.run(_drive_ws_test(handler, run_client))
+        client.validate("device.yaml", timeout=3)
     assert exc_info.value.code == "esphome_protocol_error"
 
 
-def test_validate_error_code_is_command_failed():
-    async def handler(ws):
-        await ws.send(json.dumps({"requires_auth": False}))
-        raw = await ws.recv()
-        req = json.loads(raw)
-        await ws.send(json.dumps({
-            "message_id": req["message_id"],
+def test_validate_error_code_is_command_failed(monkeypatch):
+    """Driven through `_FakeDashboardConnection` (see
+    `test_validate_requires_auth_true_in_server_info_is_auth_required`'s
+    docstring for why): this only asserts the `error_code` -> exception
+    mapping, not any real socket/close-handshake behaviour."""
+
+    conn = _FakeDashboardConnection([
+        json.dumps({"requires_auth": False}),
+        lambda sent: json.dumps({
+            "message_id": json.loads(sent)["message_id"],
             "error_code": "invalid_configuration",
             "details": "boom",
-        }))
-        await ws.wait_closed()
+        }),
+    ])
+    monkeypatch.setattr(dash.websockets, "connect", _fake_connect_returning(conn))
 
-    def run_client(port):
-        _client_for_ws_server(port).validate("device.yaml", timeout=3)
+    locator = _make_locator(env={"ESPHOME_DASHBOARD_URL": "http://dashboard.invalid"})
+    client = dash.DashboardClient(locator)
 
     with pytest.raises(dash.CommandFailedError) as exc_info:
-        asyncio.run(_drive_ws_test(handler, run_client))
+        client.validate("device.yaml", timeout=3)
     assert exc_info.value.code == "esphome_command_failed"
     assert exc_info.value.dashboard_error_code == "invalid_configuration"
     assert exc_info.value.details == "boom"

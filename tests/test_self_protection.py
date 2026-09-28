@@ -176,3 +176,28 @@ def test_unknown_slug_state_blocks_every_hassio_service_call_against_any_slug():
     result = sp.blocked_hassio_service_call("hassio", "addon_stop", {"addon": "core_mosquitto"})
     assert result is not None
     assert result["error"] == "self_addon_hassio_service_blocked"
+
+
+# ---------------------------------------------------------------------------
+# ADR-0006 D3 (F4 fix): domain/service compared case-insensitively
+# ---------------------------------------------------------------------------
+
+
+def test_blocked_hassio_service_call_matches_uppercase_domain_and_service():
+    sp.set_own_slug("5c53de3b_nexus")
+    result = sp.blocked_hassio_service_call("HASSIO", "ADDON_STOP", {"addon": "5c53de3b_nexus"})
+    assert result is not None
+    assert result["error"] == "self_addon_hassio_service_blocked"
+
+
+def test_blocked_hassio_service_call_matches_mixed_case_domain_and_service():
+    sp.set_own_slug("5c53de3b_nexus")
+    result = sp.blocked_hassio_service_call("Hassio", "Addon_Stop", {"addon": "self"})
+    assert result is not None
+    assert result["error"] == "self_addon_hassio_service_blocked"
+
+
+def test_blocked_hassio_service_call_case_insensitive_still_allows_other_addons():
+    sp.set_own_slug("5c53de3b_nexus")
+    result = sp.blocked_hassio_service_call("HASSIO", "ADDON_STOP", {"addon": "core_mosquitto"})
+    assert result is None

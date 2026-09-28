@@ -1,0 +1,201 @@
+name: Publish image
+
+# ADR-0005 "Kanaly dystrybucji": pre-built, cosign-signed images on ghcr.io for
+# both channels this add-on now supports without a per-user Supervisor build --
+# the add-on itself (config.yaml `image: "ghcr.io/fistacho/nexus-agent"`, a
+# single multi-arch manifest tag, no `{arch}` placeholder -- orchestrator
+# decision 2026-09-28, following current HA guidance over ADR-0005's own
+# literal `{arch}`-per-tag text; see config.yaml's own comment for the
+# Supervisor-source citation proving this is actually supported) and
+# standalone/HA Container/MCP Registry (`docker run
+# ghcr.io/fistacho/nexus-agent:<version>`, the exact same tag). Per-arch tags
+# (`{arch}-nexus-agent:X.Y.Z`, built by the `build` job below) are an
+# intermediate artifact only -- required because `home-assistant/builder`'s
+# own `publish-multi-arch-manifest` action builds the combined manifest *from*
+# per-arch source images -- not a second public-facing image name.
+#
+# SAFE RELEASE SEQUENCE (read before tagging a release -- this is the part of
+# ADR-0005 D2 the release process must get right every time):
+#
+#   1. On a release branch (NOT main yet), bump version in pyproject.toml AND
+#      config.yaml, add the CHANGELOG.md section, commit.
+#   2. Push a `vX.Y.Z` tag pointing at that commit. This workflow triggers and
+#      builds + pushes + cosign-signs both `{arch}-nexus-agent:X.Y.Z` images
+#      AND the combined `nexus-agent:X.Y.Z` manifest, then verifies every one
+#      of them is actually pullable (see "Verify" job below) before the run
+#      is allowed to go green.
+#   3. **First release only** (or any time GHCR package visibility resets --
+#      it does not automatically inherit "public" from a public GitHub repo):
+#      confirm every pushed package (`amd64-nexus-agent`, `aarch64-nexus-agent`,
+#      `nexus-agent`) is set to **Public** and linked to this repository under
+#      https://github.com/users/Fistacho/packages, THEN prove an anonymous
+#      pull actually works -- do not trust the Public toggle alone:
+#
+#        docker logout ghcr.io   # make sure no cached credential masks an
+#                                 # otherwise-private package
+#        docker pull ghcr.io/fistacho/nexus-agent:X.Y.Z
+#
+#      or, without a local Docker daemon:
+#
+#        curl -sf "https://ghcr.io/token?scope=repository:fistacho/nexus-agent:pull" \
+#          | jq -r .token \
+#          | xargs -I{} curl -sf -H "Authorization: Bearer {}" \
+#            -H "Accept: application/vnd.oci.image.index.v1+json" \
+#            https://ghcr.io/v2/fistacho/nexus-agent/manifests/X.Y.Z
+#
+#      A private package here is invisible to this exact failure mode until a
+#      real user's Supervisor tries to update and gets a bare pull/auth error
+#      with no obvious link back to "package visibility" -- this step is not
+#      optional and must pass BEFORE step 4.
+#   4. Only after step 3 passes, merge/fast-forward the release branch into
+#      `main`. This is the moment config.yaml's new `version:` becomes
+#      visible to every Supervisor polling this add-on repo for updates --
+#      and by construction the image it would pull already exists AND is
+#      confirmed anonymously pullable.
+#   5. Publish the GitHub Release from the tag (release notes = the CHANGELOG
+#      section from step 1).
+#
+# Why this order and not "bump on main, then build": a git ref is visible the
+# instant it's pushed -- there is no way to push a commit to `main` and have
+# Supervisor's "check for updates" not see it until some later event. The only
+# way to guarantee the image exists *before* Supervisor can see the version
+# that references it is to keep the version bump off `main` until the image
+# is confirmed live AND publicly pullable. Reversing the order re-creates the
+# exact class of bug 0.22.0 shipped (a config.yaml pointing at something that
+# doesn't build/pull) -- see tests/test_build_image_consistency.py's module
+# docstring -- except this time recoverable only by another release, since
+# Supervisor add-ons have no "rebuild locally" fallback once `image:` is set.
+#
+# Do not automate step 4 (e.g. auto-merge on this workflow's success) without
+# also teaching it to bump config.yaml's `version:` at merge time, not before,
+# AND to gate on step 3's anonymous-pull check specifically (this workflow's
+# own GITHUB_TOKEN pull in the `verify` job below is authenticated and cannot
+# by itself prove an anonymous Supervisor/`docker run` pull will succeed) --
+# otherwise the same race just moves one step later.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  # ADR-0005: architectures this add-on ships as pre-built images. Kept in
+  # sync with config.yaml's `arch:` list by
+  # tests/test_release_consistency.py::test_image_workflow_archs_match_config_yaml
+  # -- home-assistant/builder's own actions/prepare-multi-arch-matrix (used
+  # below) only supports these two natively (amd64 -> ubuntu-24.04, aarch64 ->
+  # ubuntu-24.04-arm, both native runners, no QEMU) -- there is no
+  # supported/CI-buildable path to add armhf/armv7/i386 back without a
+  # different toolchain entirely.
+  ARCHITECTURES: '["amd64", "aarch64"]'
+  IMAGE_NAME: nexus-agent
+  REGISTRY_PREFIX: ghcr.io/fistacho
+
+jobs:
+  version-guard:
+    name: Tag must match pyproject.toml / config.yaml version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Derive and cross-check version
+        id: version
+        run: |
+          set -eu
+          tag_version="${GITHUB_REF_NAME#v}"
+
+          pyproject_version=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          config_version=$(grep -m1 '^version: ' config.yaml | sed -E 's/version: "(.*)"/\1/')
+
+          if [ "${tag_version}" != "${pyproject_version}" ] || [ "${tag_version}" != "${config_version}" ]; then
+            echo "::error::Tag v${tag_version} does not match pyproject.toml (${pyproject_version}) and/or config.yaml (${config_version}). Refusing to publish a mismatched image -- see tests/test_release_consistency.py."
+            exit 1
+          fi
+
+          echo "version=${tag_version}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: version-guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: aarch64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # cosign keyless (Sigstore/Fulcio OIDC)
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Build, push and sign ${{ matrix.arch }} image
+        uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
+        with:
+          arch: ${{ matrix.arch }}
+          context: .
+          image: ${{ env.REGISTRY_PREFIX }}/${{ matrix.arch }}-${{ env.IMAGE_NAME }}
+          image-tags: |
+            ${{ needs.version-guard.outputs.version }}
+            latest
+          version: ${{ needs.version-guard.outputs.version }}
+          push: true
+          cosign: true
+          # Idempotent re-runs (e.g. a failed manifest step retried): don't
+          # re-push/re-sign a tag that's already published.
+          skip-existing: ${{ needs.version-guard.outputs.version }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+  manifest:
+    name: Publish combined multi-arch manifest
+    needs: [version-guard, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Create and sign the combined manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ env.IMAGE_NAME }}
+          image-tags: |
+            ${{ needs.version-guard.outputs.version }}
+            latest
+          registry-prefix: ${{ env.REGISTRY_PREFIX }}
+          cosign: true
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+  verify:
+    name: Verify every published tag is actually pullable
+    needs: [version-guard, build, manifest]
+    runs-on: ubuntu-latest
+    steps:
+      - name: docker buildx imagetools inspect (per-arch + combined manifest)
+        run: |
+          set -eu
+          version="${{ needs.version-guard.outputs.version }}"
+          for ref in \
+            "${REGISTRY_PREFIX}/amd64-${IMAGE_NAME}:${version}" \
+            "${REGISTRY_PREFIX}/aarch64-${IMAGE_NAME}:${version}" \
+            "${REGISTRY_PREFIX}/${IMAGE_NAME}:${version}"; do
+            echo "::group::${ref}"
+            docker buildx imagetools inspect "${ref}"
+            echo "::endgroup::"
+          done
+        # This is the gate the safe release sequence (top of this file) leans
+        # on: a green run here is the signal that it's now safe to merge the
+        # version bump into `main`. A failure here means config.yaml must NOT
+        # be updated on main yet, however green build/manifest looked --
+        # GHCR package visibility can lag the push itself by a few seconds.

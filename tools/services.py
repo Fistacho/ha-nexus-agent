@@ -14,6 +14,7 @@ from pydantic import Field
 
 import ha_client as ha
 import self_protection
+import service_guard
 from tools._contract import destructive, read, write
 
 mcp = FastMCP("services")
@@ -34,33 +35,55 @@ def call_service(
             )
         ),
     ] = None,
+    confirm: Annotated[
+        bool,
+        Field(
+            description=(
+                "Required True to actually run one of eight guarded services: "
+                "homeassistant.restart/stop, hassio.host_reboot/host_shutdown/"
+                "restore_full/restore_partial, update.install, group.remove. "
+                "False (default) performs no action for those instead and "
+                "returns a confirmation prompt; ignored for every other "
+                "service."
+            )
+        ),
+    ] = False,
 ) -> list[dict]:
     """Call any Home Assistant action by domain and service name over HTTP.
 
     Posts to `/api/services/<domain>/<service>` with `data` as the JSON
-    body; `data` holds both service fields and targets (`entity_id`,
-    `area_id`, `device_id`). The effect entirely depends on which
-    domain/service is passed, from a harmless read-like call to a
-    disruptive one if such a service exists. Refuses `hassio.addon_stop`/
-    `app_stop`/`addon_stdin`/`app_stdin` when the `addon`/`app` slug in
-    `data` is nexus's own add-on (`self_protection.is_own_addon`) — those
-    reach the same Supervisor operations `supervisor_stop_addon` already
-    blocks for the same reason, without going through that tool at all.
-    `hassio.addon_restart`/`app_restart` stay allowed, consistent with
-    `supervisor_restart_addon`.
+    body; `data` holds both fields and targets (`entity_id`/`area_id`/
+    `device_id`). Effect depends entirely on the domain/service passed.
+    `domain`/`service` must match `[A-Za-z0-9_]+` (ADR-0006 D3) or the call
+    is refused before any request is built. Refuses `hassio.addon_stop`/
+    `app_stop`/`addon_stdin`/`app_stdin` against nexus's own add-on
+    (`self_protection.is_own_addon`); `addon_restart`/`app_restart` stay
+    allowed. `homeassistant.restart`/`stop`, `hassio.host_reboot`/
+    `host_shutdown`/`restore_full`/`restore_partial`, `update.install` and
+    `group.remove` additionally require `confirm=True` (ADR-0006 D2) — a
+    human-in-the-loop checkpoint, not a security boundary; ignored for
+    every other service.
 
     Use when: no dedicated tool exists for the action needed.
-    Not for: an action that returns response data (e.g.
-    `weather.get_forecasts`) — use `ws_call_service`, since this endpoint
-    returns only the list of changed states, not the action's response
-    payload.
+    Not for: an action returning response data (e.g.
+    `weather.get_forecasts`) — use `ws_call_service`, which refuses the
+    same eight guarded services outright (ADR-0006 D5) instead of
+    accepting `confirm`.
     Returns: the list of states changed during the call.
-    Errors: `{"error": "self_addon_hassio_service_blocked", "message": ...}`
-    for the blocked `hassio.*` cases above.
+    Errors: `{"error": "invalid_service_name"}` for a malformed
+    domain/service; `{"error": "self_addon_hassio_service_blocked",
+    "message": ...}` for the blocked `hassio.*` cases; `{"error":
+    "confirmation_required", "message": ..., "action": ...}` for a guarded
+    service called without `confirm=True`.
     """
+    if not (service_guard.validate_service_name(domain) and service_guard.validate_service_name(service)):
+        return {"error": "invalid_service_name"}
     blocked = self_protection.blocked_hassio_service_call(domain, service, data)
     if blocked is not None:
         return blocked
+    gated = service_guard.confirm_gate(domain, service, data, confirm=confirm)
+    if gated is not None:
+        return gated
     return ha.call_service(domain, service, data or {})
 
 
@@ -327,9 +350,12 @@ def send_notification(
 
     Calls `notify.<target>` (or plain `notify.notify` when `target` is
     omitted) with `message` and optional `title`; `target` may include the
-    domain (`notify.xyz`) or be a bare service name. Each call dispatches a
-    new notification to whatever device or channel that service delivers
-    to, which can be outside the local network (e.g. a phone push).
+    domain (`notify.xyz`) or be a bare service name, but a dotted `target`
+    must name the `notify` domain itself (ADR-0006 D6) — otherwise it would
+    let any `domain.service` be reached under cover of a "notification".
+    Each call dispatches a new notification to whatever device or channel
+    that service delivers to, which can be outside the local network (e.g.
+    a phone push).
 
     Use when: pushing a message to a person or device through a configured
     notify service.
@@ -337,12 +363,29 @@ def send_notification(
     `services_notify_persistent_create`.
     Returns: the list of states changed by the call (notify services
     typically change none).
+    Errors: `{"error": "invalid_notify_target", "message": ...}` when a
+    dotted `target` names a domain other than `notify`; `{"error":
+    "invalid_service_name"}` when the part after `notify.` is not itself a
+    bare `[A-Za-z0-9_]+` service name (e.g. a second dot).
     """
     service = target or "notify"
+    if "." in service:
+        domain, svc = service.split(".", 1)
+        if domain != "notify":
+            return {
+                "error": "invalid_notify_target",
+                "message": (
+                    f"target {target!r} names domain {domain!r}, not 'notify'. "
+                    "Pass a bare service name or 'notify.<service>'."
+                ),
+            }
+    else:
+        domain, svc = "notify", service
+    if not service_guard.validate_service_name(svc):
+        return {"error": "invalid_service_name"}
     data: dict = {"message": message}
     if title:
         data["title"] = title
-    domain, svc = ("notify", service) if "." not in service else service.split(".", 1)
     return ha.call_service(domain, svc, data)
 
 

@@ -1,5 +1,112 @@
 # Changelog
 
+## 0.25.0
+
+**Added**
+
+- Pre-built, cosign-signed OCI image on ghcr.io (ADR-0005) — `config.yaml`
+  now declares `image: "ghcr.io/fistacho/nexus-agent"` (single multi-arch
+  manifest tag, no `{arch}` placeholder), so Supervisor pulls the add-on
+  instead of building it locally. `.github/workflows/publish-image.yml`
+  builds, pushes and cosign-signs both the per-arch source images
+  (`{arch}-nexus-agent`) and the combined manifest on every `vX.Y.Z` tag,
+  then verifies every one of them is actually pullable before the run is
+  allowed to go green. See [Docker Image](README.md#docker-image) for the
+  `docker run`/`cosign verify` commands.
+- `server.json` — an MCP Registry server descriptor (schema-validated by
+  `.github/workflows/mcp-registry.yml` on every tagged release from day
+  one; actual publication to the registry is deliberately held back until
+  nexus 1.0.0, since the registry itself is still in preview). Its OCI
+  package declares the same ghcr.io image and tag as `config.yaml`.
+- `DOCS.md` — full operational reference (add-on options, security posture,
+  ESPHome) split out of README so the README itself stays focused on
+  getting started.
+- `apparmor.txt.draft` — a draft AppArmor profile for the add-on; not yet
+  active (no `apparmor: true` in `config.yaml`), kept as a draft until it's
+  been exercised against a real install.
+- A literal `LABEL io.modelcontextprotocol.server.name` in the Dockerfile —
+  the MCP Registry's ownership-verification mechanism for the pushed image,
+  matching `server.json`'s own `name`.
+
+**Changed**
+
+- `services_call_service` gains a `confirm` parameter (default `False`,
+  ADR-0006): required to actually run one of eight guarded HA/Supervisor
+  services — `homeassistant.restart`/`stop`, `hassio.host_reboot`/
+  `host_shutdown`/`restore_full`/`restore_partial`, `update.install`,
+  `group.remove` — closing the gap where a model told
+  `confirmation_required` by a dedicated tool (e.g. `system_restart_ha`)
+  could simply reach the same effect through the generic dispatcher
+  instead. Without `confirm=True`, the call performs no I/O and returns a
+  confirmation prompt naming the dedicated tool to prefer, when one exists.
+  Ignored for every other service.
+- `ws_call_service` now outright refuses those same eight guarded services
+  (`{"error": "guarded_service_refused", ..., "use": "services_call_service"}`)
+  instead of accepting `confirm` itself — none of them return a response
+  payload under `return_response=True` anyway (HA's own `ServiceRegistry`
+  rejects that combination before the handler runs).
+- `domain`/`service` in `services_call_service` and `ws_call_service` must
+  now match `[A-Za-z0-9_]+` — refused with `{"error":
+  "invalid_service_name"}` and zero I/O otherwise. Closes a case-folding/
+  path-injection gap (ADR-0006 F2–F4) where `"HASSIO"`/`"ADDON_STOP"`, or a
+  `service` value containing `?`, `#` or a `..` segment, could reach a
+  different Supervisor operation than nexus's own `self_protection` guard
+  was comparing against.
+- `areas_control_area`'s `action` is now restricted to `turn_on`/
+  `turn_off`/`toggle` (previously passed through unchecked) and
+  `services_send_notification`'s dotted `target` must now name the
+  `notify` domain — both were side doors that could reach an arbitrary
+  `domain.service` call under cover of a narrower-looking tool (ADR-0006
+  D6).
+- **Breaking:** the add-on now ships as a pre-built image for `aarch64` and
+  `amd64` only. `armhf`/`armv7`/`i386` have no supported, CI-buildable path
+  to a signed image (the build tooling used for ghcr.io only has native
+  runners for the two architectures above) — users on those architectures
+  keep working on 0.24.x, which still builds locally via the Dockerfile,
+  but cannot update past it.
+
+**Security**
+
+- Every path segment `ha_client.py` splices into an HA REST URL from a
+  caller-supplied value (`entity_id`, automation/script config IDs, event
+  types, history/logbook timestamps) is now validated or percent-encoded
+  before the request is built — `entity_id` against HA Core's own
+  `valid_entity_id` pattern, everything else against a generic
+  disallow-list (`/`, `\`, `?`, `#`, literal `..`, checked both raw and
+  percent-decoded once). Same treatment for the add-on/backup `slug`
+  argument on all 12 `supervisor_*` tools that take one, checked before
+  `self_protection`/`confirm`. Closes the same class of bug as the
+  `services_call_service` name-validation fix below (a value containing
+  `?`, `#` or `..` could otherwise resolve to a different endpoint than the
+  one named).
+- `self_protection.blocked_hassio_service_call` now compares `domain`/
+  `service` case-insensitively, closing the self-protection bypass where
+  `"HASSIO"`/`"ADDON_STOP"` reached the same Supervisor operation as
+  `"hassio"`/`"addon_stop"` without tripping the guard.
+- The add-on's HTTP transport now validates the `Origin` header on every
+  request per the MCP spec's Streamable HTTP security requirements: an
+  Origin that doesn't match nexus's own known LAN origins (or the
+  operator's `NEXUS_ALLOWED_ORIGINS` allow-list) gets `403 Forbidden`, as
+  does a missing-but-`null` or repeated Origin header. A request with no
+  Origin header at all is allowed (most non-browser MCP clients never send
+  one), and both HA's ingress proxy and `GET /health` are exempt (ingress
+  is already a trusted, peer-verified channel; `/health` is the Supervisor
+  watchdog's unauthenticated probe).
+
+**Fixed**
+
+- `run.sh`'s standalone mode (no Supervisor, e.g. the ghcr.io image run via
+  plain `docker run`) now honors a caller-supplied `-e HA_URL`/
+  `-e HA_CONFIG_PATH` instead of silently discarding them — every release
+  through 0.24.0 unconditionally forced `HA_URL=http://supervisor/core`
+  regardless of mode.
+- Several WebSocket-level ESPHome Device Builder tests that drove a real
+  local `websockets.serve` server against the client on a worker thread
+  (a source of intermittent CI flakiness) now run against an in-process
+  fake connection instead, for every case that doesn't specifically need
+  real concurrent client/server behaviour (a genuine timeout, an actual
+  TCP refusal).
+
 ## 0.24.0
 
 **Added**

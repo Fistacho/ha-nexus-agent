@@ -146,6 +146,9 @@ def get_area_states(
     return [s for s in all_states if s["entity_id"] in entity_ids]
 
 
+_CONTROL_AREA_ACTIONS = ("turn_on", "turn_off", "toggle")
+
+
 @mcp.tool(annotations=write("Control area entities by domain", idempotent=False))
 def control_area(
     area_id: Annotated[str, Field(description="Area registry ID to target; obtain it from areas_list_areas.")],
@@ -156,13 +159,19 @@ def control_area(
 
     Calls service `<domain>.<action>` over HTTP with `{"area_id": area_id}`
     as the target, so Home Assistant dispatches it to every entity of that
-    domain in the area.
+    domain in the area. `action` must be one of turn_on/turn_off/toggle
+    (ADR-0006 D6) — an unchecked value here could reach an arbitrary
+    `<domain>.<action>` service under cover of "controlling an area".
 
     Use when: controlling a whole area by domain, e.g. all lights in a room.
     Not for: controlling an explicit list of entity_ids across areas — use
     `entities_bulk_control`.
     Returns: list of state-change dicts as returned by the HA service call.
-    Limits: `action` is passed through unchecked; an invalid action or
-    domain combination fails with the underlying HTTP error from Home
+    Errors: raises `ValueError` when `action` is not one of turn_on,
+    turn_off, toggle.
+    Limits: an invalid `domain` (no such domain, or the domain has no
+    matching service) fails with the underlying HTTP error from Home
     Assistant."""
+    if action not in _CONTROL_AREA_ACTIONS:
+        raise ValueError(f"action must be one of {_CONTROL_AREA_ACTIONS} (got: {action!r})")
     return ha.call_service(domain, action, {"area_id": area_id})

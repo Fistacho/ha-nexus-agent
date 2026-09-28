@@ -202,10 +202,20 @@ def blocked_hassio_service_call(domain: str, service: str, data: dict | None) ->
     dict when `domain`/`service`/`data` would reach nexus's own add-on
     through one of the blocked services above (`is_own_addon` on every
     slug found in `data[<addon-or-app-key>]`, string or list), else `None`
-    (call is not blocked by this guard and may proceed)."""
-    if domain != "hassio":
+    (call is not blocked by this guard and may proceed).
+
+    `domain`/`service` are compared case-insensitively (`.lower()`) rather
+    than requiring the caller to have already normalised case -- ADR-0006 D3
+    (F4): Home Assistant's own REST dispatch folds both to lower case before
+    routing, so `"HASSIO"`/`"ADDON_STOP"` reaches the identical handler
+    `"hassio"`/`"addon_stop"` would, and a literal string comparison here
+    used to miss that. Callers are expected to have already run
+    `service_guard.validate_service_name` on both names first -- this
+    function does not itself reject a malformed name.
+    """
+    if domain.lower() != "hassio":
         return None
-    data_key = _SELF_HASSIO_SERVICES.get(service)
+    data_key = _SELF_HASSIO_SERVICES.get(service.lower())
     if data_key is None:
         return None
     slugs = _iter_slugs((data or {}).get(data_key))

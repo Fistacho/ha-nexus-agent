@@ -94,3 +94,74 @@ def test_inert_outside_addon_mode(monkeypatch):
 
     assert result == []
     assert calls
+
+
+# ---------------------------------------------------------------------------
+# ADR-0006 D3/D4: name validation, ordering, and the confirm gate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "domain,service",
+    [
+        ("light", "turn_on?x"),
+        ("hassio", "../addon_stop"),
+        ("light", "turn.on"),
+        ("", "turn_on"),
+    ],
+)
+def test_call_service_rejects_malformed_names_without_io(monkeypatch, domain, service):
+    monkeypatch.setattr(ha, "call_service", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no HA call")))
+
+    result = call_service(domain, service, {})
+
+    assert result == {"error": "invalid_service_name"}
+
+
+def test_self_protection_runs_before_confirm_gate_and_is_never_bypassed_by_confirm(monkeypatch):
+    """A self-protection-blocked hassio.* case must still be refused even
+    with confirm=True — self_protection.py is unconditional (ADR-0006 D4:
+    "self_protection (bezwzglednie, confirm go nie omija)")."""
+    self_protection.set_own_slug(_OWN_SLUG)
+    monkeypatch.setattr(ha, "call_service", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no HA call")))
+
+    result = call_service("hassio", "addon_stop", {"addon": _OWN_SLUG}, confirm=True)
+
+    assert result["error"] == "self_addon_hassio_service_blocked"
+
+
+def test_confirm_gate_denies_a_guarded_service_without_confirm(monkeypatch):
+    monkeypatch.setattr(ha, "call_service", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no HA call")))
+
+    result = call_service("homeassistant", "restart")
+
+    assert result["error"] == "confirmation_required"
+    assert "confirm=True" in result["action"]
+
+
+def test_confirm_gate_allows_a_guarded_service_with_confirm(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ha, "call_service", lambda d, s, data: calls.append((d, s, data)) or [{"ok": True}])
+
+    result = call_service("homeassistant", "restart", confirm=True)
+
+    assert result == [{"ok": True}]
+    assert calls == [("homeassistant", "restart", {})]
+
+
+def test_confirm_is_ignored_for_an_unguarded_service(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ha, "call_service", lambda d, s, data: calls.append((d, s, data)) or [{"ok": True}])
+
+    result = call_service("light", "turn_on", {"entity_id": "light.kitchen"}, confirm=False)
+
+    assert result == [{"ok": True}]
+    assert calls == [("light", "turn_on", {"entity_id": "light.kitchen"})]
+
+
+def test_confirm_gate_case_insensitive_guarded_match(monkeypatch):
+    monkeypatch.setattr(ha, "call_service", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no HA call")))
+
+    result = call_service("HOMEASSISTANT", "RESTART")
+
+    assert result["error"] == "confirmation_required"
