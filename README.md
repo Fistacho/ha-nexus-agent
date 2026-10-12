@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/fistacho-ha-nexus-agent-badge.png)](https://mseep.ai/app/fistacho-ha-nexus-agent)
+
 # Nexus Agent — MCP for Home Assistant
 
 [![Release](https://img.shields.io/github/v/release/Fistacho/ha-nexus-agent?style=flat-square&label=latest)](https://github.com/Fistacho/ha-nexus-agent/releases/latest)
