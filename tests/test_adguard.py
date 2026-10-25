@@ -15,6 +15,7 @@ import json
 import httpx
 import pytest
 from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from pydantic import ValidationError
 
 from tools import adguard
@@ -279,8 +280,9 @@ def test_set_dns_config_rejects_unknown_field_without_io(fake):
 def test_set_dns_config_unknown_field_rejected_by_mcp_schema(fake):
     # FastMCP validates arguments against the same model before the function
     # runs (`extra="forbid"`); in-process that surfaces as pydantic's
-    # ValidationError, over the MCP wire as a ToolError.
-    with pytest.raises((ToolError, ValidationError)) as excinfo:
+    # ValidationError (newer FastMCP 3.x wraps it in its own ValidationError),
+    # over the MCP wire as a ToolError.
+    with pytest.raises((ToolError, ValidationError, FastMCPValidationError)) as excinfo:
         asyncio.run(
             adguard.mcp.call_tool("set_dns_config", {"changes": {"upstream_dns_file": "/etc/passwd"}})
         )
