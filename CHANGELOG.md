@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.26.0
+
+**Added**
+
+- New `adguard` namespace (3 tools) for the AdGuard Home add-on
+  (`hassio-addons`, slug `*_adguard`). HA's own `adguard` integration only
+  offers filter-list services and switches; these tools reach the DNS
+  settings too:
+  - `adguard_get_config` — status, DNS settings (`dns_info`), filter lists
+    (custom rules as a count plus the first 20), safe search, access lists
+    and dhcp on/off + interface (no leases or MAC addresses).
+  - `adguard_set_dns_config` — partial update of an allowlist of DNS fields
+    (upstream/fallback/bootstrap/PTR resolvers, upstream mode, rate limit,
+    cache, `dnssec_enabled`, blocking mode, upstream timeout). Any other key
+    is rejected. When resolvers change, AdGuard's own upstream test runs
+    first and nothing is written unless every server answers `OK`. Returns
+    the settings before and after the write.
+  - `adguard_check_host` — whether a domain is filtered, and by which rule
+    and list.
+- How it connects: the AdGuard add-on serves its API on
+  `127.0.0.1:45158` (host network), the same address HA Core's `adguard`
+  integration uses. nexus already runs with `host_network: true`
+  (ADR-0004), so this needs no new add-on permission or role. The
+  Supervisor is only asked where the add-on is and whether it is running.
+
 ## 0.25.1
 
 **Fixed**

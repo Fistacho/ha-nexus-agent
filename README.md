@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **323 tools across 29 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), **scene CRUD**, dashboards + screenshot + resource management, energy, **long-term statistics** (sum/mean/min/max by day/week/month), voice pipelines, blueprints, calendar, HACS, Supervisor, **ESPHome** (list devices, compile, OTA, logs, **LVGL display UI management**), themes, **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
+**Give AI assistants full control over your smart home.** **326 tools across 30 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), **scene CRUD**, dashboards + screenshot + resource management, energy, **long-term statistics** (sum/mean/min/max by day/week/month), voice pipelines, blueprints, calendar, HACS, Supervisor, **ESPHome** (list devices, compile, OTA, logs, **LVGL display UI management**), themes, **AdGuard Home** (DNS settings, filter check), **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
 
 Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
@@ -26,6 +26,15 @@ Once connected, just talk to your AI assistant:
 - *"Build me a Lovelace card for the living room with temperature and humidity"*
 
 ---
+
+## What's New in v0.26.0
+
+- **AdGuard Home tools (`adguard_*`)** — read the AdGuard Home add-on's
+  configuration, change its DNS settings (upstreams, fallback/bootstrap/PTR
+  resolvers, rate limit, cache, DNSSEC, blocking mode) and check why a
+  domain is blocked. New upstreams are tested by AdGuard itself before
+  anything is written. See [AdGuard Home](#adguard-home).
+- Full details in [CHANGELOG.md](CHANGELOG.md#0260).
 
 ## What's New in v0.25.0
 
@@ -375,7 +384,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Tools
 
-323 tools across 29 categories:
+326 tools across 30 categories:
 
 | Category | Tools | Highlights |
 | --- | --- | --- |
@@ -407,13 +416,14 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | `snapshot_*` | 2 | **Aggregated one-call context** — states + areas + devices + entities + integrations, domain/area/field filters, pagination |
 | `esphome_*` | 18 | list devices + online status, **read / write** config YAML, get entities, **compile / validate / OTA upload** via Dashboard API, add-on logs, ping; **LVGL**: list LVGL devices, get pages/widgets/styles, **client-side validate** (unique IDs, page refs), add/delete widgets |
 | `statistics_*` | 4 | **long-term recorder statistics** — list IDs, get sum/mean/min/max by hour/day/week/month, **`get_energy_statistics`** (auto-discovers kWh/m³ sensors) |
+| `adguard_*` | 3 | **AdGuard Home add-on**: `get_config` (status, DNS, filters, safe search, access lists), `set_dns_config` (allowlisted DNS fields, upstreams tested before writing), `check_host` (which rule/list filters a domain) |
 | `discover_*` | 4 | **BM25 tool search** — query the tool catalogue, list namespaces, fetch full docstrings |
 
 ---
 
 ## Features
 
-- **323 MCP tools** across 29 categories — the most complete HA MCP server available
+- **326 MCP tools** across 30 categories — the most complete HA MCP server available
 - **Built-in tool search** — `discover_tool_search("query")` finds the right tool without flooding the AI's context
 - **Confirmation gates** — 18 destructive tools, plus 8 guarded services reachable via `services_call_service`, require `confirm=True`; without it they return the exact command to re-run. See [Confirmation Gates](#confirmation-gates).
 - **Automation linter** — `automations_validate_best_practices` catches 7 common YAML mistakes before they cause issues
@@ -531,6 +541,27 @@ add-on's **Network** tab (Configuration tab, or Info tab → Network):
 Do not try to work around any of this by editing the `port` *option's* value below —
 it is scheduled for removal in 1.0.0 and only ever controls the LAN socket described
 above.
+
+## AdGuard Home
+
+`adguard_*` tools work with the community **AdGuard Home** add-on (slug
+`*_adguard`). That add-on runs AdGuard's API on `127.0.0.1:45158` with host
+networking, the address Home Assistant's own `adguard` integration connects
+to; nexus reaches it the same way thanks to `host_network: true` (above). No
+extra add-on permission is needed: the Supervisor API is only used to find the
+add-on and check it is started.
+
+- `adguard_get_config` — read-only overview.
+- `adguard_set_dns_config` — changes only the fields you pass, from a fixed
+  allowlist. If upstream, fallback, bootstrap or PTR resolvers change, AdGuard's
+  `test_upstream_dns` runs first and the write is refused unless every server
+  answers `OK` (a domain-specific upstream reported as a warning also blocks it).
+  Changes apply to every device using AdGuard as DNS immediately. Hidden in
+  `read_only` mode.
+- `adguard_check_host` — which rule and filter list match a domain.
+
+If you added a web login in AdGuard Home itself, these tools return
+`adguard_auth_required`. Standalone installs (no Supervisor) are not supported.
 
 ## Dashboard Screenshots
 
