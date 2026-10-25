@@ -144,7 +144,7 @@ def test_full_mode_tools_list_is_unaffected(fresh_root):
     policy.apply_policy(fresh_root, policy.ToolPolicy(tool_mode="full"))
 
     assert _list_tool_names(fresh_root) == before
-    assert len(before) == 326
+    assert len(before) == 329
 
 
 # --- search mode: catalogue shape -----------------------------------------

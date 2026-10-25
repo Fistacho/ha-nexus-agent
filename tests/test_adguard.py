@@ -5,7 +5,8 @@ fake AdGuard Home (`httpx.MockTransport`, same pattern as
 Covered: add-on lookup (not installed / 404 / stopped / not host-networked /
 missing token / Supervisor error), AdGuard transport errors (401/403,
 connection refused), `get_config` projection, `set_dns_config` allowlist and
-fail-closed upstream test, `check_host`.
+fail-closed upstream test, `check_host`, filter lists (`add_filter`,
+`remove_filter`, `set_filter_enabled`).
 """
 from __future__ import annotations
 
@@ -32,6 +33,9 @@ def _unwrap(tool):
 get_config = _unwrap(adguard.get_config)
 set_dns_config = _unwrap(adguard.set_dns_config)
 check_host = _unwrap(adguard.check_host)
+add_filter = _unwrap(adguard.add_filter)
+remove_filter = _unwrap(adguard.remove_filter)
+set_filter_enabled = _unwrap(adguard.set_filter_enabled)
 
 
 class FakeHA:
@@ -123,6 +127,8 @@ class FakeHA:
             if path == "dns_config":
                 self.dns_info.update(body)
                 return httpx.Response(200)
+            if path.startswith("filtering/"):
+                return self._filter_lists(path, body)
             return httpx.Response(404)
         if path == "status":
             return httpx.Response(200, json={"running": True, "version": "v0.107.79", "protection_enabled": True})
@@ -147,6 +153,35 @@ class FakeHA:
             )
         if path == "filtering/check_host":
             return httpx.Response(200, json=self.check_host_result)
+        return httpx.Response(404)
+
+    def _filter_lists(self, path: str, body: dict) -> httpx.Response:
+        # Mirrors internal/filtering/http.go (v0.107.79): add_url/remove_url
+        # answer plain text "OK <n> rules", set_url an empty body.
+        key = "whitelist_filters" if body.get("whitelist") else "filters"
+        lists = self.filtering[key]
+        if path == "filtering/add_url":
+            lists.append(
+                {
+                    "id": 100 + len(lists),
+                    "name": body["name"],
+                    "url": body["url"],
+                    "enabled": True,
+                    "rules_count": 564000,
+                    "last_updated": "2026-10-25T08:00:00Z",
+                }
+            )
+            return httpx.Response(200, text="OK 564000 rules\n")
+        if path == "filtering/remove_url":
+            kept = [f for f in lists if f["url"] != body["url"]]
+            removed = sum(f["rules_count"] for f in lists if f["url"] == body["url"])
+            self.filtering[key] = kept
+            return httpx.Response(200, text=f"OK {removed} rules\n")
+        if path == "filtering/set_url":
+            for f in lists:
+                if f["url"] == body["url"]:
+                    f.update(body["data"])
+            return httpx.Response(200)
         return httpx.Response(404)
 
     def adguard_paths(self) -> list[str]:
@@ -445,3 +480,254 @@ def test_check_host_addon_not_running(fake):
     fake.info["state"] = "error"
 
     assert check_host("ads.example.com")["error"] == "adguard_not_running"
+
+
+# --- filter lists ------------------------------------------------------------
+
+_BIG_LIST = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/tif.medium.txt"
+_EXISTING = "https://example.test/filter.txt"
+
+
+def _posts(fake: FakeHA, path: str) -> list[httpx.Request]:
+    return [r for r in fake.requests if r.method == "POST" and r.url.path == f"/control/{path}"]
+
+
+def test_add_filter_posts_with_long_timeout_and_returns_new_list(fake):
+    result = add_filter("HaGeZi TIF medium", _BIG_LIST)
+
+    assert fake.posted["filtering/add_url"] == [
+        {"name": "HaGeZi TIF medium", "url": _BIG_LIST, "whitelist": False}
+    ]
+    timeout = _posts(fake, "filtering/add_url")[0].extensions["timeout"]
+    assert timeout["read"] == adguard._FILTER_DOWNLOAD_TIMEOUT == 180.0
+    assert result == {
+        "added": True,
+        "addon_slug": _SLUG,
+        "list": "blocklist",
+        "filter": {
+            "name": "HaGeZi TIF medium",
+            "url": _BIG_LIST,
+            "enabled": True,
+            "rules_count": 564000,
+            "last_updated": "2026-10-25T08:00:00Z",
+        },
+        "total_rules": 50000 + 564000,
+    }
+    assert fake.adguard_paths()[-1] == "GET /control/filtering/status"  # re-read after write
+    # The rest of the module keeps the short timeout.
+    status_read = [r for r in fake.requests if r.url.path == "/control/filtering/status"][0]
+    assert status_read.extensions["timeout"]["read"] == adguard._TIMEOUT
+    _assert_no_token(result)
+
+
+def test_add_filter_allowlist_and_disabled_lists_not_counted(fake):
+    fake.filtering["whitelist_filters"] = [
+        {"id": 7, "name": "off", "url": "https://example.test/off.txt", "enabled": False, "rules_count": 9}
+    ]
+
+    result = add_filter("  My allowlist  ", "https://example.test/allow.txt", allowlist=True)
+
+    assert fake.posted["filtering/add_url"] == [
+        {"name": "My allowlist", "url": "https://example.test/allow.txt", "whitelist": True}
+    ]
+    assert result["list"] == "allowlist"
+    assert result["filter"]["url"] == "https://example.test/allow.txt"
+    assert result["total_rules"] == 564000
+
+
+@pytest.mark.parametrize("allowlist_existing", [False, True])
+def test_add_filter_duplicate_url_does_not_post(fake, allowlist_existing):
+    if allowlist_existing:
+        fake.filtering["whitelist_filters"] = fake.filtering["filters"]
+        fake.filtering["filters"] = []
+
+    result = add_filter("Again", _EXISTING)
+
+    assert result["error"] == "already_exists"
+    assert result["list"] == ("allowlist" if allowlist_existing else "blocklist")
+    assert result["filter"]["name"] == "AdGuard DNS filter"
+    assert "filtering/add_url" not in fake.posted
+    assert all(r.method == "GET" for r in fake.requests if r.url.host == "127.0.0.1")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "   ",
+        "http://example.test/list.txt",
+        "ftp://example.test/list.txt",
+        "file:///etc/passwd",
+        "/opt/adguardhome/data/filters/1.txt",
+        "C:\\lists\\x.txt",
+        "https://",
+        "https://user:secret@example.test/list.txt",
+        "https://example.test/a b.txt",
+        "https://example.test:99999/list.txt",
+        "https://example.test/" + "a" * 2048,
+        None,
+    ],
+)
+def test_add_filter_rejects_bad_url_without_io(fake, url):
+    assert add_filter("List", url)["error"] == "invalid_url"
+    assert fake.requests == []
+
+
+@pytest.mark.parametrize("name", ["", "   ", "x" * 257, None])
+def test_add_filter_rejects_bad_name_without_io(fake, name):
+    assert add_filter(name, _BIG_LIST)["error"] == "invalid_name"
+    assert fake.requests == []
+
+
+def test_add_filter_adguard_error_is_returned(fake):
+    fake.adguard_status["filtering/add_url"] = 400
+
+    result = add_filter("Broken", "https://example.test/blank.txt")
+
+    assert result == {"error": "HTTP 400", "detail": "error on filtering/add_url"}
+    assert fake.adguard_paths().count("GET /control/filtering/status") == 1  # no re-read
+
+
+def test_add_filter_timeout_is_reported(fake, monkeypatch):
+    def slow(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/control/filtering/add_url":
+            raise httpx.ReadTimeout("timed out", request=request)
+        return fake.handler(request)
+
+    transport = httpx.MockTransport(slow)
+    monkeypatch.setattr(adguard.httpx, "Client", lambda **kw: _RealClient(transport=transport, **kw))
+
+    result = add_filter("Huge", _BIG_LIST)
+
+    assert result["error"] == "timeout"
+    assert "180 s" in result["message"]
+
+
+def test_add_filter_addon_missing_does_no_adguard_io(fake):
+    fake.addons = []
+
+    assert add_filter("List", _BIG_LIST)["error"] == "adguard_not_found"
+    assert fake.adguard_paths() == []
+
+
+def test_remove_filter_posts_and_returns_remaining_lists(fake):
+    fake.filtering["filters"].append(
+        {"id": 2, "name": "Second", "url": "http://example.test/second.txt", "enabled": True, "rules_count": 10}
+    )
+
+    result = remove_filter(_EXISTING)
+
+    assert fake.posted["filtering/remove_url"] == [{"url": _EXISTING, "whitelist": False}]
+    assert result["removed"] is True
+    assert result["removed_filter"]["name"] == "AdGuard DNS filter"
+    assert result["filters"] == [
+        {"name": "Second", "url": "http://example.test/second.txt", "enabled": True, "rules_count": 10}
+    ]
+    assert result["total_rules"] == 10
+    assert fake.adguard_paths()[-1] == "GET /control/filtering/status"
+
+
+def test_remove_filter_accepts_http_list(fake):
+    fake.filtering["filters"][0]["url"] = "http://example.test/old.txt"
+
+    assert remove_filter("http://example.test/old.txt")["removed"] is True
+    assert fake.posted["filtering/remove_url"] == [{"url": "http://example.test/old.txt", "whitelist": False}]
+
+
+def test_remove_filter_not_found_does_not_post(fake):
+    result = remove_filter(_EXISTING, allowlist=True)
+
+    assert result["error"] == "not_found"
+    assert result["list"] == "allowlist"
+    assert result["found_in"] == "blocklist"
+    assert "filtering/remove_url" not in fake.posted
+
+
+def test_remove_filter_rejects_local_path_without_io(fake):
+    assert remove_filter("/opt/adguardhome/data/filters/1.txt")["error"] == "invalid_url"
+    assert fake.requests == []
+
+
+def test_remove_filter_adguard_error_is_returned(fake):
+    fake.adguard_status["filtering/remove_url"] = 500
+
+    result = remove_filter(_EXISTING)
+
+    assert result == {"error": "HTTP 500", "detail": "error on filtering/remove_url"}
+
+
+def test_set_filter_enabled_disable_keeps_name_and_url(fake):
+    result = set_filter_enabled(_EXISTING, False)
+
+    assert fake.posted["filtering/set_url"] == [
+        {"url": _EXISTING, "whitelist": False, "data": {"name": "AdGuard DNS filter", "url": _EXISTING, "enabled": False}}
+    ]
+    timeout = _posts(fake, "filtering/set_url")[0].extensions["timeout"]
+    assert timeout["read"] == 180.0
+    assert result["changed"] is True
+    assert result["filter"]["enabled"] is False
+    assert result["filter"]["name"] == "AdGuard DNS filter"
+    assert result["total_rules"] == 0
+
+
+def test_set_filter_enabled_enable(fake):
+    fake.filtering["filters"][0]["enabled"] = False
+
+    result = set_filter_enabled(_EXISTING, True)
+
+    assert fake.posted["filtering/set_url"][0]["data"]["enabled"] is True
+    assert result["changed"] is True
+    assert result["total_rules"] == 50000
+
+
+def test_set_filter_enabled_same_state_does_not_post(fake):
+    result = set_filter_enabled(_EXISTING, True)
+
+    assert result["changed"] is False
+    assert result["filter"]["enabled"] is True
+    assert "filtering/set_url" not in fake.posted
+
+
+def test_set_filter_enabled_not_found_does_not_post(fake):
+    result = set_filter_enabled("https://example.test/missing.txt", False)
+
+    assert result["error"] == "not_found"
+    assert "found_in" not in result
+    assert "filtering/set_url" not in fake.posted
+
+
+def test_set_filter_enabled_enabling_needs_https(fake):
+    assert set_filter_enabled("http://example.test/old.txt", True)["error"] == "invalid_url"
+    assert fake.requests == []
+
+
+def test_set_filter_enabled_adguard_error_is_returned(fake):
+    fake.adguard_status["filtering/set_url"] = 400
+
+    result = set_filter_enabled(_EXISTING, False)
+
+    assert result == {"error": "HTTP 400", "detail": "error on filtering/set_url"}
+
+
+def test_add_filter_missing_url_rejected_by_mcp_schema(fake):
+    # Same pattern as the set_dns_config schema test: FastMCP validates the
+    # arguments before the function runs (FastMCP 3.4 raises its own
+    # ValidationError, older versions pydantic's, over the wire a ToolError).
+    with pytest.raises((ToolError, ValidationError, FastMCPValidationError)):
+        asyncio.run(adguard.mcp.call_tool("add_filter", {"name": "x"}))
+    assert fake.requests == []
+
+
+def test_filter_tools_annotations():
+    tools = {t.name: t for t in asyncio.run(adguard.mcp.list_tools())}
+
+    add = tools["add_filter"].annotations
+    assert (add.readOnlyHint, add.destructiveHint, add.idempotentHint, add.openWorldHint) == (False, False, True, True)
+    remove = tools["remove_filter"].annotations
+    assert (remove.readOnlyHint, remove.destructiveHint, remove.idempotentHint, remove.openWorldHint) == (
+        False, True, True, False,
+    )
+    toggle = tools["set_filter_enabled"].annotations
+    assert (toggle.readOnlyHint, toggle.destructiveHint, toggle.idempotentHint, toggle.openWorldHint) == (
+        False, False, True, True,
+    )

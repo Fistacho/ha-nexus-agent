@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.27.0
+
+**Added**
+
+- Filter-list management in the `adguard` namespace (3 new tools, 329 in
+  total):
+  - `adguard_add_filter` — adds a blocklist or allowlist by `https://` URL
+    and waits up to 180 s while AdGuard downloads and parses it. HA's
+    `adguard.add_url` service gives up after 10 s, so large lists (for
+    example a 12 MB / 560k-rule list) were never added. A URL that is
+    already on either list returns `already_exists` without touching
+    AdGuard. `http://` URLs, local file paths and URLs with credentials are
+    rejected.
+  - `adguard_remove_filter` — removes one list by its exact URL; an unknown
+    URL returns `not_found` (AdGuard itself would answer OK and do nothing).
+  - `adguard_set_filter_enabled` — turns one list on or off, keeping its
+    name and URL; enabling also waits up to 180 s for the download.
+  - All three return the list after the change and the sum of rules in the
+    enabled lists. They are write tools, so `read_only` mode hides them.
+
+**Changed**
+
+- `adguard_set_dns_config` "Not for" now points to the new filter tools
+  instead of HA's `adguard` services.
+
 ## 0.26.0
 
 **Added**

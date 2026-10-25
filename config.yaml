@@ -1,7 +1,7 @@
 name: Nexus Agent
-version: "0.26.0"
+version: "0.27.0"
 slug: nexus_agent
-description: "MCP server for Home Assistant — 326 tools across 30 domains. New in 0.26.0: adguard namespace — read AdGuard Home config, change its DNS settings (upstreams tested first), check why a domain is blocked"
+description: "MCP server for Home Assistant — 329 tools across 30 domains. New in 0.27.0: AdGuard filter lists — add (waits up to 180 s, so large lists HA's adguard.add_url drops after 10 s get added), remove, enable/disable"
 url: https://github.com/Fistacho/ha-nexus-agent
 # ADR-0005 (orchestrator decision, 2026-09-28): single multi-arch manifest,
 # per current HA guidance (developers.home-assistant.io/docs/apps/publishing)

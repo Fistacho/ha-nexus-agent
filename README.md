@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **326 tools across 30 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), **scene CRUD**, dashboards + screenshot + resource management, energy, **long-term statistics** (sum/mean/min/max by day/week/month), voice pipelines, blueprints, calendar, HACS, Supervisor, **ESPHome** (list devices, compile, OTA, logs, **LVGL display UI management**), themes, **AdGuard Home** (DNS settings, filter check), **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
+**Give AI assistants full control over your smart home.** **329 tools across 30 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), **scene CRUD**, dashboards + screenshot + resource management, energy, **long-term statistics** (sum/mean/min/max by day/week/month), voice pipelines, blueprints, calendar, HACS, Supervisor, **ESPHome** (list devices, compile, OTA, logs, **LVGL display UI management**), themes, **AdGuard Home** (DNS settings, filter lists, filter check), **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
 
 Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
@@ -26,6 +26,15 @@ Once connected, just talk to your AI assistant:
 - *"Build me a Lovelace card for the living room with temperature and humidity"*
 
 ---
+
+## What's New in v0.27.0
+
+- **AdGuard filter lists** — `adguard_add_filter`, `adguard_remove_filter`
+  and `adguard_set_filter_enabled` manage blocklists and allowlists directly.
+  Adding waits up to 180 s while AdGuard downloads the list, so large lists
+  that HA's `adguard.add_url` service drops after 10 s now get added. See
+  [AdGuard Home](#adguard-home).
+- Full details in [CHANGELOG.md](CHANGELOG.md#0270).
 
 ## What's New in v0.26.0
 
@@ -384,7 +393,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Tools
 
-326 tools across 30 categories:
+329 tools across 30 categories:
 
 | Category | Tools | Highlights |
 | --- | --- | --- |
@@ -416,14 +425,14 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | `snapshot_*` | 2 | **Aggregated one-call context** — states + areas + devices + entities + integrations, domain/area/field filters, pagination |
 | `esphome_*` | 18 | list devices + online status, **read / write** config YAML, get entities, **compile / validate / OTA upload** via Dashboard API, add-on logs, ping; **LVGL**: list LVGL devices, get pages/widgets/styles, **client-side validate** (unique IDs, page refs), add/delete widgets |
 | `statistics_*` | 4 | **long-term recorder statistics** — list IDs, get sum/mean/min/max by hour/day/week/month, **`get_energy_statistics`** (auto-discovers kWh/m³ sensors) |
-| `adguard_*` | 3 | **AdGuard Home add-on**: `get_config` (status, DNS, filters, safe search, access lists), `set_dns_config` (allowlisted DNS fields, upstreams tested before writing), `check_host` (which rule/list filters a domain) |
+| `adguard_*` | 6 | **AdGuard Home add-on**: `get_config` (status, DNS, filters, safe search, access lists), `set_dns_config` (allowlisted DNS fields, upstreams tested before writing), `check_host` (which rule/list filters a domain), **filter lists**: `add_filter` (waits up to 180 s, works for lists too large for HA's `adguard.add_url`), `remove_filter`, `set_filter_enabled` |
 | `discover_*` | 4 | **BM25 tool search** — query the tool catalogue, list namespaces, fetch full docstrings |
 
 ---
 
 ## Features
 
-- **326 MCP tools** across 30 categories — the most complete HA MCP server available
+- **329 MCP tools** across 30 categories — the most complete HA MCP server available
 - **Built-in tool search** — `discover_tool_search("query")` finds the right tool without flooding the AI's context
 - **Confirmation gates** — 18 destructive tools, plus 8 guarded services reachable via `services_call_service`, require `confirm=True`; without it they return the exact command to re-run. See [Confirmation Gates](#confirmation-gates).
 - **Automation linter** — `automations_validate_best_practices` catches 7 common YAML mistakes before they cause issues
@@ -559,6 +568,16 @@ add-on and check it is started.
   Changes apply to every device using AdGuard as DNS immediately. Hidden in
   `read_only` mode.
 - `adguard_check_host` — which rule and filter list match a domain.
+- `adguard_add_filter` — adds a blocklist or allowlist by `https://` URL and
+  waits up to 180 s for AdGuard to download and parse it (HA's
+  `adguard.add_url` service stops after 10 s, so large lists fail there). A
+  URL already on either list returns `already_exists` and nothing is sent.
+- `adguard_remove_filter` — removes one list by its exact URL (`not_found`
+  if it is not on that list).
+- `adguard_set_filter_enabled` — turns one list on or off, keeping its name
+  and URL; enabling waits up to 180 s for the download.
+- The three filter tools are hidden in `read_only` mode. Refreshing lists
+  stays with HA's `adguard.refresh` service.
 
 If you added a web login in AdGuard Home itself, these tools return
 `adguard_auth_required`. Standalone installs (no Supervisor) are not supported.

@@ -26,7 +26,7 @@ pre-batch-Z behaviour.
 
 What's checked
 --------------
-Always on, for all 326 tools, regardless of marker:
+Always on, for all 329 tools, regardless of marker:
 
 - T1 (`test_t1_tool_surface_matches_golden`): the live tool surface (names +
   parameter names/types/defaults/required, `description` stripped) equals
@@ -69,7 +69,7 @@ T3j (denylist: marketing words, "Step N", private examples, ALL-CAPS
 emphasis outside WARNING/DANGEROUS) is folded into `_check_t3j_denylist` and
 run from `test_t3j_denylist`, same marker requirement as the others.
 
-Every T3x test is parametrized over all 326 tool names (`ids=tool name`), so
+Every T3x test is parametrized over all 329 tool names (`ids=tool name`), so
 a single failing tool shows up as a single failing test id, e.g.
 `test_t3d_parameter_descriptions[supervisor_delete_backup]`.
 """
@@ -223,8 +223,8 @@ def test_t2_tool_and_namespace_counts():
         f"but server.py has {literal_mount_count} `mcp.mount(` calls — a namespace is "
         "reused or the regex in generate_tool_surface.module_namespace_map() is stale."
     )
-    assert tool_count == 326, (
-        f"list_tools() returned {tool_count} tools, expected 326 "
+    assert tool_count == 329, (
+        f"list_tools() returned {tool_count} tools, expected 329 "
         "(update this literal alongside pyproject.toml/config.yaml/README.md "
         "in the same reviewed change, then regenerate tests/contract/tool_surface.json)."
     )

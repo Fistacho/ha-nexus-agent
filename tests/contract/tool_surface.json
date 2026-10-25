@@ -1,7 +1,29 @@
 {
   "namespace_count": 30,
-  "tool_count": 326,
+  "tool_count": 329,
   "tools": {
+    "adguard_add_filter": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allowlist": {
+            "default": false,
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url"
+        ],
+        "type": "object"
+      }
+    },
     "adguard_check_host": {
       "inputSchema": {
         "additionalProperties": false,
@@ -20,6 +42,24 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
+        "type": "object"
+      }
+    },
+    "adguard_remove_filter": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allowlist": {
+            "default": false,
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
         "type": "object"
       }
     },
@@ -302,6 +342,28 @@
         },
         "required": [
           "changes"
+        ],
+        "type": "object"
+      }
+    },
+    "adguard_set_filter_enabled": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allowlist": {
+            "default": false,
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "enabled"
         ],
         "type": "object"
       }

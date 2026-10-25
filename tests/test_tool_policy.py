@@ -93,16 +93,17 @@ def test_read_only_visible_set_equals_annotations_read_only_set(fresh_root):
     assert _list_tool_names(fresh_root) == expected
 
 
-def test_read_only_matches_adr_fact_156_of_326(fresh_root):
+def test_read_only_matches_adr_fact_156_of_329(fresh_root):
     """Live-registry fact from ADR-0003 (154 `read()` / 323 total), plus
-    the `adguard` namespace in 0.26.0 (+2 `read()` / +3 total). A
-    regression here means an annotation drifted from its preset without
-    ADR-0002's own contract tests catching it."""
+    the `adguard` namespace in 0.26.0 (+2 `read()` / +3 total) and its
+    filter-list tools in 0.27.0 (+0 `read()` / +3 total, all hidden in
+    read-only mode). A regression here means an annotation drifted from its
+    preset without ADR-0002's own contract tests catching it."""
     total = len(asyncio.run(fresh_root.list_tools()))
 
     policy.apply_policy(fresh_root, policy.ToolPolicy(read_only=True))
 
-    assert total == 326
+    assert total == 329
     assert len(_list_tool_names(fresh_root)) == 156
 
 
@@ -160,7 +161,7 @@ def test_default_policy_is_read_only_false_full_catalogue(fresh_root):
     policy.apply_policy(fresh_root, policy.ToolPolicy())
 
     assert _list_tool_names(fresh_root) == before
-    assert len(before) == 326
+    assert len(before) == 329
 
 
 # --- P2: disabled_namespaces ---------------------------------------------
