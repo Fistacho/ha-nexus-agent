@@ -38,11 +38,50 @@ def create_area(
     calling this twice with the same name creates two distinct areas.
 
     Use when: you need a new area to assign devices, entities or labels to.
-    Not for: renaming or moving an existing area — no update tool exists
-    for areas in this namespace.
+    Not for: renaming an existing area or changing its icon, floor or
+    aliases — use `areas_update_area`.
     Returns: the created area registry dict (area_id, name, floor_id, icon,
     aliases, picture)."""
     return ha.create_area(name)
+
+
+@mcp.tool(annotations=destructive("Update area", idempotent=True))
+def update_area(
+    area_id: Annotated[str, Field(description="Area registry ID to update; obtain it from areas_list_areas.")],
+    name: Annotated[str | None, Field(description="New display name, e.g. 'Kitchen'; omit to keep the current name.")] = None,
+    icon: Annotated[str | None, Field(description="New mdi icon identifier, e.g. 'mdi:stove'; omit to keep the current icon.")] = None,
+    floor_id: Annotated[str | None, Field(description="Floor registry ID to move the area to; obtain it from areas_list_floors. Omit to keep the current floor.")] = None,
+    aliases: Annotated[list[str] | None, Field(description="Full replacement list of voice aliases; [] clears them, omit to keep the current aliases.")] = None,
+) -> dict:
+    """Rename an area or change its icon, floor or aliases.
+
+    Calls WS `config/area_registry/update`; only the parameters you pass
+    are sent, so omitted fields keep their current value. The area_id
+    never changes, so entities and devices stay assigned to the area.
+
+    Use when: renaming a room, or moving it to another floor.
+    Not for: creating a new area — use `areas_create_area`; moving a
+    device or an entity between areas — use `devices_update_device` or
+    `entities_assign_entity_to_area`.
+    Returns: the updated area registry dict (area_id, name, floor_id, icon,
+    aliases, picture).
+    Errors: raises `ValueError` when no field to change is given; an
+    unknown area_id or floor_id, or a name already used by another area,
+    fails with the WS error from Home Assistant.
+    Limits: the previous values are not returned; `aliases` replaces the
+    whole list. The icon and floor cannot be cleared with this tool."""
+    fields: dict = {}
+    if name is not None:
+        fields["name"] = name
+    if icon is not None:
+        fields["icon"] = icon
+    if floor_id is not None:
+        fields["floor_id"] = floor_id
+    if aliases is not None:
+        fields["aliases"] = aliases
+    if not fields:
+        raise ValueError("pass at least one of name, icon, floor_id, aliases")
+    return ha.update_area(area_id, **fields)
 
 
 @mcp.tool(annotations=destructive("Delete area", idempotent=True))

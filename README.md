@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **329 tools across 30 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), **scene CRUD**, dashboards + screenshot + resource management, energy, **long-term statistics** (sum/mean/min/max by day/week/month), voice pipelines, blueprints, calendar, HACS, Supervisor, **ESPHome** (list devices, compile, OTA, logs, **LVGL display UI management**), themes, **AdGuard Home** (DNS settings, filter lists, filter check), **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
+**Give AI assistants full control over your smart home.** **330 tools across 30 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), **scene CRUD**, dashboards + screenshot + resource management, energy, **long-term statistics** (sum/mean/min/max by day/week/month), voice pipelines, blueprints, calendar, HACS, Supervisor, **ESPHome** (list devices, compile, OTA, logs, **LVGL display UI management**), themes, **AdGuard Home** (DNS settings, filter lists, filter check), **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
 
 Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
@@ -26,6 +26,13 @@ Once connected, just talk to your AI assistant:
 - *"Build me a Lovelace card for the living room with temperature and humidity"*
 
 ---
+
+## What's New in v0.28.0
+
+- **Rename areas** — `areas_update_area` renames an area (room) or changes
+  its icon, floor or voice aliases. Only the fields you pass are changed,
+  and the area_id stays the same, so devices and entities stay in the room.
+- Full details in [CHANGELOG.md](CHANGELOG.md#0280).
 
 ## What's New in v0.27.0
 
@@ -393,7 +400,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Tools
 
-329 tools across 30 categories:
+330 tools across 30 categories:
 
 | Category | Tools | Highlights |
 | --- | --- | --- |
@@ -401,7 +408,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | `services_*` | 19 | call_service (**`confirm` gate** on 8 guarded services — restart/stop/host reboot/host shutdown/restore backup/`update.install`/`group.remove`, see [Confirmation Gates](#confirmation-gates)), notify, light color, camera snapshot/record, media controls |
 | `automations_*` | 31 | CRUD + full YAML, traces, scripts, scenes, **scene CRUD** (`get/set/delete_scene_config`), **validate_best_practices** (static linter), **validate_automation_references** (live registry check), **list/set/remove groups**, confirm gates on delete |
 | `blueprints_*` | 5 | list, import from URL, **save** (persist imported YAML), delete, instantiate |
-| `areas_*` | 8 | list, create, get_states, **control_area** |
+| `areas_*` | 9 | list, create, **update** (rename, icon, floor, aliases), delete, get_states, **control_area** |
 | `devices_*` | 4 | list, update (rename/move/disable), remove |
 | `calendar_*` | 4 | list calendars/events, create/delete event |
 | `todo_*` | 5 | list, add/update/remove items |
@@ -432,7 +439,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Features
 
-- **329 MCP tools** across 30 categories — the most complete HA MCP server available
+- **330 MCP tools** across 30 categories — the most complete HA MCP server available
 - **Built-in tool search** — `discover_tool_search("query")` finds the right tool without flooding the AI's context
 - **Confirmation gates** — 18 destructive tools, plus 8 guarded services reachable via `services_call_service`, require `confirm=True`; without it they return the exact command to re-run. See [Confirmation Gates](#confirmation-gates).
 - **Automation linter** — `automations_validate_best_practices` catches 7 common YAML mistakes before they cause issues

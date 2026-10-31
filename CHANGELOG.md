@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.28.0
+
+**Added**
+
+- `areas_update_area` (1 new tool, 330 in total) — renames an area (room)
+  or changes its icon, floor or voice aliases through HA's area registry.
+  Only the fields you pass are sent, so everything else keeps its current
+  value. The area_id does not change, so devices and entities assigned to
+  the area stay assigned. Calling it with no field to change is rejected
+  before anything reaches Home Assistant. The icon and floor cannot be
+  cleared with this tool.
+
+**Changed**
+
+- `areas_create_area` "Not for" now points to `areas_update_area` instead
+  of saying that areas cannot be updated.
+
 ## 0.27.0
 
 **Added**

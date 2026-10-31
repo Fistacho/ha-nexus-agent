@@ -428,6 +428,10 @@ def create_area(name: str) -> dict:
     return _ws_call("config/area_registry/create", name=name)
 
 
+def update_area(area_id: str, **kwargs) -> dict:
+    return _ws_call("config/area_registry/update", area_id=area_id, **kwargs)
+
+
 def delete_area(area_id: str) -> dict:
     return _ws_call("config/area_registry/delete", area_id=area_id)
 
