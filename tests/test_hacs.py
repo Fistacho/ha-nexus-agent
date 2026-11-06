@@ -25,6 +25,12 @@ Verified against hacs/integration (`custom_components/hacs/websocket/`):
 There is no `hacs/repository/install`, `hacs/repository/uninstall`,
 `hacs/repository/update` or singular `hacs/repository/add` command in HACS
 at all — every call to one of those previously returned `unknown_command`.
+
+Since HA 2026.11 the tools try the core Marketplace (`marketplace/*`) first
+and fall back to `hacs/*` on `unknown_command`. The tests here pin the HACS
+command names on an HA *before* 2026.11: `_on_legacy_hacs` answers every
+`marketplace/*` command with `unknown_command`, as such an HA does. The
+Marketplace side is in `tests/test_hacs_marketplace.py`.
 """
 from __future__ import annotations
 
@@ -39,6 +45,19 @@ def _unwrap(tool):
     return getattr(tool, "fn", tool)
 
 
+def _on_legacy_hacs(monkeypatch, fake):
+    """Install `fake` as `_ws_call` on an HA without the Marketplace (before 2026.11)."""
+
+    def ws_call(msg_type, **kwargs):
+        if msg_type.startswith("marketplace/"):
+            raise ha.HAWebSocketError({"code": "unknown_command", "message": "Unknown command."})
+        return fake(msg_type, **kwargs)
+
+    monkeypatch.setattr(ha, "_ws_call", ws_call)
+    # install/update go through the longer-bounded variant
+    monkeypatch.setattr(ha, "_ws_call_timeout", lambda msg_type, timeout, **kw: ws_call(msg_type, **kw))
+
+
 # --- get_hacs_repository: repository_id, not repository ----------------------
 
 
@@ -49,7 +68,7 @@ def test_get_hacs_repository_uses_repository_id_field(monkeypatch):
         calls.append((msg_type, kwargs))
         return {"repository_id": "123"}
 
-    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+    _on_legacy_hacs(monkeypatch, fake_ws_call)
 
     _unwrap(hacs_tools.get_hacs_repository)("123")
 
@@ -66,7 +85,7 @@ def test_install_hacs_repository_uses_download_command_with_version(monkeypatch)
         calls.append((msg_type, kwargs))
         return {}
 
-    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+    _on_legacy_hacs(monkeypatch, fake_ws_call)
 
     _unwrap(hacs_tools.install_hacs_repository)("123", version="1.2.3")
 
@@ -80,7 +99,7 @@ def test_install_hacs_repository_without_version_omits_version_field(monkeypatch
         calls.append((msg_type, kwargs))
         return {}
 
-    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+    _on_legacy_hacs(monkeypatch, fake_ws_call)
 
     _unwrap(hacs_tools.install_hacs_repository)("123")
 
@@ -97,7 +116,7 @@ def test_uninstall_hacs_repository_uses_remove_command(monkeypatch):
         calls.append((msg_type, kwargs))
         return {}
 
-    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+    _on_legacy_hacs(monkeypatch, fake_ws_call)
 
     _unwrap(hacs_tools.uninstall_hacs_repository)("123")
 
@@ -114,7 +133,7 @@ def test_add_custom_repository_uses_plural_repositories_add(monkeypatch):
         calls.append((msg_type, kwargs))
         return {}
 
-    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+    _on_legacy_hacs(monkeypatch, fake_ws_call)
 
     _unwrap(hacs_tools.add_custom_repository)("https://github.com/foo/bar", "integration")
 
@@ -139,7 +158,7 @@ def test_update_hacs_repository_sends_refresh_then_download_with_available_versi
             return {}
         raise AssertionError(f"unexpected msg_type {msg_type!r}")
 
-    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+    _on_legacy_hacs(monkeypatch, fake_ws_call)
 
     _unwrap(hacs_tools.update_hacs_repository)("123")
 
@@ -157,7 +176,7 @@ def test_update_hacs_repository_stops_if_refresh_fails(monkeypatch):
         calls.append(msg_type)
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+    _on_legacy_hacs(monkeypatch, fake_ws_call)
 
     result = _unwrap(hacs_tools.update_hacs_repository)("123")
 
@@ -176,7 +195,7 @@ def test_update_hacs_repository_errors_if_no_available_version_reported(monkeypa
             return {"installed_version": "1.0.0"}  # no available_version
         raise AssertionError(f"unexpected msg_type {msg_type!r}")
 
-    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+    _on_legacy_hacs(monkeypatch, fake_ws_call)
 
     result = _unwrap(hacs_tools.update_hacs_repository)("123")
 
@@ -194,7 +213,7 @@ def test_list_hacs_repositories_uses_plural_list_command(monkeypatch):
         calls.append((msg_type, kwargs))
         return []
 
-    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+    _on_legacy_hacs(monkeypatch, fake_ws_call)
 
     _unwrap(hacs_tools.list_hacs_repositories)(category="integration")
 
@@ -208,7 +227,7 @@ def test_list_hacs_repositories_without_category_omits_categories_field(monkeypa
         calls.append((msg_type, kwargs))
         return []
 
-    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+    _on_legacy_hacs(monkeypatch, fake_ws_call)
 
     _unwrap(hacs_tools.list_hacs_repositories)()
 
@@ -226,7 +245,7 @@ def test_list_hacs_critical_updates_filters_pending_upgrade(monkeypatch):
             {"repository_id": "2", "pending_upgrade": False},
         ]
 
-    monkeypatch.setattr(ha, "_ws_call", fake_ws_call)
+    _on_legacy_hacs(monkeypatch, fake_ws_call)
 
     result = _unwrap(hacs_tools.list_hacs_critical_updates)()
 

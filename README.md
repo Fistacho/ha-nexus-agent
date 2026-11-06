@@ -27,6 +27,28 @@ Once connected, just talk to your AI assistant:
 
 ---
 
+## What's New in v0.28.1
+
+- **Marketplace (HA 2026.11+)** — Home Assistant 2026.11 builds HACS into
+  core as the Marketplace and drops the `hacs/*` WebSocket commands, so the
+  `hacs_*` tools answered `unknown_command`. They now use the Marketplace
+  and still fall back to HACS on older versions. Tool names and parameters
+  are unchanged. Installs, updates and new custom repositories need the
+  Marketplace's first-run warning accepted once in Settings → Marketplace,
+  by the user whose token nexus uses; nexus tells you so and never accepts
+  it for you.
+- **Add-on limitation** — as an add-on, nexus reaches HA as the Supervisor
+  system user, and the Marketplace stores the warning acceptance per user.
+  That user cannot accept it in the UI, so installs, updates and new custom
+  repositories through nexus are refused even after you accepted the
+  warning. Do them in Settings → Marketplace (updates also under Settings →
+  Updates), or update an installed repository with an automation that runs
+  `update.install` on its `update.*` entity. Nexus prepares or runs such an
+  automation only when the owner explicitly asks for it, never on its own
+  after a `warning_not_accepted` answer. Listing and reading
+  repositories work. Standalone nexus with your own token is not affected.
+- Full details in [CHANGELOG.md](CHANGELOG.md#0281).
+
 ## What's New in v0.28.0
 
 - **Rename areas** — `areas_update_area` renames an area (room) or changes
@@ -420,7 +442,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | `git_*` | 11 | commit, **rollback** (confirm gate), log, **safe_write_with_checkpoint** |
 | `ws_*` | 7 | listen state changes, events, subscribe_trigger, render_template |
 | `supervisor_*` | 20 | add-on install/start/stop/update/logs/stats, backups, core/host info |
-| `hacs_*` | 7 | list/install/uninstall/update HACS repos, critical updates |
+| `hacs_*` | 7 | list/install/uninstall/update repos via the built-in **Marketplace** (HA 2026.11+) or HACS (older HA), pending upgrades |
 | `energy_*` | 9 | grid, solar, battery sources, energy preferences |
 | `zones_*` | 8 | create/update/delete zones, person location |
 | `labels_*` | 14 | labels, categories, assign to entities/devices |

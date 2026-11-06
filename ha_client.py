@@ -58,6 +58,21 @@ _WS_CLOSE_TIMEOUT = 1.0
 _WS_HANDSHAKE_TIMEOUT = 10.0
 
 
+class HAWebSocketError(RuntimeError):
+    """HA answered a WS command with `success: false`.
+
+    The message stays `WS error: {error}` (what callers saw before), and
+    `code`/`message` expose HA's error object so a caller can branch on the
+    code (e.g. `unknown_command`) without parsing the message text.
+    """
+
+    def __init__(self, error: Any) -> None:
+        super().__init__(f"WS error: {error}")
+        self.error: dict = error if isinstance(error, dict) else {}
+        self.code: str | None = self.error.get("code")
+        self.message: str | None = self.error.get("message")
+
+
 async def _ws_recv_within(ws, deadline: float, waiting_for: str) -> dict:
     """`ws.recv()` bounded by `deadline` (an `asyncio` loop-clock time).
 
@@ -82,12 +97,21 @@ async def _ws_recv_within(ws, deadline: float, waiting_for: str) -> dict:
 
 
 async def _ws_call_async(msg_type: str, **kwargs) -> Any:
+    return await _ws_call_async_within(msg_type, _WS_HANDSHAKE_TIMEOUT, kwargs)
+
+
+async def _ws_call_async_within(msg_type: str, timeout: float, fields: dict) -> Any:
+    """One WS command, the whole call (handshake included) bounded by `timeout` s.
+
+    `fields` is the command's payload as a dict, so no field name can collide
+    with this function's own parameters.
+    """
     import websockets
     token = _HA_TOKEN
     # max_size=None disables the 1 MB frame cap — HACS repository lists,
     # large registries and full traces routinely exceed that.
     async with websockets.connect(_ws_url(), max_size=None, close_timeout=_WS_CLOSE_TIMEOUT) as ws:
-        deadline = asyncio.get_event_loop().time() + _WS_HANDSHAKE_TIMEOUT
+        deadline = asyncio.get_event_loop().time() + timeout
         greeting = await _ws_recv_within(ws, deadline, "auth_required")
         if greeting.get("type") != "auth_required":
             raise RuntimeError(f"Unexpected WS greeting: {greeting}")
@@ -95,13 +119,13 @@ async def _ws_call_async(msg_type: str, **kwargs) -> Any:
         auth_ok = await _ws_recv_within(ws, deadline, "auth_ok")
         if auth_ok["type"] != "auth_ok":
             raise RuntimeError(f"WS auth failed: {auth_ok}")
-        payload = {"id": 1, "type": msg_type, **kwargs}
+        payload = {"id": 1, "type": msg_type, **fields}
         await ws.send(json.dumps(payload))
         while True:
             data = await _ws_recv_within(ws, deadline, "result")
             if data.get("id") == 1 and data.get("type") == "result":
                 if not data.get("success"):
-                    raise RuntimeError(f"WS error: {data.get('error')}")
+                    raise HAWebSocketError(data.get("error"))
                 return data["result"]
 
 
@@ -113,6 +137,23 @@ def _ws_call(msg_type: str, **kwargs) -> Any:
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor() as pool:
         return pool.submit(asyncio.run, _ws_call_async(msg_type, **kwargs)).result()
+
+
+def _ws_call_timeout(msg_type: str, timeout: float, /, **kwargs) -> Any:
+    """`_ws_call` with its own bound of `timeout` s instead of `_WS_HANDSHAKE_TIMEOUT`.
+
+    For commands HA answers only once slow work is done (e.g. a Marketplace
+    or HACS install). `msg_type` and `timeout` are positional-only, so a
+    command field named `timeout` still lands in `kwargs` and reaches HA —
+    the collision the note above `_WS_HANDSHAKE_TIMEOUT` warns about.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_ws_call_async_within(msg_type, timeout, kwargs))
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        return pool.submit(asyncio.run, _ws_call_async_within(msg_type, timeout, kwargs)).result()
 
 
 # --- Subscription-style WS commands ---

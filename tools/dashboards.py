@@ -92,7 +92,7 @@ def list_dashboards() -> list[dict]:
 def add_dashboard_resource(
     url: Annotated[
         str,
-        Field(description="Resource URL, e.g. '/local/my-card.js' or '/hacsfiles/mini-graph-card/mini-graph-card-bundle.js'."),
+        Field(description="Resource URL, e.g. '/local/my-card.js' or '/local/community/mini-graph-card/mini-graph-card-bundle.js' (Marketplace, HA 2026.11+; '/hacsfiles/...' with HACS before)."),
     ],
     resource_type: Annotated[
         str,
@@ -105,8 +105,9 @@ def add_dashboard_resource(
     stores a new resource entry with a server-generated id — repeating
     this call registers a second, distinct resource rather than updating
     one. The tool itself only stores the URL string; it never fetches
-    `url` — the browser loads it later, from `/local/`, `/hacsfiles/`, or
-    any external CDN the URL names.
+    `url` — the browser loads it later, from `/local/` (incl. the
+    Marketplace's `/local/community/`), `/hacsfiles/`, or any external CDN
+    the URL names.
 
     Use when: registering a custom card, theme, or script so it becomes
     available on every dashboard.
@@ -140,7 +141,7 @@ def remove_dashboard_resource(
     is re-added.
 
     Use when: removing a resource that is no longer needed (e.g. after
-    uninstalling a HACS frontend card).
+    uninstalling a HACS / Marketplace frontend card).
     Returns: `{"status": "removed", "resource_id": ..., "result": ...}` on
     success.
     Errors: `{"error": "confirmation_required", "message": ..., "action":

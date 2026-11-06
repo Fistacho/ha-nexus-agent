@@ -1,5 +1,82 @@
 # Changelog
 
+## 0.28.1
+
+**Fixed**
+
+- `hacs_*` tools on Home Assistant 2026.11+. HA 2026.11 builds HACS into
+  core as the **Marketplace** and the `hacs/*` WebSocket commands are gone:
+  live on HA 2026.11.0 `hacs_list_hacs_critical_updates` answered
+  `WS error: {'code': 'unknown_command'}`, and so did every other `hacs_*`
+  tool. Each tool now sends the Marketplace command first
+  (`marketplace/repositories/list`, `marketplace/repository/info`,
+  `marketplace/repository/install`, `marketplace/repository/uninstall`,
+  `marketplace/repository/refresh`, `marketplace/repositories/add`) and
+  falls back to the `hacs/*` command only when HA answers
+  `unknown_command`, so HA before 2026.11 with HACS keeps working. Tool
+  names and parameters are unchanged.
+- Marketplace errors come back as `{"error", "code", "backend", "hint"}`
+  instead of a raw WebSocket error. Until the Marketplace's first-run
+  warning is accepted (per user: the one that owns nexus's token),
+  installs, updates and new custom repositories answer
+  `warning_not_accepted` with the hint to open Settings → Marketplace and
+  accept it. Nexus never accepts it for you.
+- Add-on mode: nexus reaches HA through the Supervisor proxy as the
+  Supervisor system user, not as the owner, and the Marketplace keeps the
+  warning acceptance per user. That user cannot accept it in the UI, so
+  install, update and add custom repository through nexus answer
+  `warning_not_accepted` even after the owner accepted it. The hint says so
+  and names what works: doing it in Settings → Marketplace or Settings →
+  Updates, or, for an installed repository, an automation that runs
+  `update.install` on its `update.*` entity (automations run without a
+  user, so the owner's acceptance counts). Nexus prepares or runs such an
+  automation only when the owner explicitly asks for it, never on its own
+  after a `warning_not_accepted` answer. Listing and reading work.
+  Standalone nexus with a user's token is not affected. Adding a custom repository
+  also needs a GitHub account connected to the Marketplace
+  (`github_not_connected`). A repository that replaces a built-in
+  integration (`replaces_built_in`) has to be installed from the UI. When
+  neither the Marketplace nor HACS answers, the tools say so instead of
+  returning `unknown_command`.
+- `hacs_install_hacs_repository`, `hacs_uninstall_hacs_repository`,
+  `hacs_update_hacs_repository` and `hacs_add_custom_repository` return
+  `{"status": "ok", "backend": "marketplace"|"hacs"}` on success, on both
+  backends. The Marketplace answers these commands with `result: null`, and
+  a bare `null` made the MCP call fail output validation ("Invalid
+  structured content") after HA had already done the work. With HACS they
+  used to return `{}`.
+- A timeout or connection error is no longer reported as a rejection by
+  the Marketplace: `code` is null, `backend` is null unless already
+  established, and the hint says to check the repository with
+  `hacs_get_hacs_repository` before retrying (an install may still be
+  running in HA). A probe that gets no answer is never re-sent as a
+  `hacs/*` command.
+- `hacs_install_hacs_repository` and `hacs_update_hacs_repository` wait up
+  to 120 s for the install to finish (both backends) instead of the 10 s
+  every other WebSocket command gets. HA answers an install only after the
+  download (up to 100 MB in the Marketplace) is written and the integration
+  reloaded, so with 10 s they would usually have reported "No answer"
+  while HA was still installing. `hacs_uninstall_hacs_repository` gets the
+  same 120 s: with GitHub connected the Marketplace first re-fetches the
+  repository. Other `hacs_*` commands keep 10 s. An MCP client with a
+  shorter timeout of its own may still give up first; the tool
+  descriptions say to check with `hacs_get_hacs_repository` then.
+- Only connection, timeout and protocol failures (`RuntimeError`,
+  `OSError`, websockets errors, a bad JSON frame) are reported as "No
+  answer from Home Assistant". Other exceptions, i.e. bugs in nexus, are
+  no longer hidden behind that message.
+
+**Changed**
+
+- `ha_client`: a failed WebSocket command raises `HAWebSocketError`, a
+  `RuntimeError` subclass carrying HA's error `code` and `message`. The
+  message text is unchanged.
+- `ha_client._ws_call_timeout(msg_type, timeout, /, **fields)` — `_ws_call`
+  with its own time bound; `timeout` is positional-only, so a command field
+  of that name still reaches HA.
+- `dashboards_add_dashboard_resource` description: Marketplace resources
+  live under `/local/community/` (`/hacsfiles/` was HACS).
+
 ## 0.28.0
 
 **Added**
