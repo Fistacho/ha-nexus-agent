@@ -85,27 +85,46 @@ def remove_device(
     device_id: Annotated[str, Field(description="Device registry ID to remove; obtain it from devices_list_devices.")],
     config_entry_id: Annotated[str, Field(description="Config entry ID the device is attached to; the device is detached only from this entry.")],
 ) -> dict:
-    """Remove a device from one of its config entries.
+    """Remove a device from Home Assistant after checking it belongs to the given config entry.
 
-    Calls WS `config_entries/remove_device` with both IDs; if the device
-    belongs to other config entries it keeps existing under those.
+    Reads the device registry and refuses unless the device belongs to
+    `config_entry_id`, then sends WS `config/device_registry/remove`
+    (HA 2026.x); on an HA without that command it sends the older
+    `config/device_registry/remove_config_entry`. The integration must
+    support device removal (HA asks it first), otherwise HA refuses.
 
-    Use when: detaching a device from one integration without touching its
-    other config entries.
-    Returns: dict with `device_id`, `config_entry_id` and the raw WS
-    `result`.
-    Limits: both `device_id` and `config_entry_id` are required — there is
-    no way to remove a device from every config entry in one call."""
-    result = ha._ws_call(
-        "config_entries/remove_device",
-        device_id=device_id,
-        config_entry_id=config_entry_id,
-    )
-    return {
-        "device_id": device_id,
-        "config_entry_id": config_entry_id,
-        "result": result,
-    }
+    Use when: removing a stale device an integration no longer provides.
+    Not for: renaming, moving or disabling it — use `devices_update_device`.
+    Returns: `{"removed": true, "device_id", "config_entry_id", "command"}`.
+    Errors: `device_not_found`, `config_entry_not_in_device` (no removal
+    sent), `ws_error` with Home Assistant's `code`/`message` (e.g. the
+    integration rejected the removal).
+    Limits: `config_entry_id` is required as a safety check even though
+    HA 2026.x removes the device as a whole."""
+    devices = ha._ws_call("config/device_registry/list") or []
+    device = next((d for d in devices if isinstance(d, dict) and d.get("id") == device_id), None)
+    if device is None:
+        return {"error": "device_not_found", "device_id": device_id}
+    entries = set(device.get("config_entries") or []) | {device.get("config_entry_id")}
+    if config_entry_id not in entries:
+        return {
+            "error": "config_entry_not_in_device",
+            "device_id": device_id,
+            "config_entry_id": config_entry_id,
+            "config_entries": sorted(e for e in entries if e),
+        }
+    command = "config/device_registry/remove"
+    try:
+        try:
+            ha._ws_call(command, device_id=device_id)
+        except ha.HAWebSocketError as e:
+            if e.code != "unknown_command":
+                raise
+            command = "config/device_registry/remove_config_entry"
+            ha._ws_call(command, device_id=device_id, config_entry_id=config_entry_id)
+    except ha.HAWebSocketError as e:
+        return {"error": "ws_error", "code": e.code, "message": e.message, "command": command}
+    return {"removed": True, "device_id": device_id, "config_entry_id": config_entry_id, "command": command}
 
 
 @mcp.tool(annotations=read("List devices in area"))

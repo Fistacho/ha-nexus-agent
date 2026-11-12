@@ -196,7 +196,8 @@ def _policy_section_html(policy: ToolPolicy) -> str:
 <h2>Active Policy</h2>
 <p>read_only: """ + read_only_html + """<br>
 disabled_namespaces: """ + namespaces_html + """<br>
-tool_mode: <code>""" + policy.tool_mode + """</code></p>
+tool_mode: <code>""" + policy.tool_mode + """</code><br>
+nodered_write_enabled: """ + ("<strong>on</strong> — Node-RED flows can be changed (full trust)" if policy.nodered_write_enabled else "off") + """</p>
 <div class="tip">Changing these requires an add-on restart — see the add-on's Configuration tab. The Supervisor <strong>Watchdog</strong> toggle on the add-on's Info tab must be turned on separately; listing <code>watchdog:</code> in this add-on's own manifest does not enable it by itself.</div>
 """
 

@@ -52,6 +52,7 @@ take effect. Full descriptions:
 | --- | --- |
 | `read_only` | Hide and refuse every tool/prompt that isn't read-only (ADR-0003). Does **not** restrict what an already-visible read tool can read — pair with `disabled_namespaces` for that. |
 | `disabled_namespaces` | Hide and refuse entire tool namespaces (e.g. `["supervisor", "git"]`). An unknown name refuses to start with a log error instead of silently no-op'ing. |
+| `nodered_write_enabled` | Off by default. Allows the `nodered_*` tools that change flows. **Full trust:** a flow runs any code inside the Node-RED add-on, which holds a Supervisor token with the `manager` role and Node-RED's node secrets (ADR-0007). |
 | `tool_mode` | `full` (default) or `search` — `search` swaps `tools/list` for a handful of lookup + call-by-name-proxy tools, for context-constrained clients. Everything it hides still works if called by name and stays subject to `read_only`/`disabled_namespaces`. |
 | `api_key` | Pin the MCP API key instead of letting nexus auto-generate one. |
 | `git_versioning_auto` | Auto-commit `/config` changes made through nexus's file/git tools. |

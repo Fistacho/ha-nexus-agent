@@ -1,6 +1,6 @@
 {
-  "namespace_count": 30,
-  "tool_count": 330,
+  "namespace_count": 32,
+  "tool_count": 354,
   "tools": {
     "adguard_add_filter": {
       "inputSchema": {
@@ -3117,6 +3117,24 @@
         "type": "object"
       }
     },
+    "entities_remove_entity": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "force": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
     "entities_select_option": {
       "inputSchema": {
         "additionalProperties": false,
@@ -4737,6 +4755,551 @@
         },
         "required": [
           "label_id"
+        ],
+        "type": "object"
+      }
+    },
+    "neonplan_create_restore_point": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "default": false,
+            "type": "boolean"
+          },
+          "plan": {
+            "default": "main",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "neonplan_get_plan": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "plan": {
+            "default": "main",
+            "type": "string"
+          },
+          "summary_only": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "neonplan_get_status": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "neonplan_list_plans": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "neonplan_list_restore_points": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "plan": {
+            "default": "main",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "neonplan_patch_plan": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "force": {
+            "default": false,
+            "type": "boolean"
+          },
+          "operations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "overwrite": {
+            "default": false,
+            "type": "boolean"
+          },
+          "plan": {
+            "default": "main",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operations"
+        ],
+        "type": "object"
+      }
+    },
+    "neonplan_restore_restore_point": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "force": {
+            "default": false,
+            "type": "boolean"
+          },
+          "plan": {
+            "default": "main",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "snapshot_id"
+        ],
+        "type": "object"
+      }
+    },
+    "neonplan_save_plan": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "building": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "force": {
+            "default": false,
+            "type": "boolean"
+          },
+          "overwrite": {
+            "default": false,
+            "type": "boolean"
+          },
+          "plan": {
+            "default": "main",
+            "type": "string"
+          }
+        },
+        "required": [
+          "building"
+        ],
+        "type": "object"
+      }
+    },
+    "neonplan_suggest_bindings": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "plan": {
+            "default": "main",
+            "type": "string"
+          },
+          "room_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "room_id"
+        ],
+        "type": "object"
+      }
+    },
+    "neonplan_upload_background_image": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "force": {
+            "default": false,
+            "type": "boolean"
+          },
+          "image_id": {
+            "type": "string"
+          },
+          "overwrite": {
+            "default": false,
+            "type": "boolean"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "image_id"
+        ],
+        "type": "object"
+      }
+    },
+    "neonplan_validate_plan": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "building": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "check_ha": {
+            "default": true,
+            "type": "boolean"
+          },
+          "plan": {
+            "default": "main",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "nodered_create_flow": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "disabled": {
+            "default": false,
+            "type": "boolean"
+          },
+          "expected_rev": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "info": {
+            "default": "",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "nodes"
+        ],
+        "type": "object"
+      }
+    },
+    "nodered_delete_flow": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_rev": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "flow_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "flow_id"
+        ],
+        "type": "object"
+      }
+    },
+    "nodered_find_entity_usage": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      }
+    },
+    "nodered_get_diagnostics": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "nodered_get_flow": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "flow_id"
+        ],
+        "type": "object"
+      }
+    },
+    "nodered_get_info": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "nodered_list_backups": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "nodered_list_flows": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      }
+    },
+    "nodered_restore_backup": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "backup_id": {
+            "type": "string"
+          },
+          "expected_rev": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "backup_id"
+        ],
+        "type": "object"
+      }
+    },
+    "nodered_search_nodes": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "flow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "include_config": {
+            "default": false,
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 100,
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "type": "object"
+      }
+    },
+    "nodered_set_flow_enabled": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "expected_rev": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "flow_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "flow_id",
+          "enabled"
+        ],
+        "type": "object"
+      }
+    },
+    "nodered_update_flow": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_rev": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "flow_id": {
+            "type": "string"
+          },
+          "info": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "nodes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "flow_id",
+          "nodes"
         ],
         "type": "object"
       }

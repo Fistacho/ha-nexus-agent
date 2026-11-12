@@ -80,13 +80,14 @@ def set_active_theme(
     call.
 
     Use when: switching which theme the frontend displays.
-    Returns: the raw result of the `frontend.set_theme` service call.
+    Returns: `{"service": "frontend.set_theme", "changed_states": [...]}` —
+    the states HA reports as changed by the call.
     Limits: `mode` values other than 'light'/'dark' are dropped rather than
     rejected."""
     payload: dict = {"name": name}
     if mode in {"light", "dark"}:
         payload["mode"] = mode
-    return ha.call_service("frontend", "set_theme", payload)
+    return {"service": "frontend.set_theme", "changed_states": ha.call_service("frontend", "set_theme", payload)}
 
 
 @mcp.tool(annotations=write("Reload themes from disk", idempotent=True))

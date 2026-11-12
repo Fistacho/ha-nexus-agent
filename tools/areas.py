@@ -90,13 +90,15 @@ def delete_area(
 ) -> dict:
     """Delete a Home Assistant area by its area_id.
 
-    Calls WS `config/area_registry/delete` and returns Home Assistant's
-    result unchanged; the area disappears from the registry immediately.
+    Calls WS `config/area_registry/delete`; the area disappears from the
+    registry immediately. Home Assistant answers a plain "success", which
+    this tool reports as an object.
 
     Use when: removing an area that is no longer used.
-    Returns: the raw WS deletion result.
+    Returns: `{"deleted": true, "area_id"}`.
     Limits: irreversible — there is no restore tool for a deleted area."""
-    return ha.delete_area(area_id)
+    ha.delete_area(area_id)
+    return {"deleted": True, "area_id": area_id}
 
 
 @mcp.tool(annotations=read("List floors"))

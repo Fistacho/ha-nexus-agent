@@ -1,5 +1,139 @@
 # Changelog
 
+## 0.29.0
+
+**Added**
+
+- `nodered` namespace (12 new tools; the 5 write tools only with the new
+  add-on option `nodered_write_enabled`, see below) for the
+  community **Node-RED** add-on (slug `*_nodered`). Nexus talks to
+  Node-RED's Admin API on `127.0.0.1:46836`, the loopback address the add-on
+  itself pins in its `config.js` (with `adminAuth` off — the add-on leaves
+  login to Home Assistant's ingress and its own nginx). Nexus reaches it
+  thanks to `host_network: true`, so no Home Assistant password and no
+  new permission are needed. The Supervisor API is
+  only used to find the add-on and check that it is started.
+  - Read: `nodered_list_flows` (tabs and subflows with node counts and the
+    deploy `rev`), `nodered_get_flow` (one tab with all its nodes),
+    `nodered_search_nodes` (by type and/or name), `nodered_find_entity_usage`
+    (which nodes and flows reference a Home Assistant entity — exact
+    selector, template/function text, substring and regex selectors),
+    `nodered_get_info` (Node-RED version, settings, run state, installed
+    palette modules), `nodered_get_diagnostics` (Node-RED's diagnostics
+    report), `nodered_list_backups`.
+  - Write: `nodered_create_flow`, `nodered_update_flow` (replaces the
+    flow's nodes; values hidden by the placeholder are restored from the
+    current flow), `nodered_delete_flow`, `nodered_set_flow_enabled`,
+    `nodered_restore_backup`. Each write first saves all flows to nexus's
+    private `/data/nodered_backups/` (newest 30 kept) and then deploys the
+    whole configuration with the `rev` it read, so Node-RED refuses the
+    write (`rev_conflict`) when someone deployed in the meantime; an
+    optional `expected_rev` checks against the `rev` you read earlier. Only
+    changed flows restart. A failed backup stops the write.
+  - Safety checks before anything is deployed: node types must be installed
+    in Node-RED (an unknown type would stop every flow), node ids must not
+    clash with other flows, and a new node must not contain the redaction
+    placeholder. All five write tools are destructive, so `read_only`
+    mode hides them too. `nodered_restore_backup` also checks the backup's
+    node types and that it was taken from this add-on.
+  - New add-on option **`nodered_write_enabled`** (default off, ADR-0007):
+    until it is on, the five write tools are hidden and refused like in
+    `read_only`. **Turning it on means full trust**: a deployed flow runs
+    any code inside the Node-RED add-on, which holds a Supervisor token
+    with the `manager` role (it can change nexus's own options, e.g. lift
+    `read_only`) and can read Node-RED's stored node secrets
+    (`credential_secret`, `flows_cred.json`). Reading flows works either way.
+  - Secrets: Node-RED never returns node credentials. Every answer
+    replaces with the placeholder: fields whose key looks secret, env and
+    HTTP header values whose name looks secret or is `Authorization`,
+    `Bearer`/`Basic` values, `user:pass@` URLs, and whole JSON strings
+    holding any of these (header names `keyType`/`keyValue` stay visible).
+    `nodered_update_flow` refuses (`secret_redirect_blocked`) to change the
+    type of a node whose hidden values it restores, or the `host`/`url`/
+    `broker`/`port`/`server`/`proxy` of a node with hidden values or stored
+    credentials, unless the secret is given explicitly; a node with stored
+    credentials cannot change its type. A destination chosen at runtime
+    (`msg.url`, function code) is out of reach of this check. Secrets typed into
+    function code or free text are not detected.
+  - `nodered_find_entity_usage` skips selector regexes over 200 characters
+    or with nested quantifiers (`skipped_patterns`); the `nodes` argument
+    is limited to 4 MiB of JSON.
+- `neonplan` namespace (11 new tools, 32 namespaces) for
+  the HACS integration **NeonPlan 3D** (`neonplan3d`, built against 3.0.6):
+  the AI can read, check and edit the 3D house plan through Home
+  Assistant's WebSocket API. No add-on option or permission is needed;
+  saving needs an admin token, as in the NeonPlan editor.
+  - Read: `neonplan_get_status` (installed/loaded, version, whether a
+    license is active, packs, plans, open NeonPlan screens),
+    `neonplan_list_plans`, `neonplan_get_plan` (whole building or a summary
+    of floors, rooms with `area_id`, openings and bound entities),
+    `neonplan_validate_plan`, `neonplan_list_restore_points`,
+    `neonplan_suggest_bindings` (which entities of a room's area fit which
+    plan field: blinds, contacts, lights, climate sensors, TV, vacuum,
+    cameras, locks — a proposal, nothing is written).
+  - `neonplan_validate_plan` checks what NeonPlan's server does not: the
+    structure its schema requires, duplicate ids, an opening's `room_id`,
+    `edge` and position on its wall, entity fields, items outside every
+    room, and against the live Home Assistant every `area_id` and entity
+    id. It warns about `null` entity fields that NeonPlan binds
+    automatically from the area.
+  - Write (destructive, hidden in `read_only` mode): `neonplan_save_plan`
+    (whole building), `neonplan_patch_plan` (JSON Patch operations — the
+    usual way to edit; an operation on path `""`, the whole plan, needs
+    `overwrite=true` like `save_plan`), `neonplan_create_restore_point`,
+    `neonplan_restore_restore_point`, `neonplan_upload_background_image`
+    (png/jpeg/webp from `/config` or base64, up to the 8 MiB limit; the
+    integration deletes an image no plan references at its next start).
+  - NeonPlan's own save replaces the whole plan and has no conflict check.
+    Saves through nexus therefore validate first (errors block), refuse to
+    replace a plan with floors unless `overwrite=true`, check an optional
+    `expected_revision`, take a restore point, check the revision again
+    right before saving, and read the plan back. An editor left open with
+    unsaved changes can still overwrite a save: `neonplan_get_status` lists
+    the open screens.
+  - Without the integration every tool answers `neonplan_not_installed`.
+    On a version other than 3.0.x reads add a warning and writes are
+    refused (`neonplan_version_unsupported`) unless `force=true`.
+
+- `entities_remove_entity` (1 new tool, 354 in total) — removes an
+  entity's entry from the entity registry (`config/entity_registry/remove`).
+  An entity its integration still provides (a state that is not a restored
+  placeholder) is refused with `entity_still_provided` unless `force=true`,
+  because the integration would re-create the entry at its next reload.
+
+**Changed**
+
+- `devices_remove_device` now removes the whole device
+  (`config/device_registry/remove`, Home Assistant 2026.x), not only its
+  link to one config entry as the description used to say. In practice the
+  old command (`config_entries/remove_device`) does not exist in Home
+  Assistant 2026.11, so the tool never worked there. It checks first that
+  the device belongs to `config_entry_id`, falls back to
+  `config/device_registry/remove_config_entry` on an older Home Assistant,
+  and returns `{"removed": true, ...}` or `device_not_found` /
+  `config_entry_not_in_device` / `ws_error`.
+
+**Fixed**
+
+- `history_get_state_history` and `history_get_logbook` with `hours` above
+  24 returned only the first day: without `end_time` Home Assistant ends
+  the window one day after its start. Both now send `end_time` = now.
+- `areas_delete_area` deleted the area but then failed with
+  "structured_content must be a dict or None. Got str: 'success'": Home
+  Assistant answers that command with the plain string `"success"`. It now
+  returns `{"deleted": true, "area_id"}`.
+- The same kind of failure after the work was done, found by a new
+  contract test: `blueprints_delete_blueprint`, `voice_delete_pipeline` and
+  `voice_set_preferred_pipeline` (Home Assistant answers with no payload,
+  which the MCP client rejected as missing structured output), and
+  `system_restart_ha`, `system_stop_ha`, `system_create_backup` and
+  `themes_set_active_theme` (a service call answers a list of changed
+  states). They now return `{"deleted": true, ...}`,
+  `{"preferred_pipeline"}` or `{"service", "changed_states"}`.
+- New test `tests/test_tool_output_shapes.py`: every tool declared to
+  return an object may pass a Home Assistant answer through unchanged only
+  when that answer is known to be an object.
+
 ## 0.28.1
 
 **Fixed**

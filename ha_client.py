@@ -395,11 +395,12 @@ def get_history(entity_id: str | None = None, hours: int = 24) -> list:
     refactor that accepts a raw `start` string directly.
     """
     from datetime import datetime, timedelta, timezone
-    start = service_guard.path_segment(
-        (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(), "identifier"
-    )
+    now = datetime.now(timezone.utc)
+    start = service_guard.path_segment((now - timedelta(hours=hours)).isoformat(), "identifier")
     url = f"/api/history/period/{start}"
-    params = {}
+    # Without end_time HA ends the window at start + 1 day (components/history), so hours > 24
+    # returned only the oldest day.
+    params = {"end_time": now.isoformat()}
     if entity_id:
         params["filter_entity_id"] = entity_id
     with _client() as c:
@@ -412,11 +413,11 @@ def get_logbook(entity_id: str | None = None, hours: int = 24) -> list:
     """Call `GET /api/logbook/<start>`. Same `start` handling as
     `get_history` (see its docstring)."""
     from datetime import datetime, timedelta, timezone
-    start = service_guard.path_segment(
-        (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(), "identifier"
-    )
+    now = datetime.now(timezone.utc)
+    start = service_guard.path_segment((now - timedelta(hours=hours)).isoformat(), "identifier")
     url = f"/api/logbook/{start}"
-    params = {}
+    # Without end_time HA ends the window at start + period days (components/logbook/rest_api.py).
+    params = {"end_time": now.isoformat()}
     if entity_id:
         params["entity_id"] = entity_id
     with _client() as c:
@@ -473,7 +474,8 @@ def update_area(area_id: str, **kwargs) -> dict:
     return _ws_call("config/area_registry/update", area_id=area_id, **kwargs)
 
 
-def delete_area(area_id: str) -> dict:
+def delete_area(area_id: str) -> str:
+    """HA answers the plain string "success" (`components/config/area_registry.py`), not an object."""
     return _ws_call("config/area_registry/delete", area_id=area_id)
 
 

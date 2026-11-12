@@ -1,7 +1,7 @@
 name: Nexus Agent
-version: "0.28.1"
+version: "0.29.0"
 slug: nexus_agent
-description: "MCP server for Home Assistant — 330 tools across 30 domains. New in 0.28.1: hacs_* tools work with the Marketplace built into Home Assistant 2026.11 (HACS on older versions)"
+description: "MCP server for Home Assistant — 354 tools across 32 domains. New in 0.29.0: nodered namespace (Node-RED flows, entity usage; flow edits opt-in) and neonplan namespace (NeonPlan 3D house plan: read, validate, patch with restore points); fixed areas_delete_area and 7 other tools failing after success"
 url: https://github.com/Fistacho/ha-nexus-agent
 # ADR-0005 (orchestrator decision, 2026-09-28): single multi-arch manifest,
 # per current HA guidance (developers.home-assistant.io/docs/apps/publishing)
@@ -56,6 +56,7 @@ options:
   read_only: false
   disabled_namespaces: []
   tool_mode: full
+  nodered_write_enabled: false
 
 schema:
   port: int
@@ -67,6 +68,7 @@ schema:
   disabled_namespaces:
     - str
   tool_mode: list(full|search)
+  nodered_write_enabled: bool
 
 ports:
   7123/tcp: 7123

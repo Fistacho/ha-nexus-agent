@@ -141,10 +141,12 @@ def test_apply_policy_rejects_search_mode_with_discover_disabled_directly(fresh_
 def test_full_mode_tools_list_is_unaffected(fresh_root):
     before = _list_tool_names(fresh_root)
 
-    policy.apply_policy(fresh_root, policy.ToolPolicy(tool_mode="full"))
+    # nodered_write_enabled=True: this test is about tool_mode alone (ADR-0007 hides
+    # the five Node-RED write tools by default, see test_nodered_write_policy.py).
+    policy.apply_policy(fresh_root, policy.ToolPolicy(tool_mode="full", nodered_write_enabled=True))
 
     assert _list_tool_names(fresh_root) == before
-    assert len(before) == 330
+    assert len(before) == 354
 
 
 # --- search mode: catalogue shape -----------------------------------------

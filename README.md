@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **330 tools across 30 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), **scene CRUD**, dashboards + screenshot + resource management, energy, **long-term statistics** (sum/mean/min/max by day/week/month), voice pipelines, blueprints, calendar, HACS, Supervisor, **ESPHome** (list devices, compile, OTA, logs, **LVGL display UI management**), themes, **AdGuard Home** (DNS settings, filter lists, filter check), **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
+**Give AI assistants full control over your smart home.** **354 tools across 32 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), **scene CRUD**, dashboards + screenshot + resource management, energy, **long-term statistics** (sum/mean/min/max by day/week/month), voice pipelines, blueprints, calendar, HACS, Supervisor, **ESPHome** (list devices, compile, OTA, logs, **LVGL display UI management**), themes, **AdGuard Home** (DNS settings, filter lists, filter check), **Node-RED** (flows, entity usage, flow edits with backup), **NeonPlan 3D** (house plan validation and edits), **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
 
 Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
 
@@ -26,6 +26,30 @@ Once connected, just talk to your AI assistant:
 - *"Build me a Lovelace card for the living room with temperature and humidity"*
 
 ---
+
+## What's New in v0.29.0
+
+- **Node-RED tools (`nodered_*`)** — list and read the flows of the Node-RED
+  add-on, search nodes, and find which flows use a Home Assistant entity
+  (`nodered_find_entity_usage`). With the new add-on option
+  `nodered_write_enabled` (off by default) also create, replace, delete,
+  enable or disable a flow; every change first saves all flows to a backup
+  that `nodered_restore_backup` can bring back, and a deploy someone else
+  made in the meantime is detected instead of overwritten. Turning writes
+  on means full trust — see [Node-RED](#node-red).
+- **NeonPlan 3D tools (`neonplan_*`)** — read, check and edit the 3D house
+  plan of the NeonPlan 3D integration: validate references and HA
+  entities/areas, propose entity bindings per room, change the plan with
+  JSON Patch, with a restore point and a conflict check before every save.
+  See [NeonPlan 3D](#neonplan-3d).
+- **`entities_remove_entity`** — removes an orphaned entity from the entity
+  registry; one an integration still provides is refused unless `force`.
+- **Fixed** — `areas_delete_area` and 7 other tools no longer fail after
+  Home Assistant did the work (a non-object answer passed through);
+  `devices_remove_device` sends the command HA 2026.x has;
+  `history_get_state_history` / `history_get_logbook` return the whole
+  window for `hours` > 24, not only the first day.
+- Full details in [CHANGELOG.md](CHANGELOG.md#0290).
 
 ## What's New in v0.28.1
 
@@ -422,11 +446,11 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 
 ## Tools
 
-330 tools across 30 categories:
+354 tools across 32 categories:
 
 | Category | Tools | Highlights |
 | --- | --- | --- |
-| `entities_*` | 18 | list (paginated + field selection), turn on/off/toggle, **bulk_control**, voice expose, set_value |
+| `entities_*` | 19 | list (paginated + field selection), turn on/off/toggle, **bulk_control**, voice expose, set_value, **remove orphaned entity** |
 | `services_*` | 19 | call_service (**`confirm` gate** on 8 guarded services — restart/stop/host reboot/host shutdown/restore backup/`update.install`/`group.remove`, see [Confirmation Gates](#confirmation-gates)), notify, light color, camera snapshot/record, media controls |
 | `automations_*` | 31 | CRUD + full YAML, traces, scripts, scenes, **scene CRUD** (`get/set/delete_scene_config`), **validate_best_practices** (static linter), **validate_automation_references** (live registry check), **list/set/remove groups**, confirm gates on delete |
 | `blueprints_*` | 5 | list, import from URL, **save** (persist imported YAML), delete, instantiate |
@@ -455,13 +479,15 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | `esphome_*` | 18 | list devices + online status, **read / write** config YAML, get entities, **compile / validate / OTA upload** via Dashboard API, add-on logs, ping; **LVGL**: list LVGL devices, get pages/widgets/styles, **client-side validate** (unique IDs, page refs), add/delete widgets |
 | `statistics_*` | 4 | **long-term recorder statistics** — list IDs, get sum/mean/min/max by hour/day/week/month, **`get_energy_statistics`** (auto-discovers kWh/m³ sensors) |
 | `adguard_*` | 6 | **AdGuard Home add-on**: `get_config` (status, DNS, filters, safe search, access lists), `set_dns_config` (allowlisted DNS fields, upstreams tested before writing), `check_host` (which rule/list filters a domain), **filter lists**: `add_filter` (waits up to 180 s, works for lists too large for HA's `adguard.add_url`), `remove_filter`, `set_filter_enabled` |
+| `nodered_*` | 12 | **Node-RED add-on**: `list_flows`, `get_flow` (secrets hidden), `search_nodes`, **`find_entity_usage`** (which flows use an HA entity), `get_info` (version, palette modules), `get_diagnostics`; `list_backups`; **writes (opt-in `nodered_write_enabled`) with automatic backup and rev conflict check**: `create_flow`, `update_flow`, `delete_flow`, `set_flow_enabled`, `restore_backup` |
+| `neonplan_*` | 11 | **NeonPlan 3D integration**: `get_status`, `list_plans`, `get_plan`, **`validate_plan`** (references, HA areas/entities), **`suggest_bindings`**, `list_restore_points`; **writes with validation, restore point and revision check**: `save_plan`, **`patch_plan`** (JSON Patch), `create_restore_point`, `restore_restore_point`, `upload_background_image` |
 | `discover_*` | 4 | **BM25 tool search** — query the tool catalogue, list namespaces, fetch full docstrings |
 
 ---
 
 ## Features
 
-- **330 MCP tools** across 30 categories — the most complete HA MCP server available
+- **354 MCP tools** across 32 categories — the most complete HA MCP server available
 - **Built-in tool search** — `discover_tool_search("query")` finds the right tool without flooding the AI's context
 - **Confirmation gates** — 18 destructive tools, plus 8 guarded services reachable via `services_call_service`, require `confirm=True`; without it they return the exact command to re-run. See [Confirmation Gates](#confirmation-gates).
 - **Automation linter** — `automations_validate_best_practices` catches 7 common YAML mistakes before they cause issues
@@ -550,6 +576,7 @@ them return a response payload anyway.
 | `api_key` | *(auto-generated)* | Pin the MCP API key instead of letting nexus generate one |
 | `read_only` | `false` | Hide and refuse every tool that is not read-only (ADR-0003), and every MCP prompt. See [Security](#security) for what it does *not* restrict. Requires a restart. |
 | `disabled_namespaces` | `[]` | List of tool namespaces (e.g. `["supervisor", "git"]`) to hide and refuse entirely. An unknown namespace name refuses to start with a readable error in the add-on log. Requires a restart. |
+| `nodered_write_enabled` | `false` | Allow the five `nodered_*` write tools (create/update/delete/enable/restore flows). **Full trust**: a flow runs any code inside the Node-RED add-on, which holds a Supervisor token with the `manager` role and Node-RED's node secrets — see [Node-RED](#node-red) and ADR-0007. `read_only` still hides them. Requires a restart. |
 | `tool_mode` | `full` | `full` exposes every tool in `tools/list`, unchanged. `search` instead shows only 3 lookup tools (`discover_tool_search`, `discover_get_tool_doc`, `discover_list_namespaces`) plus 3 call-by-name proxies, one per tool class (`discover_call_read_tool` / `_write_tool` / `_destructive_tool`) — a much smaller catalogue for context-constrained clients. Every tool `search` hides still works if called directly by name, and stays subject to `read_only`/`disabled_namespaces` exactly as in `full` mode — this option only changes what `tools/list` shows. `discover` must stay out of `disabled_namespaces` while this is `search` (the add-on refuses to start otherwise — it would leave `tools/list` empty). Requires a restart. |
 
 `read_only` and `disabled_namespaces` combine as a union — a tool hidden by either one is hidden. Both are evaluated once at startup; there is no per-session or per-client variant. `tool_mode` is a context-budget convenience, not a security boundary — it never widens or narrows what `read_only`/`disabled_namespaces` already decided.
@@ -610,6 +637,98 @@ add-on and check it is started.
 
 If you added a web login in AdGuard Home itself, these tools return
 `adguard_auth_required`. Standalone installs (no Supervisor) are not supported.
+
+## Node-RED
+
+`nodered_*` tools work with the community **Node-RED** add-on (slug
+`*_nodered`). That add-on starts Node-RED with its Admin API on
+`127.0.0.1:46836` and login turned off there (Home Assistant's ingress and
+the add-on's own nginx handle login in front of it); nexus reaches that
+address thanks to `host_network: true` (above). No Home Assistant password
+or extra permission is needed: the Supervisor API is only used to find the
+add-on and check it is started.
+
+> **Writing flows is off by default.** The five write tools stay hidden
+> (and refused if called) until you turn on the add-on option
+> **`nodered_write_enabled`** and restart nexus. Turning it on means full
+> trust in whoever drives nexus: a deployed flow runs any code inside the
+> Node-RED add-on, which holds a Supervisor token with the `manager` role
+> (it can, for example, change nexus's own options and lift `read_only`)
+> and can read the secrets stored in Node-RED's nodes (`credential_secret`,
+> `flows_cred.json`). nexus's own guards (self-protection, `read_only`) do
+> not reach code running inside Node-RED. ADR-0007.
+
+- `nodered_list_flows`, `nodered_get_flow`, `nodered_search_nodes`,
+  `nodered_get_info`, `nodered_get_diagnostics` — read-only.
+- `nodered_find_entity_usage` — which nodes and flows reference an entity:
+  Home Assistant node selectors (exact, substring, regex), templates,
+  function code and JSON data. Useful before renaming or removing an entity,
+  next to `search_find_related` for HA automations.
+- `nodered_create_flow`, `nodered_update_flow`, `nodered_delete_flow`,
+  `nodered_set_flow_enabled` (only with `nodered_write_enabled`) — every
+  change saves all flows to
+  `/data/nodered_backups/` inside the nexus add-on first (newest 30 kept,
+  not under `/config`), then deploys with the `rev` it just read, so a
+  deploy someone made in the meantime is refused (`rev_conflict`) instead
+  of overwritten. Only the changed flows restart. Node types must be
+  installed in Node-RED, because an unknown type would stop every flow.
+- `nodered_list_backups`, `nodered_restore_backup` — undo a change (restore
+  checks the backup's node types and that it comes from this add-on).
+- Secrets: Node-RED never returns node credentials. In every answer the
+  placeholder replaces fields whose key looks secret, values of env entries
+  and HTTP headers whose name looks secret (or is `Authorization`),
+  `Bearer`/`Basic` values, URLs with `user:pass@`, and JSON strings holding
+  any of these (the whole string). `nodered_update_flow` puts the stored
+  value back when the placeholder is sent unchanged, but refuses
+  (`secret_redirect_blocked`) to change the type of such a node, or its
+  `host`/`url`/`broker`/`port`/`server`/`proxy` when it has hidden values or
+  stored credentials, unless the secret is given explicitly in
+  `credentials`. A node with stored credentials cannot change its type at
+  all through nexus.
+- Limits of the redaction: secrets typed into function code, templates or
+  other free text without one of the patterns above are not detected; JSON
+  strings over 200 000 characters are not parsed for secrets; a node whose
+  `name` looks secret also has its `value` hidden.
+- Limits of `secret_redirect_blocked`: it compares the node's configured
+  type and destination fields only. A destination chosen at runtime (e.g.
+  `msg.url` for an http request node, or a function node that builds the
+  request) is out of its reach — which is part of why writes are opt-in.
+- The five write tools are also hidden in `read_only` mode.
+
+If the Node-RED Admin API answers 401/403 (a non-standard setup), these
+tools return `nodered_auth_required`. Standalone installs (no Supervisor)
+are not supported.
+
+## NeonPlan 3D
+
+`neonplan_*` tools work with the HACS integration **NeonPlan 3D**
+(`neonplan3d`, built against 3.0.6) through Home Assistant's WebSocket API.
+No add-on option or permission is needed; writes need nexus's token to be
+an admin (as the NeonPlan editor does).
+
+- `neonplan_get_status`, `neonplan_list_plans`, `neonplan_get_plan`,
+  `neonplan_list_restore_points` — read-only.
+- `neonplan_validate_plan` — structure, duplicate ids, opening `room_id`/
+  `edge`/position, entity fields, and every `area_id` and entity id against
+  the live Home Assistant. `null` entity fields are bound automatically by
+  NeonPlan from the room's area, so they get a warning; use an entity id or
+  `"none"` for a predictable plan.
+- `neonplan_suggest_bindings` — the entities of a room's area grouped by
+  the plan field they fit; nothing is written.
+- `neonplan_patch_plan` (JSON Patch) and `neonplan_save_plan` (whole plan) —
+  validation errors block; replacing a plan that has floors (with
+  `save_plan`, or `patch_plan` on path `""`) needs `overwrite=true`; `expected_revision` is checked; a restore point is
+  taken and the revision checked again right before saving; the plan is
+  read back. NeonPlan itself has no conflict check, so close NeonPlan
+  editors with unsaved changes first (`neonplan_get_status` lists open
+  screens).
+- `neonplan_create_restore_point`, `neonplan_restore_restore_point` — at
+  most 20 restore points per plan.
+- `neonplan_upload_background_image` — png/jpeg/webp from `/config` or as
+  base64, up to 8 MiB as a data URL; NeonPlan deletes images no plan
+  references at its next start.
+- The five write tools are hidden in `read_only` mode. On an integration
+  version other than 3.0.x writes are refused unless `force=true`.
 
 ## Dashboard Screenshots
 
@@ -701,6 +820,7 @@ action:
 | `ESPHOME_DASHBOARD_URL` | Standalone only, for `esphome_*` compile/validate/upload | — | ESPHome Device Builder's trusted-peer ingress URL. The add-on discovers this automatically via the Supervisor and does not need it set; standalone installs must set it explicitly or those tools return `esphome_not_configured`. |
 | `NEXUS_READ_ONLY` | No | `false` | Standalone equivalent of the `read_only` add-on option — see [Add-on Options](#add-on-options) |
 | `NEXUS_DISABLED_NAMESPACES` | No | *(empty)* | Standalone equivalent of `disabled_namespaces`, comma-separated (e.g. `supervisor,git`) |
+| `NEXUS_NODERED_WRITE_ENABLED` | No | `false` | Standalone equivalent of `nodered_write_enabled` |
 | `NEXUS_TOOL_MODE` | No | `full` | Standalone equivalent of the `tool_mode` add-on option (`full`\|`search`) — see [Add-on Options](#add-on-options) |
 
 ---

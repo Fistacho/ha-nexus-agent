@@ -34,6 +34,8 @@ from tools.snapshot import mcp as snapshot_mcp
 from tools.esphome import mcp as esphome_mcp
 from tools.statistics import mcp as statistics_mcp
 from tools.adguard import mcp as adguard_mcp
+from tools.nodered import mcp as nodered_mcp
+from tools.neonplan import mcp as neonplan_mcp
 from tools import discover as discover_mod
 from tools.discover import mcp as discover_mcp
 
@@ -86,6 +88,8 @@ mcp.mount(snapshot_mcp, namespace="snapshot")
 mcp.mount(esphome_mcp, namespace="esphome")
 mcp.mount(statistics_mcp, namespace="statistics")
 mcp.mount(adguard_mcp, namespace="adguard")
+mcp.mount(nodered_mcp, namespace="nodered")
+mcp.mount(neonplan_mcp, namespace="neonplan")
 mcp.mount(discover_mcp, namespace="discover")
 
 # Bind the root catalogue to discover.* so tool_search can introspect every
@@ -487,11 +491,12 @@ def _apply_tool_policy_or_exit():
         raise SystemExit(1) from exc
 
     logging.getLogger(__name__).info(
-        "Tool policy applied: read_only=%s disabled_namespaces=%s tool_mode=%s -> "
-        "%d/%d tools visible, %d/%d prompts visible",
+        "Tool policy applied: read_only=%s disabled_namespaces=%s tool_mode=%s "
+        "nodered_write_enabled=%s -> %d/%d tools visible, %d/%d prompts visible",
         tool_policy.read_only,
         sorted(tool_policy.disabled_namespaces),
         tool_policy.tool_mode,
+        tool_policy.nodered_write_enabled,
         application.tools_total - application.tools_disabled,
         application.tools_total,
         application.prompts_total - application.prompts_disabled,

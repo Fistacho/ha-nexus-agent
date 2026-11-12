@@ -187,13 +187,14 @@ def delete_blueprint(
     keep running with their already-substituted config; use
     `automations_delete_automation` or `automations_delete_script` for
     those.
-    Returns: Home Assistant's `blueprint/delete` result (typically an empty
-    success payload).
+    Returns: `{"deleted": true, "domain", "path"}` (Home Assistant itself
+    answers with no payload).
     Limits: blocks for the WebSocket round trip; the default 10 second
     response wait in `ha._ws_call` applies. No `confirm` parameter guards
     this deletion.
     """
-    return ha._ws_call("blueprint/delete", domain=domain, path=path)
+    ha._ws_call("blueprint/delete", domain=domain, path=path)
+    return {"deleted": True, "domain": domain, "path": path}
 
 
 @mcp.tool(annotations=read("Render a blueprint with given inputs"))

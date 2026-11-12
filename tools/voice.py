@@ -268,10 +268,11 @@ def delete_pipeline(
     Use when: permanently removing a pipeline that is no longer needed.
     Not for: the preferred pipeline without switching preference first, and
     not for temporarily disabling a pipeline (HA has no such state).
-    Returns: HA's WS response for `assist_pipeline/pipeline/delete`
-    (typically empty on success).
+    Returns: `{"deleted": true, "pipeline_id"}` (Home Assistant itself
+    answers with no payload).
     """
-    return ha._ws_call("assist_pipeline/pipeline/delete", pipeline_id=pipeline_id)
+    ha._ws_call("assist_pipeline/pipeline/delete", pipeline_id=pipeline_id)
+    return {"deleted": True, "pipeline_id": pipeline_id}
 
 
 @mcp.tool(annotations=write("Set the preferred Assist pipeline", idempotent=True))
@@ -288,10 +289,11 @@ def set_preferred_pipeline(
     Use when: changing which pipeline Assist uses by default.
     Not for: reading the current preference — use `voice_list_pipelines`,
     whose response includes `preferred_pipeline`.
-    Returns: HA's WS response for `assist_pipeline/pipeline/set_preferred`
-    (typically empty on success).
+    Returns: `{"preferred_pipeline": pipeline_id}` (Home Assistant itself
+    answers with no payload).
     """
-    return ha._ws_call("assist_pipeline/pipeline/set_preferred", pipeline_id=pipeline_id)
+    ha._ws_call("assist_pipeline/pipeline/set_preferred", pipeline_id=pipeline_id)
+    return {"preferred_pipeline": pipeline_id}
 
 
 @mcp.tool(annotations=read("List speech-to-text engines"))

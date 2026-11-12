@@ -65,6 +65,17 @@ configuration:
       stay out of disabled_namespaces while this is "search" (the add-on
       refuses to start otherwise — it would leave tools/list empty).
       Requires an add-on restart to take effect.
+  nodered_write_enabled:
+    name: Allow Node-RED flow changes
+    description: >-
+      Off by default. When on, the nodered_* write tools (create, update,
+      delete, enable/disable and restore flows) become available. Turning
+      this on means full trust in whoever drives nexus: a flow runs any
+      code inside the Node-RED add-on, which holds a Supervisor token with
+      the manager role (it could, for example, change nexus's own options)
+      and can read the secrets stored in Node-RED's nodes. Reading flows
+      works either way. read_only still hides the write tools. Requires an
+      add-on restart to take effect.
 
 network:
   7123/tcp: >-

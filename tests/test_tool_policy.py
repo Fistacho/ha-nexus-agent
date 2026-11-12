@@ -93,19 +93,21 @@ def test_read_only_visible_set_equals_annotations_read_only_set(fresh_root):
     assert _list_tool_names(fresh_root) == expected
 
 
-def test_read_only_matches_adr_fact_156_of_330(fresh_root):
+def test_read_only_matches_adr_fact_169_of_354(fresh_root):
     """Live-registry fact from ADR-0003 (154 `read()` / 323 total), plus
     the `adguard` namespace in 0.26.0 (+2 `read()` / +3 total) and its
     filter-list tools in 0.27.0 (+0 `read()` / +3 total, all hidden in
-    read-only mode) and `areas_update_area` in 0.28.0 (+0 `read()` / +1
-    total). A regression here means an annotation drifted from its
+    read-only mode), `areas_update_area` in 0.28.0 (+0 `read()` / +1
+    total) and the `nodered` (+7 `read()` / +12 total) and `neonplan`
+    (+6 `read()` / +11 total) namespaces and `entities_remove_entity`
+    (+0 `read()` / +1 total) in 0.29.0. A regression here means an annotation drifted from its
     preset without ADR-0002's own contract tests catching it."""
     total = len(asyncio.run(fresh_root.list_tools()))
 
     policy.apply_policy(fresh_root, policy.ToolPolicy(read_only=True))
 
-    assert total == 330
-    assert len(_list_tool_names(fresh_root)) == 156
+    assert total == 354
+    assert len(_list_tool_names(fresh_root)) == 169
 
 
 @pytest.mark.parametrize(
@@ -157,12 +159,15 @@ def test_read_only_hides_every_prompt(fresh_root):
 
 
 def test_default_policy_is_read_only_false_full_catalogue(fresh_root):
+    """The default hides nothing but the five Node-RED write tools (ADR-0007,
+    opt-in via `nodered_write_enabled`; covered in test_nodered_write_policy.py)."""
     before = _list_tool_names(fresh_root)
 
     policy.apply_policy(fresh_root, policy.ToolPolicy())
 
-    assert _list_tool_names(fresh_root) == before
-    assert len(before) == 330
+    hidden = before - _list_tool_names(fresh_root)
+    assert len(before) == 354
+    assert len(hidden) == 5 and all(n.startswith("nodered_") for n in hidden)
 
 
 # --- P2: disabled_namespaces ---------------------------------------------
@@ -173,7 +178,8 @@ def test_disabled_namespace_removed_from_list_tools(fresh_root):
     assert any(n.startswith("card_builder_") for n in before)
 
     policy.apply_policy(
-        fresh_root, policy.ToolPolicy(disabled_namespaces=frozenset({"card_builder"}))
+        fresh_root,
+        policy.ToolPolicy(disabled_namespaces=frozenset({"card_builder"}), nodered_write_enabled=True),
     )
 
     after = _list_tool_names(fresh_root)

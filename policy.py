@@ -15,6 +15,11 @@ of whatever the first two already hid:
   hides and blocks every tool/prompt whose mount namespace (the prefix
   parsed from `server.py`'s `mcp.mount(..., namespace="...")` calls) is in
   the list.
+- **`nodered_write_enabled`** (`NEXUS_NODERED_WRITE_ENABLED`, default
+  false; ADR-0007): unless true, hides and blocks every `nodered_*` tool that
+  is not read-only. A deployed Node-RED flow runs arbitrary code in the
+  Node-RED add-on, which holds a Supervisor token with the `manager` role
+  and the flows' credential secret, so writing flows is opt-in.
 - **`tool_mode`** (`NEXUS_TOOL_MODE`, `full` default or `search`): `full`
   leaves `tools/list` as everything `read_only`/`disabled_namespaces` didn't
   already hide. `search` additionally replaces that list with
@@ -90,6 +95,9 @@ class ToolPolicy:
 
     read_only: bool = False
     disabled_namespaces: frozenset[str] = field(default_factory=frozenset)
+    # ADR-0007: Node-RED write tools stay hidden unless the add-on option says
+    # otherwise (fail-closed default, same as the add-on's own default).
+    nodered_write_enabled: bool = False
     # ADR-0003 P3 (tool-search mode), parsed from `NEXUS_TOOL_MODE` by
     # `from_env()`. "full" (default) leaves `tools/list` exactly as today
     # (T1/T2's 323-tool/29-namespace catalogue is unaffected — see
@@ -123,8 +131,16 @@ class ToolPolicy:
         disabled = _parse_namespaces(env.get("NEXUS_DISABLED_NAMESPACES", ""), known=known)
         tool_mode = _parse_tool_mode(env.get("NEXUS_TOOL_MODE", "full"))
         _check_search_mode_keeps_discover_enabled(tool_mode, disabled)
+        nodered_write = _parse_bool(
+            env.get("NEXUS_NODERED_WRITE_ENABLED", "false"), option="nodered_write_enabled"
+        )
 
-        return cls(read_only=read_only, disabled_namespaces=disabled, tool_mode=tool_mode)
+        return cls(
+            read_only=read_only,
+            disabled_namespaces=disabled,
+            tool_mode=tool_mode,
+            nodered_write_enabled=nodered_write,
+        )
 
 
 def _parse_bool(raw: str, *, option: str) -> bool:
@@ -229,6 +245,8 @@ class PolicyDeniedMiddleware(Middleware):
             reasons.append("read_only")
         if self._policy.disabled_namespaces:
             reasons.append("disabled_namespaces")
+        if not self._policy.nodered_write_enabled:
+            reasons.append("nodered_write_enabled=false for nodered_* writes")
         return " and ".join(reasons) or "policy"
 
     async def on_call_tool(self, context, call_next):
@@ -275,6 +293,11 @@ def apply_policy(server: FastMCP, policy: ToolPolicy) -> PolicyApplication:
         }
         disabled_prompts |= {
             p.name for p in prompts if _namespace_for(p.name) in policy.disabled_namespaces
+        }
+
+    if not policy.nodered_write_enabled:
+        disabled_tools |= {
+            t.name for t in tools if _namespace_for(t.name) == "nodered" and not _is_read_only_tool(t)
         }
 
     if disabled_tools:

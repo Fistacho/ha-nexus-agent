@@ -14,6 +14,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 import ha_client as ha
+import service_guard
 from tools._contract import destructive, read, write
 
 mcp = FastMCP("entities")
@@ -340,6 +341,64 @@ def disable_entity(
     Returns: the updated entity registry entry from Home Assistant.
     """
     return ha.update_entity_registry(entity_id, disabled_by="user")
+
+
+@mcp.tool(annotations=destructive("Remove entity from registry", idempotent=True))
+def remove_entity(
+    entity_id: Annotated[str, Field(description="Full entity ID to remove from the registry, e.g. 'sensor.old_plug_power'.")],
+    force: Annotated[
+        bool,
+        Field(description="True removes the entry even while an integration still provides the entity (it comes back)."),
+    ] = False,
+) -> dict:
+    """Remove an entity's entry from the entity registry, refusing one an integration still provides.
+
+    Reads the entry (`config/entity_registry/get`) and the entity's state.
+    An entity counts as still provided when it has a state that is not a
+    restored placeholder (`attributes.restored`, which HA sets for entities
+    no loaded integration provides). Such an entity is refused unless
+    `force`, because its integration re-creates the entry at the next
+    reload. Otherwise sends `config/entity_registry/remove`; its customised
+    name, area, labels and entity_id are lost.
+
+    Use when: cleaning up orphaned entities ("no longer provided").
+    Not for: hiding a working entity — use `entities_disable_entity`;
+    removing a device with its entities — use `devices_remove_device`.
+    Returns: `{"removed": true, "entity_id", "platform", "was_provided"}`.
+    Errors: `invalid_entity_id` (no I/O), `not_found`,
+    `entity_still_provided` (nothing removed), `state_check_failed`,
+    `ws_error` with Home Assistant's `code`/`message`.
+    """
+    if not service_guard.valid_entity_id(entity_id):
+        return {"error": "invalid_entity_id", "message": f"Not an entity id: {entity_id!r}."}
+    try:
+        entry = ha._ws_call("config/entity_registry/get", entity_id=entity_id) or {}
+    except ha.HAWebSocketError as e:
+        if e.code == "not_found":
+            return {"error": "not_found", "message": f"{entity_id} is not in the entity registry."}
+        return {"error": "ws_error", "code": e.code, "message": e.message}
+    try:
+        state = ha.get_state(entity_id)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code != 404:
+            return {"error": "state_check_failed", "message": f"HTTP {e.response.status_code} reading the state."}
+        state = None
+    provided = isinstance(state, dict) and (state.get("attributes") or {}).get("restored") is not True
+    if provided and not force:
+        return {
+            "error": "entity_still_provided",
+            "message": (
+                f"{entity_id} is still provided by its integration ({entry.get('platform')}), which would "
+                "re-create the entry. Disable it with entities_disable_entity, remove its device, or pass force=true."
+            ),
+            "platform": entry.get("platform"),
+            "state": state.get("state"),
+        }
+    try:
+        ha._ws_call("config/entity_registry/remove", entity_id=entity_id)
+    except ha.HAWebSocketError as e:
+        return {"error": "ws_error", "code": e.code, "message": e.message}
+    return {"removed": True, "entity_id": entity_id, "platform": entry.get("platform"), "was_provided": provided}
 
 
 @mcp.tool(annotations=write("Enable entity in registry", idempotent=True))

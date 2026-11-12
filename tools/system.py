@@ -18,6 +18,11 @@ mcp = FastMCP("system")
 TOOL_CONTRACT = {"version": 1, "long_ok": {}, "heuristic_exceptions": {}}
 
 
+def _service_result(service: str, changed_states: list) -> dict:
+    """HA's REST service call answers a JSON list of changed states; an object tool has to wrap it."""
+    return {"service": service, "changed_states": changed_states}
+
+
 @mcp.tool(annotations=read("Validate HA configuration"))
 def check_config() -> dict:
     """Validate the current Home Assistant configuration without applying anything.
@@ -66,8 +71,8 @@ def restart_ha(
     Not for: a no-downtime reload — use `system_reload_all`; stopping HA
     without restarting it — use `system_stop_ha`; restarting only Core under
     Supervisor — use `supervisor_restart_core`.
-    Returns: the `homeassistant.restart` service-call result when confirmed,
-    otherwise a confirmation prompt.
+    Returns: `{"service": "homeassistant.restart", "changed_states": [...]}`
+    when confirmed, otherwise a confirmation prompt.
     Errors: returns `{"error": "confirmation_required", "message": ...,
     "action": ...}` when `confirm` is false.
     Limits: interrupts Home Assistant for about 30 seconds; requires
@@ -79,7 +84,7 @@ def restart_ha(
             "message": "This will restart Home Assistant (~30s downtime). Call again with confirm=True to proceed.",
             "action": "restart_ha(confirm=True)",
         }
-    return ha.call_service("homeassistant", "restart")
+    return _service_result("homeassistant.restart", ha.call_service("homeassistant", "restart"))
 
 
 @mcp.tool(annotations=destructive("Stop Home Assistant", idempotent=True))
@@ -105,8 +110,8 @@ def stop_ha(
     maintenance.
     Not for: a temporary interruption that comes back on its own — use
     `system_restart_ha`.
-    Returns: the `homeassistant.stop` service-call result when confirmed,
-    otherwise a confirmation prompt.
+    Returns: `{"service": "homeassistant.stop", "changed_states": [...]}`
+    when confirmed, otherwise a confirmation prompt.
     Errors: returns `{"error": "confirmation_required", "message": ...,
     "action": ...}` when `confirm` is false.
     Limits: requires a manual restart to bring HA back online; requires
@@ -118,7 +123,7 @@ def stop_ha(
             "message": "This will STOP Home Assistant and require a manual restart. Call again with confirm=True to proceed.",
             "action": "stop_ha(confirm=True)",
         }
-    return ha.call_service("homeassistant", "stop")
+    return _service_result("homeassistant.stop", ha.call_service("homeassistant", "stop"))
 
 
 @mcp.tool(annotations=write("Reload core configuration", idempotent=True))
@@ -159,8 +164,9 @@ def create_backup() -> dict:
     Not for: a named, partial, and/or password-protected backup on a
     Supervisor install, or a backup that never deletes older ones — use
     `supervisor_create_backup`.
-    Returns: the called service's result, or an error dict when neither
-    service is registered.
+    Returns: `{"service": "backup.create"|"backup.create_automatic",
+    "changed_states": [...]}`, or an error dict when neither service is
+    registered.
     Errors: `{"error": "Neither backup.create nor backup.create_automatic is
     registered on this Home Assistant instance."}`.
     Limits: on Supervisor installs, applies the instance's configured
@@ -169,9 +175,9 @@ def create_backup() -> dict:
     domains = {d.get("domain"): (d.get("services") or {}) for d in ha.list_services()}
     backup_services = domains.get("backup", {})
     if "create" in backup_services:
-        return ha.call_service("backup", "create")
+        return _service_result("backup.create", ha.call_service("backup", "create"))
     if "create_automatic" in backup_services:
-        return ha.call_service("backup", "create_automatic")
+        return _service_result("backup.create_automatic", ha.call_service("backup", "create_automatic"))
     return {
         "error": (
             "Neither backup.create nor backup.create_automatic is registered on this Home "
