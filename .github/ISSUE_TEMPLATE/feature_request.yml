@@ -1,0 +1,42 @@
+name: Feature request
+description: A new tool, option or improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Not sure yet or want to discuss first? Start in [Discussions → Ideas](https://github.com/Fistacho/ha-nexus-agent/discussions/categories/ideas).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do?
+      description: The task you want your AI assistant to manage in Home Assistant, and what stops it today.
+      placeholder: "I want to ask the assistant to … but nexus has no tool for …"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: A tool name and parameters, an add-on option, or a change to an existing tool. Which Home Assistant API would it use, if you know?
+  - type: textarea
+    id: example-prompt
+    attributes:
+      label: Example prompt
+      description: What you would type to your assistant once this exists.
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Does it change anything in Home Assistant?
+      description: Helps decide read-only mode behaviour and confirmation gates.
+      options:
+        - No, it only reads
+        - Yes, it writes or changes something that can be undone
+        - Yes, it deletes, restarts or does something hard to undo
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and workarounds
+      description: What you do today instead, or other projects that already do this.
