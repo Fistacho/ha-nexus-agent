@@ -35,6 +35,20 @@
           "description": "Home Assistant long-lived access token (Profile -> Security -> Long-Lived Access Tokens)",
           "isRequired": true,
           "isSecret": true
+        },
+        {
+          "name": "NEXUS_READ_ONLY",
+          "description": "true = read-only mode: every tool not annotated read-only, including generic service calls, is hidden and refused by the server",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "boolean",
+          "default": "false"
+        },
+        {
+          "name": "NEXUS_DISABLED_NAMESPACES",
+          "description": "Comma-separated tool namespaces to hide and refuse, e.g. files,git,supervisor (an unknown name stops startup)",
+          "isRequired": false,
+          "isSecret": false
         }
       ]
     }
