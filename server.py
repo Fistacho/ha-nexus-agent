@@ -98,31 +98,23 @@ discover_mod.bind_root(mcp)
 
 
 # uvicorn's access logger logs the full request line, including the raw query
-# string — so `GET /mcp?token=<API_KEY>` would otherwise be written to the
-# add-on log in plaintext on every request. Both uvicorn HTTP protocol
+# string. 1.0.0 removed `?token=<API_KEY>` authentication, but a client
+# configured before the upgrade keeps sending it until its owner edits the
+# URL, and that request line would land in the add-on log in plaintext. The
+# filter below stays as defense in depth. Both uvicorn HTTP protocol
 # implementations (h11, httptools) log via
 # `access_logger.info('%s - "%s %s HTTP/%s" %d', client_addr, method,
 # full_path, http_version, status_code)` — `full_path` (args[2]) is where the
 # query string lives.
 _TOKEN_QS_RE = re.compile(r"([?&]token=)[^&\s]+", re.IGNORECASE)
 
-# Logged once per process, the first time a request authenticates via
-# `?token=` instead of the `Authorization: Bearer` header. Never logs the
-# token value itself — only that the (already deprecated, see README/
-# Security) query-string method was used.
-_query_token_deprecation_logged = False
-
-
-def _warn_query_token_deprecated_once() -> None:
-    global _query_token_deprecation_logged
-    if _query_token_deprecation_logged:
-        return
-    _query_token_deprecation_logged = True
-    logging.getLogger(__name__).warning(
-        "Authenticated via the '?token=' query string. This method is deprecated "
-        "and will be removed in nexus 1.0.0 — switch to an "
-        "'Authorization: Bearer <API_KEY>' header instead."
-    )
+_UNAUTHORIZED_BODY = b'{"error":"Unauthorized"}'
+# Sent instead when the request still carries a `?token=` query parameter, so
+# a client set up before 1.0.0 gets told what changed instead of a bare 401.
+_UNAUTHORIZED_QUERY_TOKEN_BODY = (
+    b'{"error":"Unauthorized","hint":"The ?token= query parameter was removed in '
+    b'nexus 1.0.0. Send the API key as an Authorization: Bearer <API_KEY> header."}'
+)
 
 
 class RedactTokenFilter(logging.Filter):
@@ -339,30 +331,23 @@ def _build_app(listen_plan=None):
 
         async def __call__(self, scope, receive, send):
             if scope["type"] == "http" and scope.get("path", "").startswith("/mcp"):
-                query = parse_qs(scope.get("query_string", b"").decode())
-                query_token = query.get("token", [None])[0]
-                token = query_token
-                if not token:
-                    # `Headers(scope=scope)` instead of the old
-                    # `dict(scope.get("headers", []))`: a plain dict built
-                    # from the raw header-tuple list silently keeps only the
-                    # *last* occurrence of a repeated header name. Same
-                    # semantics reproduced explicitly here via
-                    # `getlist(...)[-1]` — unlike Origin below, a repeated
-                    # `Authorization` header isn't given special "reject as
-                    # ambiguous" treatment; it isn't the header the DNS
-                    # rebinding protection this middleware sits next to
-                    # cares about, and changing *auth* behaviour was not
-                    # asked for here.
-                    headers = Headers(scope=scope)
-                    auth_values = headers.getlist("authorization")
-                    token = auth_values[-1].removeprefix("Bearer ").strip() if auth_values else ""
-                if token != API_KEY:
+                # Only the `Authorization: Bearer` header authenticates
+                # (`?token=` was removed in 1.0.0). `Headers(scope=scope)`
+                # instead of `dict(scope.get("headers", []))`: a plain dict
+                # built from the raw header-tuple list silently keeps only
+                # the *last* occurrence of a repeated header name. Same
+                # semantics reproduced explicitly here via `getlist(...)[-1]`
+                # — unlike Origin below, a repeated `Authorization` header
+                # isn't given special "reject as ambiguous" treatment.
+                headers = Headers(scope=scope)
+                auth_values = headers.getlist("authorization")
+                token = auth_values[-1].removeprefix("Bearer ").strip() if auth_values else ""
+                if not token or token != API_KEY:
+                    query = parse_qs(scope.get("query_string", b"").decode())
+                    body = _UNAUTHORIZED_QUERY_TOKEN_BODY if "token" in query else _UNAUTHORIZED_BODY
                     await send({"type": "http.response.start", "status": 401, "headers": [(b"content-type", b"application/json")]})
-                    await send({"type": "http.response.body", "body": b'{"error":"Unauthorized"}'})
+                    await send({"type": "http.response.body", "body": body})
                     return
-                if query_token:
-                    _warn_query_token_deprecated_once()
             await self.app(scope, receive, send)
 
     lan_port = listen_plan.lan_port if listen_plan is not None else int(os.getenv("NEXUS_PORT", "7123"))
@@ -560,7 +545,7 @@ def main():
         for line in _startup_log_lines_for_plan(listen_plan):
             print(line)
 
-        # Redact ?token=... from uvicorn's access log before any request is logged.
+        # Redact ?token=... (stale pre-1.0.0 client URLs) from uvicorn's access log.
         logging.getLogger("uvicorn.access").addFilter(RedactTokenFilter())
 
         app = _build_app(listen_plan)

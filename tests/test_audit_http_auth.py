@@ -76,6 +76,18 @@ def test_setup_page_via_ingress_shows_full_config(monkeypatch):
     assert auth.API_KEY in resp.text
 
 
+def test_setup_page_offers_no_query_token_url(monkeypatch):
+    """1.0.0 removed `?token=` auth, so no snippet on the page may use it.
+    Codex gets `--bearer-token-env-var` (codex-rs/cli/src/mcp_cmd.rs) and the
+    key is read from an environment variable, not typed into the URL."""
+    with _make_client(monkeypatch, addon_mode=True, client=(INGRESS_HOST, 51234)) as tc:
+        resp = tc.get("/", headers={"X-Ingress-Path": "/api/hassio_ingress/abc123"})
+
+    assert resp.status_code == 200
+    assert "?token=" not in resp.text
+    assert "--bearer-token-env-var NEXUS_API_KEY" in resp.text
+
+
 def test_setup_page_ingress_ip_without_header_is_not_trusted(monkeypatch):
     """Defense in depth: the source IP alone is not sufficient — some other
     process spoofing 172.30.32.2 without the ingress header must not pass."""
@@ -203,7 +215,7 @@ def test_regenerate_standalone_localhost_succeeds(monkeypatch, ha_config_dir):
     assert resp.json()["ok"] is True
 
 
-# --- C. `/mcp` accepts Bearer header (recommended) and query token (legacy) --
+# --- C. `/mcp` accepts only the Bearer header (`?token=` removed in 1.0.0) ---
 
 def test_mcp_without_any_token_is_unauthorized(monkeypatch):
     with _make_client(monkeypatch, addon_mode=True) as tc:
@@ -226,12 +238,46 @@ def test_mcp_with_bearer_header_is_not_rejected_for_auth(monkeypatch):
     assert resp.status_code != 401
 
 
-def test_mcp_with_query_token_is_not_rejected_for_auth_backward_compat(monkeypatch):
+def test_mcp_with_query_token_and_no_header_is_unauthorized(monkeypatch):
+    """1.0.0 removed `?token=` auth: the right key in the query string alone
+    must not authenticate."""
     with _make_client(monkeypatch, addon_mode=True) as tc:
         resp = tc.post(
             f"/mcp?token={auth.API_KEY}",
             json={"jsonrpc": "2.0", "method": "ping", "id": 1},
             headers={"Accept": "application/json, text/event-stream"},
+        )
+
+    assert resp.status_code == 401
+    assert auth.API_KEY not in resp.text
+    assert "Authorization: Bearer" in resp.json()["hint"]
+
+
+def test_mcp_query_token_does_not_override_a_wrong_bearer_header(monkeypatch):
+    with _make_client(monkeypatch, addon_mode=True) as tc:
+        resp = tc.post(
+            f"/mcp?token={auth.API_KEY}",
+            json={"jsonrpc": "2.0", "method": "ping", "id": 1},
+            headers={
+                "Authorization": "Bearer wrong-key",
+                "Accept": "application/json, text/event-stream",
+            },
+        )
+
+    assert resp.status_code == 401
+
+
+def test_mcp_bearer_header_still_works_with_a_stale_query_token(monkeypatch):
+    """A client upgraded to the header but still carrying an old `?token=`
+    in its URL keeps working: the query string is simply ignored."""
+    with _make_client(monkeypatch, addon_mode=True) as tc:
+        resp = tc.post(
+            "/mcp?token=stale-value",
+            json={"jsonrpc": "2.0", "method": "ping", "id": 1},
+            headers={
+                "Authorization": f"Bearer {auth.API_KEY}",
+                "Accept": "application/json, text/event-stream",
+            },
         )
 
     assert resp.status_code != 401
@@ -273,84 +319,39 @@ def test_redact_token_filter_leaves_other_records_untouched():
     assert record.getMessage() == '127.0.0.1:54321 - "GET /health HTTP/1.1" 200'
 
 
-# --- query-token deprecation warning: once, never with the token itself -----
+# --- stale `?token=` URLs: the redaction filter stays (defense in depth) ----
 #
-# `server._warn_query_token_deprecated_once()` is gated by a module-level
-# flag (`server._query_token_deprecation_logged`) that persists for the
-# whole process — including across every other test in this session that
-# happens to hit `/mcp?token=...` first. Both tests below reset it via
-# monkeypatch so they observe only their own two/one requests, and restore
-# it automatically when monkeypatch tears down (no leakage into other test
-# modules' request flows).
+# 1.0.0 no longer accepts `?token=`, but clients configured before the upgrade
+# keep sending it until their owner edits the URL. uvicorn would log those
+# request lines verbatim, so `RedactTokenFilter` still masks the key.
 
-def test_query_token_warning_logged_exactly_once_and_never_contains_token(monkeypatch, caplog):
-    """Two requests authenticating via the deprecated `?token=` query string
-    must produce *exactly one* WARNING (the "logged once per process" contract
-    documented on `_query_token_deprecation_logged`), and that warning — like
-    every other record emitted while handling these requests — must never
-    contain the raw API key.
-
-    Also exercises `RedactTokenFilter` against the exact `/mcp?token=<key>`
-    shape these two requests actually use (not a hardcoded placeholder
-    string), the way uvicorn's access logger would render it.
-
-    Regression this guards against: the "once" guard being dropped (every
-    query-token request re-logging the warning, spamming the add-on log),
-    or the warning message being changed to interpolate the token value
-    directly instead of only describing the *method* used.
-    """
-    monkeypatch.setattr(server, "_query_token_deprecation_logged", False)
-
+def test_rejected_query_token_request_is_redacted_in_access_log(monkeypatch, caplog):
     with _make_client(monkeypatch, addon_mode=True) as tc:
-        with caplog.at_level(logging.WARNING):
-            for i in (1, 2):
-                resp = tc.post(
-                    f"/mcp?token={auth.API_KEY}",
-                    json={"jsonrpc": "2.0", "method": "ping", "id": i},
-                    headers={"Accept": "application/json, text/event-stream"},
-                )
-                assert resp.status_code != 401
-
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warnings) == 1
-    assert auth.API_KEY not in warnings[0].getMessage()
+        with caplog.at_level(logging.DEBUG):
+            resp = tc.post(
+                f"/mcp?token={auth.API_KEY}",
+                json={"jsonrpc": "2.0", "method": "ping", "id": 1},
+                headers={"Accept": "application/json, text/event-stream"},
+            )
+    assert resp.status_code == 401
+    # `httpx` is the test client's own logger (it prints the URL it sent);
+    # everything the server side logged must be key-free.
     for record in caplog.records:
+        if record.name.startswith("httpx"):
+            continue
         assert auth.API_KEY not in record.getMessage()
 
-    # Same query-string shape, as uvicorn.access would log the request line.
     access_record = logging.LogRecord(
         name="uvicorn.access",
         level=logging.INFO,
         pathname=__file__,
         lineno=1,
         msg='%s - "%s %s HTTP/%s" %d',
-        args=("127.0.0.1:54321", "POST", f"/mcp?token={auth.API_KEY}", "1.1", 200),
+        args=("127.0.0.1:54321", "POST", f"/mcp?token={auth.API_KEY}", "1.1", 401),
         exc_info=None,
     )
     server.RedactTokenFilter().filter(access_record)
     assert auth.API_KEY not in access_record.getMessage()
-
-
-def test_query_token_warning_not_logged_for_bearer_header(monkeypatch, caplog):
-    """Authenticating via the recommended `Authorization: Bearer` header must
-    never trigger the query-token deprecation warning — it is specifically
-    about the `?token=` query string, not authentication in general.
-    """
-    monkeypatch.setattr(server, "_query_token_deprecation_logged", False)
-
-    with _make_client(monkeypatch, addon_mode=True) as tc:
-        with caplog.at_level(logging.WARNING):
-            resp = tc.post(
-                "/mcp",
-                json={"jsonrpc": "2.0", "method": "ping", "id": 1},
-                headers={
-                    "Authorization": f"Bearer {auth.API_KEY}",
-                    "Accept": "application/json, text/event-stream",
-                },
-            )
-            assert resp.status_code != 401
-
-    assert not any(r.levelno == logging.WARNING for r in caplog.records)
 
 
 # --- ADR-0004 S1: peer IP + X-Ingress-Path detection is logged at DEBUG so it

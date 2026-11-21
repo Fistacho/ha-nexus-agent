@@ -66,7 +66,7 @@ The MCP endpoint is a **Streamable HTTP** transport (not SSE) at:
 http://your-ha-ip:7123/mcp
 ```
 
-Authenticate with an `Authorization: Bearer YOUR_API_KEY` header wherever the client supports it — **prefer this over the `?token=` query string**, which is kept only for backward compatibility, ends up in plaintext in HTTP access logs and shell history, and will be removed entirely in nexus **1.0.0** (using it logs a one-time deprecation warning per add-on start, without ever logging the key itself).
+Authenticate with an `Authorization: Bearer YOUR_API_KEY` header. Since nexus **1.0.0** this is the only way: the old `?token=` query string no longer authenticates (a request that still uses it gets `401` with a hint).
 
 ### Claude Code CLI
 
@@ -143,17 +143,20 @@ gemini mcp add --transport http --header "Authorization: Bearer YOUR_API_KEY" ne
 
 ### OpenAI Codex CLI
 
+Codex reads the key from an environment variable and sends it as `Authorization: Bearer`:
+
 ```bash
-codex mcp add nexus --url "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY"
+export NEXUS_API_KEY="YOUR_API_KEY"   # keep this in your shell profile
+codex mcp add nexus --url "http://your-ha-ip:7123/mcp" --bearer-token-env-var NEXUS_API_KEY
 ```
 
-> Codex's `mcp add` has no `--header` flag for HTTP servers, so this falls back to the query-token URL (logged in plaintext). For header-based auth instead, edit `~/.codex/config.toml` directly, e.g.:
->
-> ```toml
-> [mcp_servers.nexus]
-> url = "http://your-ha-ip:7123/mcp"
-> bearer_token_env_var = "NEXUS_API_KEY"
-> ```
+That writes the same entry you could add to `~/.codex/config.toml` by hand:
+
+```toml
+[mcp_servers.nexus]
+url = "http://your-ha-ip:7123/mcp"
+bearer_token_env_var = "NEXUS_API_KEY"
+```
 
 ### Windsurf
 
@@ -410,7 +413,7 @@ Ask the server itself: `discover_list_namespaces`, `discover_tool_search("query"
 - **YAML validation** before writing any config file (`!include`, `!secret` aware)
 - **Setup web UI** — generates ready-to-use MCP config for every client
 - **HA Add-on native** — one-click install, no manual token setup
-- **API key auth** — `/mcp` requires the key via `Authorization: Bearer` (recommended) or the legacy `?token=` query string
+- **API key auth** — `/mcp` requires the key as an `Authorization: Bearer` header
 - **Ingress-gated Setup UI** — the API key and one-click client config are only shown to Home Assistant's ingress proxy or a valid Bearer token; see [Security](#security)
 
 ---
@@ -425,8 +428,8 @@ Ask the server itself: `discover_list_namespaces`, `discover_tool_search("query"
   Any other caller gets the page with the key, tool count and active policy omitted (or `403` for `/regenerate`).
 - **`GET /health` is intentionally unauthenticated and minimal** — it returns only `{"status": "ok"}`, nothing else, because the Supervisor watchdog that polls it only needs a 200 response. The tool count, `ha_url` and active `read_only`/`disabled_namespaces` policy used to leak here to anyone on the LAN; they now live only on the ingress-gated Setup UI page above.
   - The Supervisor **Watchdog** itself is **off by default** and must be turned on with the **Watchdog** toggle on the add-on's **Info** tab — listing `watchdog:` in the add-on's own manifest does not enable it by itself.
-- **`/mcp` accepts `Authorization: Bearer <API_KEY>`** (recommended) or `?token=<API_KEY>` in the query string (kept for backward compatibility only, **removed in nexus 1.0.0** — it ends up in HTTP access logs and shell/browser history; prefer the header wherever your client supports it, see [Connecting MCP Clients](#connecting-mcp-clients)). Using the query-string form logs one deprecation warning per add-on start (never the key itself).
-- **Access logs never contain the raw key** — the add-on redacts `?token=...` in uvicorn's access log before it's written.
+- **`/mcp` accepts only `Authorization: Bearer <API_KEY>`**. The `?token=<API_KEY>` query string was removed in nexus 1.0.0 because it ended up in HTTP access logs and shell/browser history; see [Connecting MCP Clients](#connecting-mcp-clients) for every client's header config.
+- **Access logs never contain the raw key** — a client still sending a pre-1.0.0 `?token=...` URL is rejected, and the add-on redacts that value in uvicorn's access log before it's written.
 - **Startup logs never print the raw key** — only the path of the file it's stored in (`/config/.nexus_api_key`).
 - **Tool-exposure policy** (`read_only`, `disabled_namespaces`) — see [Add-on Options](#add-on-options) — narrows what a client can see/call at the MCP protocol level itself: a hidden tool is refused at `tools/call`, not merely omitted from `tools/list`. `read_only` does not restrict what an already-visible read tool can read (e.g. `files_read_config_file`, `git_log`, `supervisor_get_addon_logs`); combine with `disabled_namespaces` to also narrow that.
 - Found a vulnerability? See [SECURITY.md](SECURITY.md) for how to report it privately.

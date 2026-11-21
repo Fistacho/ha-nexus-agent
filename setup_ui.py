@@ -127,25 +127,26 @@ function flash(btn) {
 """
 
 
-def _build_configs(mcp_url_bare: str, mcp_url_with_token: str, api_key: str, ha_url: str, cwd: str) -> dict:
-    """Per-client ready-to-paste config. Prefers the `Authorization: Bearer`
-    header over the `?token=` query string wherever the client supports it —
-    the query string ends up in server access logs and shell history.
+def _build_configs(mcp_url_bare: str, api_key: str, ha_url: str, cwd: str) -> dict:
+    """Per-client ready-to-paste config. Every snippet authenticates with the
+    `Authorization: Bearer` header: the `?token=` query string was removed in
+    1.0.0 (it ended up in server access logs and shell history).
 
-    Client header support confirmed against each project's own docs (2026-09):
+    Client header support confirmed against each project's own docs (2026-09,
+    Codex re-checked 2026-11-21):
     - Claude Code CLI: `claude mcp add --transport http ... --header "Authorization: Bearer ..."`
       (code.claude.com/docs/en/mcp)
     - Gemini CLI: `gemini mcp add --transport http --header "Authorization: Bearer ..."`
       (geminicli.com/docs/tools/mcp-server)
     - VS Code / Cursor / Windsurf: `headers` object in their JSON server config.
-    - OpenAI Codex CLI: `codex mcp add` has NO --header flag for HTTP servers;
-      headers require manually editing config.toml (`bearer_token_env_var` /
-      `http_headers`). The one-liner below therefore keeps the query-token
-      form for Codex, with an explicit warning in the page.
+    - OpenAI Codex CLI: `codex mcp add --url ... --bearer-token-env-var VAR`
+      stores `bearer_token_env_var` in `~/.codex/config.toml`; Codex then
+      sends `Authorization: Bearer $VAR` (github.com/openai/codex,
+      codex-rs/cli/src/mcp_cmd.rs; learn.chatgpt.com/docs/extend/mcp).
     """
     return {
         "claude-code":    f'claude mcp add nexus --transport http "{mcp_url_bare}" --header "Authorization: Bearer {api_key}" --scope user',
-        "codex":          f'codex mcp add nexus --url "{mcp_url_with_token}"',
+        "codex":          f'export NEXUS_API_KEY="{api_key}"\ncodex mcp add nexus --url "{mcp_url_bare}" --bearer-token-env-var NEXUS_API_KEY',
         "gemini":         f'gemini mcp add --transport http --header "Authorization: Bearer {api_key}" nexus "{mcp_url_bare}"',
         "claude-desktop": '{{\n  "mcpServers": {{\n    "nexus": {{\n      "command": "python",\n      "args": ["server.py"],\n      "cwd": "{cwd}",\n      "env": {{\n        "HA_URL": "{ha_url}",\n        "NEXUS_API_KEY": "{api_key}"\n      }}\n    }}\n  }}\n}}'.format(cwd=cwd, ha_url=ha_url, api_key=api_key),
         "vscode":         '{{\n  "servers": {{\n    "nexus": {{\n      "type": "http",\n      "url": "{mcp_url}",\n      "headers": {{\n        "Authorization": "Bearer {api_key}"\n      }}\n    }}\n  }}\n}}'.format(mcp_url=mcp_url_bare, api_key=api_key),
@@ -214,14 +215,14 @@ def _no_lan_mcp_section_html() -> str:
 """
 
 
-def _full_page_html(configs: dict | None, mcp_url_with_token: str | None, api_key: str, ha_url: str, tool_count: int, policy: ToolPolicy, lan_port: int | None) -> str:
+def _full_page_html(configs: dict | None, mcp_url: str | None, api_key: str, ha_url: str, tool_count: int, policy: ToolPolicy, lan_port: int | None) -> str:
     if lan_port is None:
         mcp_section = _no_lan_mcp_section_html()
     else:
         mcp_section = """
 <h2>MCP URL</h2>
-<div class="key" id="mcp-url">""" + mcp_url_with_token + """</div>
-<div class="deprecated">The <code>?token=</code> query string is supported for backward compatibility only and is logged in plaintext by the HTTP access log. Use the <code>Authorization: Bearer</code> header wherever the client below supports it.</div>
+<div class="key" id="mcp-url">""" + mcp_url + """</div>
+<div class="tip">Send the API key as an <code>Authorization: Bearer &lt;API key&gt;</code> header. The old <code>token</code> query parameter no longer works (removed in nexus 1.0.0).</div>
 
 <h2>&#9889; Claude Code CLI &mdash; one command</h2>
 <div class="tip">No config files needed. Just run this once in your terminal.</div>
@@ -235,7 +236,7 @@ def _full_page_html(configs: dict | None, mcp_url_with_token: str | None, api_ke
 <h2>OpenAI Codex CLI</h2>
 <p>Run once in terminal:</p>
 <div class="code-wrap"><pre id="codex">""" + configs["codex"] + """</pre><button class="copy-btn" onclick="copyBlock('codex')">copy</button></div>
-<div class="deprecated">Codex's <code>mcp add</code> has no <code>--header</code> flag for HTTP servers, so this uses the query-token URL — visible in shell history and access logs. For header-based auth instead, edit <code>~/.codex/config.toml</code> directly and add <code>bearer_token_env_var</code> under <code>[mcp_servers.nexus]</code>.</div>
+<div class="tip">Codex reads the key from the <code>NEXUS_API_KEY</code> environment variable each time it starts, so keep the <code>export</code> line in your shell profile. The command writes <code>bearer_token_env_var = "NEXUS_API_KEY"</code> under <code>[mcp_servers.nexus]</code> in <code>~/.codex/config.toml</code>.</div>
 </section>
 <section>
 <h2>Gemini CLI</h2>
@@ -308,11 +309,10 @@ async def setup_page(request: Request):
         return HTMLResponse(_full_page_html(None, None, API_KEY, ha_url, tool_count, _policy, lan_port=None))
 
     mcp_url_bare = f"http://{hostname}:{lan_port}/mcp"
-    mcp_url_with_token = f"{mcp_url_bare}?token={API_KEY}"
     cwd = os.getcwd().replace("\\", "/")
-    configs = _build_configs(mcp_url_bare, mcp_url_with_token, API_KEY, ha_url, cwd)
+    configs = _build_configs(mcp_url_bare, API_KEY, ha_url, cwd)
 
-    return HTMLResponse(_full_page_html(configs, mcp_url_with_token, API_KEY, ha_url, tool_count, _policy, lan_port=lan_port))
+    return HTMLResponse(_full_page_html(configs, mcp_url_bare, API_KEY, ha_url, tool_count, _policy, lan_port=lan_port))
 
 
 async def health():

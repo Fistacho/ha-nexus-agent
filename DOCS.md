@@ -229,10 +229,12 @@ take effect. Full descriptions:
 Open the add-on's **Web UI** (ingress) to get your real API key and a
 ready-to-paste config block per client (Claude Code, Claude Desktop, Gemini
 CLI, Codex CLI, VS Code, Cursor, Windsurf). The endpoint is Streamable HTTP at
-`http://<host>:7123/mcp`, authenticated with `Authorization: Bearer
-<API_KEY>` (preferred) or a legacy `?token=` query parameter (deprecated,
-removed in 1.0.0 — logged once at startup if used, never logs the key
-itself). Full per-client snippets:
+`http://<host>:7123/mcp`, authenticated with an `Authorization: Bearer
+<API_KEY>` header. The `?token=` query parameter was removed in 1.0.0; a
+request that still uses it gets `401` with a hint. Codex CLI:
+`codex mcp add nexus --url http://<host>:7123/mcp --bearer-token-env-var
+NEXUS_API_KEY` (the key is read from that environment variable). Full
+per-client snippets:
 [README § Connecting MCP Clients](https://github.com/Fistacho/ha-nexus-agent#connecting-mcp-clients).
 
 ## Security
