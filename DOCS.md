@@ -18,16 +18,16 @@ links to the relevant section instead of duplicating it.
   [Running without the add-on](#running-without-the-add-on-docker--ha-container).
 - **MCP Registry / MCP clients that resolve servers by name:** `server.json`
   in this repo declares the same `ghcr.io/fistacho/nexus-agent` OCI package for
-  the [Model Context Protocol Registry](https://modelcontextprotocol.io/registry)
-  (publication to the live registry starts at nexus 1.0.0 — see
-  `.github/workflows/mcp-registry.yml` and ADR-0005; the image itself is
-  pullable from every tagged release regardless).
+  the [Model Context Protocol Registry](https://modelcontextprotocol.io/registry),
+  where nexus is listed from 1.0.0 (`.github/workflows/mcp-registry.yml`
+  publishes it on every tagged release, ADR-0005).
 
 ## Running without the add-on (Docker / HA Container)
 
 For Home Assistant Container (or any HA you reach over the network) there is
 no Supervisor, so nexus runs from the same published image,
-`ghcr.io/fistacho/nexus-agent:<version>` (amd64 and aarch64), configured with
+`ghcr.io/fistacho/nexus-agent:<version>` (amd64 and aarch64; `<version>` is a
+release such as `1.0.0`, or `latest`), configured with
 environment variables instead of the add-on's Configuration tab. You need a
 Home Assistant **long-lived access token**: HA → your profile → **Security**
 → **Long-Lived Access Tokens** → **Create token**.
@@ -187,7 +187,7 @@ tab, then restart) or `NEXUS_READ_ONLY=true` in standalone mode.
   this, not the client. All MCP prompts are hidden too.
 - What stays: tools that only read — states, history, logbook, statistics,
   registries, automation/script/dashboard configs and traces, logs, config
-  validation, search and `discover_*` (169 of 354 tools in 0.29.0).
+  validation, search and `discover_*` (169 of 354 tools in 1.0.0).
 - What goes: everything that can change something — entity control and
   `set_*` tools, the generic `services_call_service`, `ws_call_service` and
   `services_fire_event`, creating, editing or deleting automations,

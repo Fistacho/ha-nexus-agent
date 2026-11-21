@@ -256,40 +256,54 @@ MCP Server needs no install at all and is the right choice if you only want voic
 
 ## Read-only mode
 
-**Safe to try:** start nexus in read-only mode, ask questions, and turn writes on once you trust it.
+The safest way to try nexus: the AI can read everything and change nothing. Set the add-on option `read_only: true` (then restart), or `NEXUS_READ_ONLY=true` when running standalone. Every tool that is not annotated read-only, including generic service calls, is hidden from `tools/list` and refused if called by name; the server enforces this, not the client. 169 of 354 tools stay. The startup log shows `Tool policy applied: read_only=True …`. It limits changes, not reading: combine it with `disabled_namespaces` (e.g. `files,git,supervisor`) to narrow what can be read. [More](DOCS.md#read-only-mode).
 
-- **Add-on:** Configuration tab → `read_only: true` → **Restart**.
-- **Running `python server.py` directly:** `NEXUS_READ_ONLY=true`.
-- **Docker image:** `-e READ_ONLY=true` (the image's entrypoint passes it on as `NEXUS_READ_ONLY`).
-
-What it does:
-
-- Every tool that is not read-only (ADR-0003) — and every MCP prompt — is hidden from `tools/list`
-  **and** refused at `tools/call`, so a client with a cached tool list cannot call it either.
-- It is one policy for the whole server, decided at startup; there is no per-client or per-session variant.
-- It does not limit what visible read tools can read (for example `files_read_config_file`, `git_log`,
-  add-on logs). Add `disabled_namespaces` (e.g. `["files", "git", "supervisor"]`) to narrow that too.
-- Writes that run arbitrary code stay off even with `read_only: false` until you opt in:
-  `nodered_write_enabled` for Node-RED flows (see [Node-RED](#node-red)) and
-  `addon_exec_options_enabled` for other add-ons' options that run code (see [Security](#security)).
-
-All options: [Add-on Options](#add-on-options) · threat model: [Security](#security).
+Even with `read_only: false`, the writes that run arbitrary code stay off until you opt in: `nodered_write_enabled` for Node-RED flows ([Node-RED](#node-red)) and `addon_exec_options_enabled` for other add-ons' options that run code ([Security](#security)). All options: [Add-on Options](#add-on-options).
 
 ---
 
 ## Run without the add-on (Docker)
 
-<!--
-  PLACEHOLDER — "Run without the add-on (Docker)".
-  Quick-start text for Home Assistant Container / Core users is supplied separately; paste it here.
-  Keep the "Standalone (outside HA)" and "Docker Image" headings below (or their anchors):
-  DOCS.md links to #standalone-outside-ha and CHANGELOG.md links to README.md#docker-image.
--->
+For Home Assistant Container or any HA reachable over the network. You need a long-lived access token (HA → Profile → Security → Long-Lived Access Tokens). Use an HA address reachable from inside the container (an IP is safest).
 
-No Supervisor? Run nexus next to Home Assistant with a long-lived access token — either from the
-signed Docker image or from source.
+**stdio** — your MCP client starts the container itself:
+
+```json
+{
+  "mcpServers": {
+    "nexus": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-e", "HA_URL", "-e", "HA_TOKEN", "-e", "NEXUS_READ_ONLY",
+               "ghcr.io/fistacho/nexus-agent:1.0.0"],
+      "env": { "HA_URL": "http://192.168.1.10:8123", "HA_TOKEN": "your_long_lived_token", "NEXUS_READ_ONLY": "true" }
+    }
+  }
+}
+```
+
+That is Claude Desktop's `claude_desktop_config.json`; VS Code's `.vscode/mcp.json` uses the same entry under `"servers"`. Claude Code:
+
+```bash
+claude mcp add nexus -e HA_URL=http://192.168.1.10:8123 -e HA_TOKEN=your_long_lived_token -e NEXUS_READ_ONLY=true \
+  -- docker run -i --rm -e HA_URL -e HA_TOKEN -e NEXUS_READ_ONLY ghcr.io/fistacho/nexus-agent:1.0.0
+```
+
+**HTTP** — one long-running server for several clients (`NEXUS_HTTP=1` is required; without it the container runs stdio and exits when started with `-d`):
+
+```bash
+docker run -d --name nexus --restart unless-stopped -p 7123:7123 \
+  -e NEXUS_HTTP=1 -e HA_URL=http://192.168.1.10:8123 -e HA_TOKEN=your_long_lived_token \
+  -e NEXUS_API_KEY=$(openssl rand -hex 32) \
+  ghcr.io/fistacho/nexus-agent:1.0.0
+```
+
+Connect to `http://<docker-host>:7123/mcp` with `Authorization: Bearer <NEXUS_API_KEY>`. Mount your HA config folder (`-v /path/to/config:/config`) to use the file/git tools. Tools that need the Supervisor (`supervisor_*`, add-on discovery) return an error in standalone mode. Details, env vars and `uvx`: [DOCS.md](DOCS.md#running-without-the-add-on-docker--ha-container).
+
+`1.0.0` is the release this README describes; any tag from the [releases page](https://github.com/Fistacho/ha-nexus-agent/releases), or `latest`, works the same way.
 
 ### Standalone (outside HA)
+
+Without Docker, from a clone of the repository:
 
 ```bash
 git clone https://github.com/Fistacho/ha-nexus-agent
@@ -297,38 +311,26 @@ cd ha-nexus-agent
 pip install -r requirements.txt
 cp .env.example .env
 # Edit .env: set HA_URL and HA_TOKEN
-python server.py
+python server.py               # stdio: point your MCP client's "command" at this
+NEXUS_HTTP=1 python server.py  # or HTTP on port 7123
 ```
 
-Open <http://localhost:7123> to get your API key and MCP client configs.
+In HTTP mode, open <http://localhost:7123> on the same machine to get your API key and MCP client configs (the Setup UI trusts only localhost outside the add-on).
 
 #### Getting a Home Assistant token
 
 1. In HA: **Profile → Security → Long-Lived Access Tokens**
 2. **Create Token** → name it `nexus`
-3. Paste as `HA_TOKEN` in `.env`
+3. Paste as `HA_TOKEN` in `.env` (or pass it with `-e HA_TOKEN`)
 
 ### Docker Image
 
-Starting with 0.25.0, nexus also ships as a pre-built, cosign-signed image on
-ghcr.io — no local clone/build needed for standalone/HA Container use:
-
-```bash
-docker run -d --name nexus \
-  -p 7123:7123 \
-  -e HA_URL=http://homeassistant.local:8123 \
-  -e HA_TOKEN=your_long_lived_token \
-  ghcr.io/fistacho/nexus-agent:<version>
-```
-
-`run.sh` detects the absence of `/data/options.json` (only present under the
-real Supervisor) and falls back to `HA_URL`/`HA_TOKEN` from the environment
-instead. Verify the signature before trusting a pulled image:
+The image is `ghcr.io/fistacho/nexus-agent`, signed with cosign since 0.25.0. `run.sh` detects the absence of `/data/options.json` (only present under the real Supervisor) and reads `HA_URL`/`HA_TOKEN` and the `NEXUS_*` variables from the environment instead. Verify the signature before trusting a pulled image:
 
 ```bash
 cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github\.com/Fistacho/ha-nexus-agent/' \
-  ghcr.io/fistacho/nexus-agent:<version>
+  ghcr.io/fistacho/nexus-agent:1.0.0
 ```
 
 The add-on itself (config.yaml's `image:`) points at this exact same
@@ -342,11 +344,11 @@ images has no supported path to add `armhf`/`armv7`/`i386` back). Everyone on
 those architectures keeps working on 0.24.x, which still builds locally via
 the Dockerfile, but cannot update past it.
 
-`server.json` in this repo also declares this same image as an
-[MCP Registry](https://modelcontextprotocol.io/registry) OCI package —
-registry publication itself starts at nexus 1.0.0 (see ADR-0005), but the
-image is pullable from every tagged release regardless. Full operational
-details (options, security posture, ESPHome): [DOCS.md](DOCS.md).
+`server.json` in this repo declares this same image as an
+[MCP Registry](https://modelcontextprotocol.io/registry) OCI package (stdio,
+`HA_URL`/`HA_TOKEN` required, `NEXUS_READ_ONLY`/`NEXUS_DISABLED_NAMESPACES`
+optional); nexus is listed in the registry from 1.0.0 (ADR-0005). Full
+operational details (options, security posture, ESPHome): [DOCS.md](DOCS.md).
 
 ---
 
@@ -725,14 +727,15 @@ action:
 | `HA_TOKEN` | Standalone only | — | Long-lived access token |
 | `SUPERVISOR_TOKEN` | Add-on only | auto-injected | Set automatically by HA |
 | `HA_CONFIG_PATH` | For git/file tools | `/config` | Path to HA config directory |
-| `NEXUS_API_KEY` | No | auto-generated | Pin to a specific API key |
-| `NEXUS_PORT` | No | `7123` | HTTP server port |
+| `NEXUS_HTTP` | No | unset (stdio) | Standalone: `1` serves Streamable HTTP on `NEXUS_PORT`; unset, the server speaks stdio (the add-on always runs HTTP) |
+| `NEXUS_API_KEY` | No | auto-generated | API key for HTTP mode (`Authorization: Bearer`); set it yourself when running in Docker |
+| `NEXUS_PORT` | No | `7123` | HTTP port inside the container (standalone `NEXUS_HTTP=1`; in the add-on the Network tab decides) |
 | `NEXUS_SCREENSHOT_ENGINE_URL` | No | auto-discovered | Explicit URL to Puppet engine (Docker/standalone) |
 | `ESPHOME_DASHBOARD_URL` | Standalone only, for `esphome_*` compile/validate/upload | — | ESPHome Device Builder's trusted-peer ingress URL. The add-on discovers this automatically via the Supervisor and does not need it set; standalone installs must set it explicitly or those tools return `esphome_not_configured`. |
 | `NEXUS_READ_ONLY` | No | `false` | Standalone equivalent of the `read_only` add-on option — see [Add-on Options](#add-on-options) |
 | `NEXUS_DISABLED_NAMESPACES` | No | *(empty)* | Standalone equivalent of `disabled_namespaces`, comma-separated (e.g. `supervisor,git`) |
 | `NEXUS_NODERED_WRITE_ENABLED` | No | `false` | Standalone equivalent of `nodered_write_enabled` |
-| `NEXUS_ADDON_EXEC_OPTIONS_ENABLED` | No | `false` | Standalone equivalent of `addon_exec_options_enabled` (matters only where `supervisor_*` works, i.e. with a Supervisor) |
+| `NEXUS_ADDON_EXEC_OPTIONS_ENABLED` | No | `false` | Standalone equivalent of `addon_exec_options_enabled`; without a Supervisor `supervisor_*` tools don't work, so it has no effect there |
 | `NEXUS_TOOL_MODE` | No | `full` | Standalone equivalent of the `tool_mode` add-on option (`full`\|`search`) — see [Add-on Options](#add-on-options) |
 
 ---
