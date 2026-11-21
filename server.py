@@ -156,7 +156,8 @@ def _startup_log_lines(port: int, http_mode: bool) -> list[str]:
         f"Nexus starting (HTTP) on port {port}",
         f"Setup UI  → http://localhost:{port}",
         f"MCP       → http://localhost:{port}/mcp",
-        f"API key stored in {_KEY_FILE}; open the Setup UI from this machine to see client config",
+        f"API key stored in {_KEY_FILE} (set NEXUS_API_KEY to choose it); the Setup UI shows it "
+        "and client config only to requests from localhost",
     ]
 
 
@@ -201,7 +202,8 @@ def _startup_log_lines_for_plan(plan, addon_mode: bool | None = None) -> list[st
         )
     else:
         lines.append(
-            f"API key stored in {_KEY_FILE}; open the Setup UI from this machine to see client config"
+            f"API key stored in {_KEY_FILE} (set NEXUS_API_KEY to choose it); the Setup UI shows it "
+            "and client config only to requests from localhost"
         )
     return lines
 

@@ -443,7 +443,10 @@ def test_startup_log_lines_for_plan_standalone_http_does_not_point_at_ingress():
 
     assert "ingress" not in text
     assert "http://localhost:7123" in text
-    assert "key" in text.lower()
+    # In Docker the Setup UI is reached through the port mapping, which is
+    # not localhost to nexus, so the banner must not promise it shows the key.
+    assert "only to requests from localhost" in text
+    assert "NEXUS_API_KEY" in text
 
 
 def test_startup_log_lines_for_plan_addon_mode_still_points_at_ingress():
