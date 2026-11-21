@@ -118,6 +118,23 @@ jobs:
           fi
           echo "nexus-smoke is healthy (HTTP 200 from /health)"
 
+      # ADR-0005 conditions (a) and (b) on the image itself, over stdio — the
+      # transport server.json declares for the MCP Registry (`docker run -i
+      # --rm`). (a): every stdout line must be a JSON-RPC message (0.29.0's
+      # run.sh echoed its banner to stdout ahead of the initialize response).
+      # (b): the same image honours policy from env vars (standalone) and from
+      # /data/options.json (add-on branch of run.sh). 169 = the reviewed
+      # read_only set in tests/contract/read_only_tools.json.
+      - name: Smoke test — stdio MCP (standalone env and add-on options.json)
+        run: |
+          set -eu
+          python3 scripts/smoke_stdio_image.py nexus-ci-smoke:smoke --expect-stderr "read_only=False"
+          python3 scripts/smoke_stdio_image.py nexus-ci-smoke:smoke --expect-tools 169 \
+            --expect-stderr "read_only=True" -- -e NEXUS_READ_ONLY=true
+          printf '{"port":7123,"log_level":"info","git_versioning_auto":true,"max_backups":30,"api_key":"","read_only":true,"disabled_namespaces":[],"tool_mode":"full","nodered_write_enabled":false}\n' > "$RUNNER_TEMP/options.json"
+          python3 scripts/smoke_stdio_image.py nexus-ci-smoke:smoke --expect-tools 169 \
+            --expect-stderr "read_only=True" -- -v "$RUNNER_TEMP/options.json:/data/options.json:ro"
+
       - name: Container logs (always, for debugging)
         if: always()
         run: docker logs nexus-smoke || true

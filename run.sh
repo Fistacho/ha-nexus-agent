@@ -26,10 +26,16 @@ else
     GIT_VERSIONING_AUTO=${GIT_VERSIONING_AUTO:-true}
     MAX_BACKUPS=${MAX_BACKUPS:-30}
     API_KEY=""
-    READ_ONLY=${READ_ONLY:-false}
-    DISABLED_NAMESPACES=${DISABLED_NAMESPACES:-}
-    TOOL_MODE=${TOOL_MODE:-full}
-    NODERED_WRITE_ENABLED=${NODERED_WRITE_ENABLED:-false}
+    # Policy options: the documented standalone names are the NEXUS_* ones
+    # (README "Environment variables", DOCS.md); the unprefixed names are
+    # kept as a fallback for anyone who used them before. Reading only the
+    # unprefixed names here used to re-export NEXUS_READ_ONLY=false over a
+    # caller's own `-e NEXUS_READ_ONLY=true` -- see
+    # tests/test_run_sh_standalone.py.
+    READ_ONLY=${NEXUS_READ_ONLY:-${READ_ONLY:-false}}
+    DISABLED_NAMESPACES=${NEXUS_DISABLED_NAMESPACES:-${DISABLED_NAMESPACES:-}}
+    TOOL_MODE=${NEXUS_TOOL_MODE:-${TOOL_MODE:-full}}
+    NODERED_WRITE_ENABLED=${NEXUS_NODERED_WRITE_ENABLED:-${NODERED_WRITE_ENABLED:-false}}
 
     # Standalone mode (no Supervisor, e.g. `docker run -e HA_URL -e HA_TOKEN`
     # against the ghcr.io image — ADR-0005 condition (b)): honor whatever the
@@ -57,6 +63,9 @@ if [ -n "${API_KEY}" ]; then
     export NEXUS_API_KEY="${API_KEY}"
 fi
 
-echo "Starting Nexus Agent on port ${PORT}..."
+# stderr, not stdout: without SUPERVISOR_TOKEN/NEXUS_HTTP the server speaks MCP
+# over stdio, and the MCP spec allows nothing but MCP messages on stdout
+# (ADR-0005 condition (a)).
+echo "Starting Nexus Agent on port ${PORT}..." >&2
 
 exec python3 server.py
