@@ -308,3 +308,25 @@ def test_standalone_invalid_read_only_value_is_passed_through_to_fail_startup(tm
     swallowed into a default by run.sh."""
     env = _run_with_fake_python3(tmp_path, {"NEXUS_READ_ONLY": "ture"})
     assert env.get("NEXUS_READ_ONLY") == "ture"
+
+
+# 1.0.0 removed the add-on `port` option. Standalone, run.sh used to export
+# NEXUS_PORT from its own PORT variable (default 7123), which overwrote a
+# caller's own `-e NEXUS_PORT=...` -- the same fail-open shape as the policy
+# variables above.
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+def test_standalone_honors_nexus_port(tmp_path):
+    env = _run_with_fake_python3(tmp_path, {"NEXUS_PORT": "8123"})
+    assert env.get("NEXUS_PORT") == "8123"
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+def test_standalone_nexus_port_defaults_to_7123(tmp_path):
+    env = _run_with_fake_python3(tmp_path, {})
+    assert env.get("NEXUS_PORT") == "7123"

@@ -38,9 +38,8 @@ boot: auto
 # way HA Core does. Docker no longer maps `ports:` below once this is true —
 # `addon_network.py` reconstructs the Network tab's LAN-port semantics at
 # startup from `GET /addons/self/info` instead (see its module docstring).
-# Do not change the `port` option below to work around this: `ingress_port`
-# stays pinned at 7123 regardless, and `port` is scheduled for removal in
-# 1.0.0 (see translations/en.yaml).
+# The old `port` option was removed in 1.0.0: the LAN port is set on the
+# Network tab, and `ingress_port` stays pinned at 7123.
 host_network: true
 hassio_api: true
 hassio_role: manager
@@ -48,10 +47,7 @@ homeassistant_api: true
 auth_api: true
 
 options:
-  port: 7123
   log_level: info
-  git_versioning_auto: true
-  max_backups: 30
   api_key: ""
   read_only: false
   disabled_namespaces: []
@@ -59,10 +55,7 @@ options:
   nodered_write_enabled: false
 
 schema:
-  port: int
   log_level: list(debug|info|warning|error)
-  git_versioning_auto: bool
-  max_backups: int
   api_key: str?
   read_only: bool
   disabled_namespaces:

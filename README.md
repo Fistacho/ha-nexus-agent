@@ -481,10 +481,7 @@ them return a response payload anyway.
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `port` | `7123` | TCP port for the MCP endpoint and Setup UI |
 | `log_level` | `info` | Add-on's own log verbosity (`debug`\|`info`\|`warning`\|`error`) |
-| `git_versioning_auto` | `true` | Auto-commit `/config` changes made through nexus's file/git tools |
-| `max_backups` | `30` | Supervisor backups nexus keeps before pruning the oldest |
 | `api_key` | *(auto-generated)* | Pin the MCP API key instead of letting nexus generate one |
 | `read_only` | `false` | Hide and refuse every tool that is not read-only (ADR-0003), and every MCP prompt. See [Security](#security) for what it does *not* restrict. Requires a restart. |
 | `disabled_namespaces` | `[]` | List of tool namespaces (e.g. `["supervisor", "git"]`) to hide and refuse entirely. An unknown namespace name refuses to start with a readable error in the add-on log. Requires a restart. |
@@ -503,9 +500,9 @@ Supervisor security rating drops by one point as a result, since a host-networke
 container can reach the host's own loopback interface, not just its own network
 namespace.
 
-Practically, this changes how the `port` option is enforced. Docker no longer publishes
-`ports:` from `config.yaml` — nexus reconstructs your choice itself at startup from the
-add-on's **Network** tab (Configuration tab, or Info tab → Network):
+Practically, Docker no longer publishes `ports:` from `config.yaml` — nexus reconstructs
+your choice itself at startup from the add-on's **Network** tab (Configuration tab, or
+Info tab → Network):
 
 - **Default (`7123`)** — nexus binds `0.0.0.0:7123`; MCP + Setup UI are reachable on the
   LAN at that port, same as before 0.23.0.
@@ -515,9 +512,8 @@ add-on's **Network** tab (Configuration tab, or Info tab → Network):
 - **Disabled/unmapped** — no LAN socket at all; only Home Assistant ingress can reach
   nexus. This is the only way to turn the LAN endpoint off entirely.
 
-Do not try to work around any of this by editing the `port` *option's* value below —
-it is scheduled for removal in 1.0.0 and only ever controls the LAN socket described
-above.
+The Network tab is the only place to choose the LAN port. The `port` *option* that
+existed before 1.0.0 did nothing since 0.23.0 and was removed.
 
 ## AdGuard Home
 

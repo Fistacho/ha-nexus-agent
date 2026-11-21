@@ -3,10 +3,7 @@
 OPTIONS="/data/options.json"
 
 if [ -f "$OPTIONS" ]; then
-    PORT=$(jq -r '.port // 7123' "$OPTIONS")
     LOG_LEVEL=$(jq -r '.log_level // "info"' "$OPTIONS")
-    GIT_VERSIONING_AUTO=$(jq -r '.git_versioning_auto // true' "$OPTIONS")
-    MAX_BACKUPS=$(jq -r '.max_backups // 30' "$OPTIONS")
     API_KEY=$(jq -r '.api_key // ""' "$OPTIONS")
     READ_ONLY=$(jq -r '.read_only // false' "$OPTIONS")
     DISABLED_NAMESPACES=$(jq -r '(.disabled_namespaces // []) | join(",")' "$OPTIONS")
@@ -20,11 +17,15 @@ if [ -f "$OPTIONS" ]; then
     # itself proof this is a real Supervisor-managed container.
     HA_URL="http://supervisor/core"
     HA_CONFIG_PATH="/config"
+    # The LAN port comes from the add-on's Network tab (addon_network.py,
+    # ADR-0004); this is only the fixed ingress_port from config.yaml. The
+    # `port` option that used to feed it was removed in 1.0.0.
+    NEXUS_PORT=7123
 else
-    PORT=${PORT:-7123}
     LOG_LEVEL=${LOG_LEVEL:-info}
-    GIT_VERSIONING_AUTO=${GIT_VERSIONING_AUTO:-true}
-    MAX_BACKUPS=${MAX_BACKUPS:-30}
+    # Documented standalone name first; PORT kept as a fallback for anyone
+    # who set it before 1.0.0.
+    NEXUS_PORT=${NEXUS_PORT:-${PORT:-7123}}
     API_KEY=""
     # Policy options: the documented standalone names are the NEXUS_* ones
     # (README "Environment variables", DOCS.md); the unprefixed names are
@@ -76,11 +77,11 @@ else
     HA_CONFIG_PATH=${HA_CONFIG_PATH:-/config}
 fi
 
-export PORT LOG_LEVEL GIT_VERSIONING_AUTO MAX_BACKUPS
+export LOG_LEVEL
 export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN}"
 export HA_URL
 export HA_CONFIG_PATH
-export NEXUS_PORT="${PORT}"
+export NEXUS_PORT
 export NEXUS_READ_ONLY="${READ_ONLY}"
 export NEXUS_DISABLED_NAMESPACES="${DISABLED_NAMESPACES}"
 export NEXUS_TOOL_MODE="${TOOL_MODE}"
@@ -93,6 +94,6 @@ fi
 # stderr, not stdout: without SUPERVISOR_TOKEN/NEXUS_HTTP the server speaks MCP
 # over stdio, and the MCP spec allows nothing but MCP messages on stdout
 # (ADR-0005 condition (a)).
-echo "Starting Nexus Agent on port ${PORT}..." >&2
+echo "Starting Nexus Agent..." >&2
 
 exec python3 server.py

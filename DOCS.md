@@ -207,9 +207,8 @@ tab, then restart) or `NEXUS_READ_ONLY=true` in standalone mode.
 
 ## Configuring options
 
-Every option below is set on the add-on's **Configuration** tab; changes to
-any of them (except `port`, which nexus picks up live) need a **restart** to
-take effect. Full descriptions:
+Every option below is set on the add-on's **Configuration** tab; changes
+need a **restart** to take effect. Full descriptions:
 [README § Add-on Options](https://github.com/Fistacho/ha-nexus-agent#add-on-options).
 
 | Option | Purpose |
@@ -219,9 +218,6 @@ take effect. Full descriptions:
 | `nodered_write_enabled` | Off by default. Allows the `nodered_*` tools that change flows. **Full trust:** a flow runs any code inside the Node-RED add-on, which holds a Supervisor token with the `manager` role and Node-RED's node secrets (ADR-0007). |
 | `tool_mode` | `full` (default) or `search` — `search` swaps `tools/list` for a handful of lookup + call-by-name-proxy tools, for context-constrained clients. Everything it hides still works if called by name and stays subject to `read_only`/`disabled_namespaces`. |
 | `api_key` | Pin the MCP API key instead of letting nexus auto-generate one. |
-| `git_versioning_auto` | Auto-commit `/config` changes made through nexus's file/git tools. |
-| `max_backups` | Supervisor backups nexus keeps before pruning the oldest. |
-| `port` | LAN-facing port for `/mcp` + the Setup UI (see **Network**, below). Scheduled for removal in 1.0.0. |
 | `log_level` | Add-on's own log verbosity — does not affect what an MCP client sees. |
 
 ## Connecting an MCP client (Bearer auth)

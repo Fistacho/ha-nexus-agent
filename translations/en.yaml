@@ -1,30 +1,9 @@
 configuration:
-  port:
-    name: Port
-    description: >-
-      LAN-facing TCP port for the MCP endpoint and Setup UI. Only change this
-      if 7123 conflicts with another add-on. Since 0.23.0 (ADR-0004,
-      host_network) the add-on no longer relies on Docker to publish this
-      port — nexus itself binds it at startup, worked out from this same
-      Network settings value. Clearing the port here (leaving it unmapped)
-      disables the LAN socket entirely and leaves only Home Assistant's
-      ingress reachable — there is no other way to turn the LAN endpoint off.
-      This option is scheduled for removal in 1.0.0; `ingress_port` (fixed at
-      7123) is unaffected either way.
   log_level:
     name: Log level
     description: >-
       Verbosity of the add-on's own log output. Does not affect what a
       connected MCP client sees.
-  git_versioning_auto:
-    name: Auto git versioning
-    description: >-
-      Automatically commit /config changes made through nexus's file/git
-      tools, so every edit has a rollback point.
-  max_backups:
-    name: Max backups
-    description: >-
-      Number of Supervisor backups nexus keeps before pruning the oldest.
   api_key:
     name: API key
     description: >-
