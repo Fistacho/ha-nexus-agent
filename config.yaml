@@ -1,7 +1,7 @@
 name: Nexus Agent
-version: "1.0.0"
+version: "1.0.1"
 slug: nexus_agent
-description: "MCP server for Home Assistant — 354 tools across 32 domains. 1.0.0: stable tool API, MCP Registry listing; breaking: Bearer header only (no ?token=), git_git_*/search_search_* renamed to git_*/search_*, options port/git_versioning_auto/max_backups removed, code-running add-on options opt-in"
+description: "MCP server for Home Assistant — 354 tools across 32 domains. 1.0.1: fixes the MCP Registry listing. 1.0.0: stable tool API, MCP Registry listing; breaking: Bearer header only (no ?token=), git_git_*/search_search_* renamed to git_*/search_*, options port/git_versioning_auto/max_backups removed, code-running add-on options opt-in"
 url: https://github.com/Fistacho/ha-nexus-agent
 # ADR-0005 (orchestrator decision, 2026-09-28): single multi-arch manifest,
 # per current HA guidance (developers.home-assistant.io/docs/apps/publishing)

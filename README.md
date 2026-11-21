@@ -21,7 +21,7 @@ Works with **Claude Code**, **Claude Desktop**, **VS Code (Copilot)**, **Cursor*
 
 <sub>Illustration of a typical session. Tool names, parameters and result shapes are nexus' real API; the entities and the dashboard are generic, not a real home.</sub>
 
-**Latest release: v1.0.0** — stable tool API, MCP Registry listing, Docker quick start; breaking changes listed in the notes. [Release notes](CHANGELOG.md#100) · [all releases](https://github.com/Fistacho/ha-nexus-agent/releases)
+**Latest release: v1.0.1** — fixes the MCP Registry listing of 1.0.0 (stable tool API, Docker quick start; breaking changes in the [1.0.0 notes](CHANGELOG.md#100)). [Release notes](CHANGELOG.md#101) · [all releases](https://github.com/Fistacho/ha-nexus-agent/releases)
 
 ---
 
@@ -274,7 +274,7 @@ For Home Assistant Container or any HA reachable over the network. You need a lo
     "nexus": {
       "command": "docker",
       "args": ["run", "-i", "--rm", "-e", "HA_URL", "-e", "HA_TOKEN", "-e", "NEXUS_READ_ONLY",
-               "ghcr.io/fistacho/nexus-agent:1.0.0"],
+               "ghcr.io/fistacho/nexus-agent:1.0.1"],
       "env": { "HA_URL": "http://192.168.1.10:8123", "HA_TOKEN": "your_long_lived_token", "NEXUS_READ_ONLY": "true" }
     }
   }
@@ -285,7 +285,7 @@ That is Claude Desktop's `claude_desktop_config.json`; VS Code's `.vscode/mcp.js
 
 ```bash
 claude mcp add nexus -e HA_URL=http://192.168.1.10:8123 -e HA_TOKEN=your_long_lived_token -e NEXUS_READ_ONLY=true \
-  -- docker run -i --rm -e HA_URL -e HA_TOKEN -e NEXUS_READ_ONLY ghcr.io/fistacho/nexus-agent:1.0.0
+  -- docker run -i --rm -e HA_URL -e HA_TOKEN -e NEXUS_READ_ONLY ghcr.io/fistacho/nexus-agent:1.0.1
 ```
 
 **HTTP** — one long-running server for several clients (`NEXUS_HTTP=1` is required; without it the container runs stdio and exits when started with `-d`):
@@ -294,12 +294,12 @@ claude mcp add nexus -e HA_URL=http://192.168.1.10:8123 -e HA_TOKEN=your_long_li
 docker run -d --name nexus --restart unless-stopped -p 7123:7123 \
   -e NEXUS_HTTP=1 -e HA_URL=http://192.168.1.10:8123 -e HA_TOKEN=your_long_lived_token \
   -e NEXUS_API_KEY=$(openssl rand -hex 32) \
-  ghcr.io/fistacho/nexus-agent:1.0.0
+  ghcr.io/fistacho/nexus-agent:1.0.1
 ```
 
 Connect to `http://<docker-host>:7123/mcp` with `Authorization: Bearer <NEXUS_API_KEY>`. Mount your HA config folder (`-v /path/to/config:/config`) to use the file/git tools. Tools that need the Supervisor (`supervisor_*`, add-on discovery) return an error in standalone mode. Details, env vars and `uvx`: [DOCS.md](DOCS.md#running-without-the-add-on-docker--ha-container).
 
-`1.0.0` is the release this README describes; any tag from the [releases page](https://github.com/Fistacho/ha-nexus-agent/releases), or `latest`, works the same way.
+`1.0.1` is the release this README describes; any tag from the [releases page](https://github.com/Fistacho/ha-nexus-agent/releases), or `latest`, works the same way.
 
 ### Standalone (outside HA)
 
@@ -330,7 +330,7 @@ The image is `ghcr.io/fistacho/nexus-agent`, signed with cosign since 0.25.0. `r
 ```bash
 cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github\.com/Fistacho/ha-nexus-agent/' \
-  ghcr.io/fistacho/nexus-agent:1.0.0
+  ghcr.io/fistacho/nexus-agent:1.0.1
 ```
 
 The add-on itself (config.yaml's `image:`) points at this exact same
@@ -347,7 +347,7 @@ the Dockerfile, but cannot update past it.
 `server.json` in this repo declares this same image as an
 [MCP Registry](https://modelcontextprotocol.io/registry) OCI package (stdio,
 `HA_URL`/`HA_TOKEN` required, `NEXUS_READ_ONLY`/`NEXUS_DISABLED_NAMESPACES`
-optional); nexus is listed in the registry from 1.0.0 (ADR-0005). Full
+optional); nexus is listed in the registry from 1.0.1 (ADR-0005). Full
 operational details (options, security posture, ESPHome): [DOCS.md](DOCS.md).
 
 ---

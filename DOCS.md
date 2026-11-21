@@ -19,7 +19,7 @@ links to the relevant section instead of duplicating it.
 - **MCP Registry / MCP clients that resolve servers by name:** `server.json`
   in this repo declares the same `ghcr.io/fistacho/nexus-agent` OCI package for
   the [Model Context Protocol Registry](https://modelcontextprotocol.io/registry),
-  where nexus is listed from 1.0.0 (`.github/workflows/mcp-registry.yml`
+  where nexus is listed from 1.0.1 (`.github/workflows/mcp-registry.yml`
   publishes it on every tagged release, ADR-0005).
 
 ## Running without the add-on (Docker / HA Container)
@@ -27,7 +27,7 @@ links to the relevant section instead of duplicating it.
 For Home Assistant Container (or any HA you reach over the network) there is
 no Supervisor, so nexus runs from the same published image,
 `ghcr.io/fistacho/nexus-agent:<version>` (amd64 and aarch64; `<version>` is a
-release such as `1.0.0`, or `latest`), configured with
+release such as `1.0.1`, or `latest`), configured with
 environment variables instead of the add-on's Configuration tab. You need a
 Home Assistant **long-lived access token**: HA → your profile → **Security**
 → **Long-Lived Access Tokens** → **Create token**.

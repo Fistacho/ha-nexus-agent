@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.1
+
+**Fixed**
+
+- MCP Registry listing: the registry refused the 1.0.0 publish (HTTP 400,
+  "OCI packages must not have 'registryBaseUrl' field"). `server.json` now
+  describes the image only by its canonical identifier
+  (`ghcr.io/fistacho/nexus-agent:1.0.1`), without the `registryBaseUrl` and
+  package-level `version` fields the registry rejects for OCI packages. A
+  test pins those rules so the listing can't break the same way again.
+
+Nothing else changed: the code in the 1.0.1 image is the same as in
+1.0.0; only `server.json`, the version number and the docs differ. All
+1.0.0 notes below apply, including its breaking changes.
+
 ## 1.0.0
 
 First stable release and first listing in the MCP Registry. From 1.0.0 on,
