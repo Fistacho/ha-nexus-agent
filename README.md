@@ -1,4 +1,11 @@
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/Fistacho/ha-nexus-agent/main/logo.png" alt="nexus logo" width="110">
+
 # Nexus Agent — MCP for Home Assistant
+
+**Let your AI assistant build, fix and run your Home Assistant — dashboards, automations, energy, ESPHome and more.**<br>
+354 tools across 32 domains · Home Assistant add-on or Docker · MIT
 
 [![Release](https://img.shields.io/github/v/release/Fistacho/ha-nexus-agent?style=flat-square&label=latest)](https://github.com/Fistacho/ha-nexus-agent/releases/latest)
 [![HA Add-on](https://img.shields.io/badge/Add--on-available-41BDF5?style=flat-square&logo=home-assistant)](https://github.com/Fistacho/ha-nexus-agent#installation--home-assistant-add-on-recommended)
@@ -6,232 +13,15 @@
 [![License](https://img.shields.io/github/license/Fistacho/ha-nexus-agent?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Fistacho/ha-nexus-agent?style=flat-square)](https://github.com/Fistacho/ha-nexus-agent/stargazers)
 
-**Give AI assistants full control over your smart home.** **354 tools across 32 domains** — entities, automations & scripts (CRUD + traces + linter + live reference validator), **scene CRUD**, dashboards + screenshot + resource management, energy, **long-term statistics** (sum/mean/min/max by day/week/month), voice pipelines, blueprints, calendar, HACS, Supervisor, **ESPHome** (list devices, compile, OTA, logs, **LVGL display UI management**), themes, **AdGuard Home** (DNS settings, filter lists, filter check), **Node-RED** (flows, entity usage, flow edits with backup), **NeonPlan 3D** (house plan validation and edits), **self-documenting Card Builder** (visual cards, recipe builder, embedded block schema, upstream sync), **aggregated snapshot** (one-call context), **BM25 tool search**, HA-aware YAML validation, git versioning, and more.
+Works with **Claude Code**, **Claude Desktop**, **VS Code (Copilot)**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI** — any MCP client.
 
-Works with **Claude Code**, **Claude Desktop**, **VS Code**, **Cursor**, **Windsurf**, **OpenAI Codex CLI**, **Gemini CLI**.
+</div>
 
----
+![Demo: a prompt asking for a living room card, five nexus tool calls, and the resulting Home Assistant dashboard section](https://raw.githubusercontent.com/Fistacho/ha-nexus-agent/main/docs/assets/demo.gif)
 
-## What can you ask?
+<sub>Illustration of a typical session. Tool names, parameters and result shapes are nexus' real API; the entities and the dashboard are generic, not a real home.</sub>
 
-Once connected, just talk to your AI assistant:
-
-- *"Turn off all lights in the house"*
-- *"Create an automation: alert me when the front door opens after 10 PM"*
-- *"Why is my bedroom sensor showing unavailable?"*
-- *"Take a screenshot of my main dashboard"*
-- *"Show all pending Home Assistant updates"*
-- *"Install Mushroom Cards from HACS"*
-- *"Commit my config changes to git with a summary of what changed"*
-- *"Build me a Lovelace card for the living room with temperature and humidity"*
-
----
-
-## What's New in v0.29.0
-
-- **Node-RED tools (`nodered_*`)** — list and read the flows of the Node-RED
-  add-on, search nodes, and find which flows use a Home Assistant entity
-  (`nodered_find_entity_usage`). With the new add-on option
-  `nodered_write_enabled` (off by default) also create, replace, delete,
-  enable or disable a flow; every change first saves all flows to a backup
-  that `nodered_restore_backup` can bring back, and a deploy someone else
-  made in the meantime is detected instead of overwritten. Turning writes
-  on means full trust — see [Node-RED](#node-red).
-- **NeonPlan 3D tools (`neonplan_*`)** — read, check and edit the 3D house
-  plan of the NeonPlan 3D integration: validate references and HA
-  entities/areas, propose entity bindings per room, change the plan with
-  JSON Patch, with a restore point and a conflict check before every save.
-  See [NeonPlan 3D](#neonplan-3d).
-- **`entities_remove_entity`** — removes an orphaned entity from the entity
-  registry; one an integration still provides is refused unless `force`.
-- **Fixed** — `areas_delete_area` and 7 other tools no longer fail after
-  Home Assistant did the work (a non-object answer passed through);
-  `devices_remove_device` sends the command HA 2026.x has;
-  `history_get_state_history` / `history_get_logbook` return the whole
-  window for `hours` > 24, not only the first day.
-- Full details in [CHANGELOG.md](CHANGELOG.md#0290).
-
-## What's New in v0.28.1
-
-- **Marketplace (HA 2026.11+)** — Home Assistant 2026.11 builds HACS into
-  core as the Marketplace and drops the `hacs/*` WebSocket commands, so the
-  `hacs_*` tools answered `unknown_command`. They now use the Marketplace
-  and still fall back to HACS on older versions. Tool names and parameters
-  are unchanged. Installs, updates and new custom repositories need the
-  Marketplace's first-run warning accepted once in Settings → Marketplace,
-  by the user whose token nexus uses; nexus tells you so and never accepts
-  it for you.
-- **Add-on limitation** — as an add-on, nexus reaches HA as the Supervisor
-  system user, and the Marketplace stores the warning acceptance per user.
-  That user cannot accept it in the UI, so installs, updates and new custom
-  repositories through nexus are refused even after you accepted the
-  warning. Do them in Settings → Marketplace (updates also under Settings →
-  Updates), or update an installed repository with an automation that runs
-  `update.install` on its `update.*` entity. Nexus prepares or runs such an
-  automation only when the owner explicitly asks for it, never on its own
-  after a `warning_not_accepted` answer. Listing and reading
-  repositories work. Standalone nexus with your own token is not affected.
-- Full details in [CHANGELOG.md](CHANGELOG.md#0281).
-
-## What's New in v0.28.0
-
-- **Rename areas** — `areas_update_area` renames an area (room) or changes
-  its icon, floor or voice aliases. Only the fields you pass are changed,
-  and the area_id stays the same, so devices and entities stay in the room.
-- Full details in [CHANGELOG.md](CHANGELOG.md#0280).
-
-## What's New in v0.27.0
-
-- **AdGuard filter lists** — `adguard_add_filter`, `adguard_remove_filter`
-  and `adguard_set_filter_enabled` manage blocklists and allowlists directly.
-  Adding waits up to 180 s while AdGuard downloads the list, so large lists
-  that HA's `adguard.add_url` service drops after 10 s now get added. See
-  [AdGuard Home](#adguard-home).
-- Full details in [CHANGELOG.md](CHANGELOG.md#0270).
-
-## What's New in v0.26.0
-
-- **AdGuard Home tools (`adguard_*`)** — read the AdGuard Home add-on's
-  configuration, change its DNS settings (upstreams, fallback/bootstrap/PTR
-  resolvers, rate limit, cache, DNSSEC, blocking mode) and check why a
-  domain is blocked. New upstreams are tested by AdGuard itself before
-  anything is written. See [AdGuard Home](#adguard-home).
-- Full details in [CHANGELOG.md](CHANGELOG.md#0260).
-
-## What's New in v0.25.0
-
-- **Pre-built, signed Docker image on ghcr.io** — the add-on now pulls
-  `ghcr.io/fistacho/nexus-agent` instead of building locally, and the same
-  image works standalone/HA Container. See [Docker Image](#docker-image).
-- **`confirm` gate on `services_call_service`** — the generic
-  domain/service dispatcher now requires `confirm=True` for eight guarded
-  HA/Supervisor services (`homeassistant.restart`/`stop`,
-  `hassio.host_reboot`/`host_shutdown`/`restore_full`/`restore_partial`,
-  `update.install`, `group.remove`), closing the gap where those effects
-  were reachable without confirmation even though the equivalent dedicated
-  tool already required it. `ws_call_service` now refuses them outright.
-  See [Confirmation Gates](#confirmation-gates).
-- **`Origin` header validation** — the HTTP transport now rejects a
-  disallowed, `null` or repeated `Origin` header with `403`, per the MCP
-  spec's DNS-rebinding protection. HA ingress and `GET /health` are exempt.
-- **Path/service-name hardening** — `entity_id`, automation/script IDs,
-  event types and Supervisor slugs are now validated before being spliced
-  into a request URL; `domain`/`service` names are restricted to
-  `[A-Za-z0-9_]+`; `areas_control_area` and `services_send_notification`
-  no longer accept an arbitrary action/target.
-- **Breaking:** `armhf`/`armv7`/`i386` are no longer published as pre-built
-  images — those architectures stay on 0.24.x (still builds locally via
-  the Dockerfile).
-- Full details in [CHANGELOG.md](CHANGELOG.md#0250).
-
-## What's New in v0.24.0
-
-- **Optional `tool_mode=search` add-on option** — replaces `tools/list` with a
-  handful of lookup + call-by-name-proxy tools for context-constrained
-  clients; everything hidden this way still works if called directly by
-  name. See [Add-on Options](#add-on-options).
-- **`supervisor_get_addon` no longer leaks secrets** — schema-declared
-  password fields, secret-looking option keys (including plural forms like
-  `credentials`/`api_keys`), and URLs with inline credentials are now
-  redacted; `supervisor_set_addon_options` still lets you edit other fields
-  without re-typing the secret.
-- **Self-protection of the add-on** — nexus now refuses to stop, uninstall or
-  change its own add-on's options, whether asked directly or via
-  `hassio.addon_stop`/`app_stop`/`addon_stdin`/`app_stdin`.
-- **Bounded WebSocket timeouts** — a stuck HA WebSocket handshake or a slow
-  closing handshake can no longer make a call hang well past its documented
-  timeout.
-- Full details in [CHANGELOG.md](CHANGELOG.md#0240).
-
-## What's New in v0.23.0
-
-- **ESPHome compile/validate/OTA upload work in the add-on** — routed through the
-  ESPHome Device Builder add-on's own trusted-peer ingress site, the same path Home
-  Assistant Core itself uses to reach it. Standalone installs need
-  `ESPHOME_DASHBOARD_URL` set explicitly; the add-on discovers it automatically via
-  the Supervisor.
-- **The add-on now uses `host_network: true`** so it can reach that trusted-peer site
-  at all — see [Network (add-on)](#network-add-on) below for what this means for your
-  Network tab settings, and note the add-on's security rating drops by one point as a
-  result.
-- **Stable `esphome_*` error codes** (`esphome_not_configured`, `esphome_unreachable`,
-  `esphome_auth_required`, `esphome_protocol_error`, `esphome_command_failed`,
-  `esphome_unsupported_option`, `timeout`) with a `diagnosis` block on
-  connectivity/auth failures instead of ad-hoc messages.
-- **`esphome_upload_device` requires `confirm=True`** — OTA-flashing a device is not
-  undoable the way a config edit is; the first call without it does no I/O.
-- **SSRF guard on `card_builder_upload_image_from_url`** — resolves the hostname once,
-  rejects loopback/link-local/reserved destinations, and pins every redirect hop to the
-  already-resolved IP, closing the DNS-rebinding window. More relevant than before:
-  under `host_network`, a loopback request from this add-on now looks like it came from
-  Home Assistant Core to some ingress-fronted add-ons.
-- Full details in [CHANGELOG.md](CHANGELOG.md#0230).
-
-## What's New in v0.22.1
-
-Includes everything from 0.22.0 below — 0.22.0 could not be built by the real Home
-Assistant Supervisor (a `build.yaml` regression) and should not be used; install
-0.22.1 directly. **Fixed:** the add-on image failed to build under the Supervisor
-(`update.install` error) — reverted to a literal `FROM python:3.12-alpine` in the
-Dockerfile (no `ARG BUILD_FROM`) and removed `build.yaml`, matching every release
-through 0.21.0. Full details in [CHANGELOG.md](CHANGELOG.md#0221).
-
-## What's New in v0.22.0
-
-- **`read_only` and `disabled_namespaces` add-on options** — a serverside policy that hides
-  *and refuses* non-read-only tools (or whole namespaces) at the MCP protocol level, not
-  just from `tools/list`. See [Add-on Options](#add-on-options) / [Security](#security).
-- **`confirm` gate on `supervisor_delete_backup` and `files_delete_config_file`** — the
-  first call without `confirm=True` now does no I/O and returns a confirmation prompt
-  instead of deleting immediately.
-- **Safer section-by-section dashboard edits** — `expected_config_hash`/`config_hash` on
-  the dashboard section tools detect a stale read before a write can land on the wrong
-  card.
-- **`GET /health` trimmed to `{"status": "ok"}`** — it no longer leaks `ha_url`, the tool
-  count or the active policy to unauthenticated LAN callers.
-- **ESPHome fixes** — `esphome_clean_mqtt` now works through HA's own `mqtt` integration;
-  device online/offline status no longer depends on a `binary_sensor.*_api_connection_status`
-  entity that isn't guaranteed to exist; an unreachable dashboard now comes with a
-  Supervisor-based diagnosis instead of a bare connection error.
-- Full details in [CHANGELOG.md](CHANGELOG.md#0220).
-
-## What's New in v0.20.0
-
-- **Section-aware Lovelace editing** — `dashboards_get_view_sections`, `dashboards_add_card_to_section`,
-  `dashboards_update_card_in_section`, `dashboards_remove_card_from_section`, `dashboards_add_section_to_view`.
-  A view with `type: sections` renders **only** `view.sections`; cards written to `view.cards` show up
-  exclusively in edit mode as "imported cards" (`hui-sections-view.ts`), so `dashboards_add_card_to_view`
-  could never place a card on a modern dashboard. These tools do the read-modify-write server-side, so a
-  16-view / 140 kB config never has to round-trip through `dashboards_save_dashboard_config`.
-  `url_path` accepts a view path (`'lukasz2'`), and non-`sections` views are rejected with a clear message.
-- **Tool count corrected** — the manifest claimed 325 while 317 were registered; the real number is now
-  measured from the registry (322 with the five new tools).
-- **Audit fixes** — a follow-up review checked every registered tool against the live Home Assistant API
-  and fixed ~20 of them that called nonexistent endpoints or held stale logic: WebSocket
-  `render_template`/`listen_state_changes`, backup service selection, `integrations_*` config/options
-  flow via REST, entity exposure, light `color_temp_kelvin`, zones, energy preferences, calendar event
-  deletion, ESPHome add-on slug discovery + compile/upload/validate, energy statistics units. Full list
-  in [CHANGELOG.md](CHANGELOG.md).
-- **Security hardening** — path containment for `files_*`/`esphome_*`/`git_rollback_file`, SVG upload
-  sanitization and stricter media upload limits in `card_builder_*`.
-- **New `blueprints_save_blueprint`** — persists blueprint YAML fetched by `import_blueprint`, which only
-  ever downloaded and validated. Tool count corrected to **323**.
-
-## What's New in v0.16.0
-
-- **`system_get_updates`** — list pending HA updates (core, add-ons, HACS, custom components) with version info and release URLs
-- **`system_get_system_health`** — health check of all HA subsystems (recorder, network, cloud, etc.)
-- **`system_get_repairs`** — list active repair issues that require attention
-- **Entity groups CRUD** — `automations_list_groups`, `automations_set_group`, `automations_remove_group` — create/update/delete `group.*` entities via `group.set`
-- **Live automation reference validator** — `automations_validate_automation_references` cross-checks every `entity_id` and `service` in your YAML against the live HA registry; template values skipped automatically
-- **Lovelace resource management** — `dashboards_add_dashboard_resource`, `dashboards_remove_dashboard_resource`, `dashboards_update_dashboard_resource` — manage custom JS/CSS resources without touching YAML
-
-## What's New in v0.15.0
-
-- **Pagination + field selection** — `list_entities` and `get_snapshot` now accept `limit`, `offset`, and `fields`/`state_fields`
-- **Confirmation gates** on all destructive operations — `restart_ha`, `stop_ha`, `git_rollback_*`, `delete_automation`, `delete_script`, `remove_integration` all require `confirm=True`
-- **Automation best-practice linter** — `automations_validate_best_practices` statically checks YAML for 7 common mistakes
-- **Dashboard screenshot** via Puppet engine — `dashboards_screenshot` renders any Lovelace view to PNG
+**Latest release: v0.29.0** — Node-RED and NeonPlan 3D tools, `entities_remove_entity`, fixes. [Release notes](CHANGELOG.md#0290) · [all releases](https://github.com/Fistacho/ha-nexus-agent/releases)
 
 ---
 
@@ -239,13 +29,16 @@ through 0.21.0. Full details in [CHANGELOG.md](CHANGELOG.md#0221).
 
 [![Open your Home Assistant instance and add the repository.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FFistacho%2Fha-nexus-agent)
 
-1. Click the **Open Add-on Repository on MY** button above
-2. Find **Nexus Agent** in the Add-on Store → **Install** → **Start**
-3. Open **Web UI** — copy your MCP URL and paste it into your AI client
+1. Click the button above to add the repository to Home Assistant.
+2. Find **Nexus Agent** in the Add-on Store → **Install** → **Start**.
+3. Click **Open Web UI**, copy the ready-made config for your AI client and paste it in ([details](#connecting-mcp-clients)).
 
----
+Then ask: *"Give me a summary of my home — what's on, what's unavailable, what needs updating."*
 
-## Manual Installation (Add-on Store)
+- Want to look before it can change anything? Turn on **[read-only mode](#read-only-mode)** first.
+- Home Assistant Container or Core (no add-ons)? See **[Run without the add-on (Docker)](#run-without-the-add-on-docker)**.
+
+### Manual Installation (Add-on Store)
 
 If the MY button does not work for your setup:
 
@@ -263,7 +56,236 @@ The web UI shows your API key and generates ready-to-paste config for every MCP 
 
 ---
 
-## Standalone (outside HA)
+## Connecting MCP Clients
+
+Open Nexus with the **Open Web UI** button on the add-on's page (Settings → Add-ons → Nexus Agent) after starting it — that page shows your real API key and the exact, ready-to-paste config for every client below. This works over HA's ingress proxy whether or not you've also enabled **Show in sidebar** on that same add-on page — the sidebar entry is just a shortcut to the same URL. Outside of ingress (or without a valid `Authorization: Bearer` header), the same page hides the key.
+
+The MCP endpoint is a **Streamable HTTP** transport (not SSE) at:
+
+```text
+http://your-ha-ip:7123/mcp
+```
+
+Authenticate with an `Authorization: Bearer YOUR_API_KEY` header wherever the client supports it — **prefer this over the `?token=` query string**, which is kept only for backward compatibility, ends up in plaintext in HTTP access logs and shell history, and will be removed entirely in nexus **1.0.0** (using it logs a one-time deprecation warning per add-on start, without ever logging the key itself).
+
+### Claude Code CLI
+
+```bash
+claude mcp add nexus --transport http "http://your-ha-ip:7123/mcp" --header "Authorization: Bearer YOUR_API_KEY" --scope user
+```
+
+(`--transport http`, not `sse` — Nexus speaks Streamable HTTP. Syntax per the [Claude Code MCP docs](https://code.claude.com/docs/en/mcp).)
+
+### VS Code
+
+Create `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "nexus": {
+      "type": "http",
+      "url": "http://your-ha-ip:7123/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    }
+  }
+}
+```
+
+### Cursor
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "nexus": {
+      "url": "http://your-ha-ip:7123/mcp",
+      "type": "http",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    }
+  }
+}
+```
+
+<details>
+<summary><b>Claude Desktop, Gemini CLI, OpenAI Codex CLI, Windsurf</b></summary>
+
+### Claude Desktop
+
+Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac):
+
+```json
+{
+  "mcpServers": {
+    "nexus": {
+      "command": "python",
+      "args": ["server.py"],
+      "cwd": "/path/to/ha-nexus-agent",
+      "env": {
+        "HA_URL": "http://homeassistant.local:8123",
+        "HA_TOKEN": "your_ha_token_here"
+      }
+    }
+  }
+}
+```
+
+### Gemini CLI
+
+```bash
+gemini mcp add --transport http --header "Authorization: Bearer YOUR_API_KEY" nexus "http://your-ha-ip:7123/mcp"
+```
+
+### OpenAI Codex CLI
+
+```bash
+codex mcp add nexus --url "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY"
+```
+
+> Codex's `mcp add` has no `--header` flag for HTTP servers, so this falls back to the query-token URL (logged in plaintext). For header-based auth instead, edit `~/.codex/config.toml` directly, e.g.:
+>
+> ```toml
+> [mcp_servers.nexus]
+> url = "http://your-ha-ip:7123/mcp"
+> bearer_token_env_var = "NEXUS_API_KEY"
+> ```
+
+### Windsurf
+
+Add to `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "nexus": {
+      "url": "http://your-ha-ip:7123/mcp",
+      "type": "http",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+> **Tip:** Copy the exact config with your real key from the **Open Web UI** button on the add-on's page (ingress). The same URL outside of ingress hides the key — see [Security](#security).
+
+---
+
+## What can you ask?
+
+Once connected, just talk to your assistant. Some things people use nexus for:
+
+**Everyday**
+
+- *"Turn off every light downstairs and close the blinds."*
+- *"Why is the bedroom sensor unavailable since yesterday?"*
+- *"Which automations, scripts and Node-RED flows use `binary_sensor.front_door`?"*
+
+**Build**
+
+- *"Build me a living room card with temperature, lights and the blinds — then show me a screenshot."*
+- *"Create an automation: notify me if the garage door is open after 10 PM. Lint it and check every entity exists before saving."*
+- *"Make a dark theme with orange accents and set it as default."*
+
+**Energy & history**
+
+- *"How much energy did we use per day last week, compared to the week before?"*
+- *"Add my solar inverter and battery to the Energy dashboard."*
+
+**Maintenance**
+
+- *"What updates and repairs are pending? Summarise them by risk."*
+- *"Compile the kitchen ESPHome display, flash it over the air and show me its logs."*
+- *"Checkpoint my config in git, then clean up unused entities and orphaned devices."*
+
+---
+
+## Why nexus?
+
+- **One small tool per action — 354 of them.** Each tool does one thing, has typed parameters and a
+  description written for models (`Use when` / `Not for` / `Returns`). Clients that load every tool up
+  front can switch to `tool_mode: search`: a BM25 tool search plus call-by-name proxies, 6 tools in
+  `tools/list` instead of the full catalogue.
+- **Safe by default, opt-in for the risky parts.** Server-wide [read-only mode](#read-only-mode),
+  `disabled_namespaces`, writes that run code (Node-RED flows) off until you enable them,
+  [`confirm=True` gates](#confirmation-gates) on 18 tools, stale-read guards (`config_hash`) on dashboard
+  section edits, restore points before Node-RED and NeonPlan changes, git checkpoints of `/config`.
+- **Beyond the core APIs.** ESPHome compile / validate / OTA and LVGL display widgets, Node-RED flows,
+  AdGuard Home DNS and filter lists, the Supervisor (add-ons, backups), long-term statistics, live
+  WebSocket subscriptions, NeonPlan 3D house plans and a 38-tool Card Builder.
+- **It can see what it built.** `dashboards_screenshot` renders any view to PNG, so the assistant checks
+  its own dashboard work instead of guessing.
+- **Every tool is annotated and tested.** Read / write / destructive hints follow a written contract
+  (ADR-0002) checked by the test suite, so clients can auto-approve reads and ask before writes.
+
+### How it compares
+
+Other good options exist — pick the one that fits. Compared on 2026-11-21 from each project's own
+README; corrections are welcome in [Discussions](https://github.com/Fistacho/ha-nexus-agent/discussions).
+
+| | **nexus** | [ha-mcp](https://github.com/homeassistant-ai/ha-mcp) | [HA Vibecode Agent](https://github.com/Coolver/home-assistant-vibecode-agent) | [HA built-in MCP Server](https://www.home-assistant.io/integrations/mcp_server/) |
+| --- | --- | --- | --- | --- |
+| Runs as | Add-on, or Docker image | HACS integration (in-process, any install type), add-on, Docker, `uvx` | Add-on or Docker, plus an npm MCP package on your computer | Built into Home Assistant |
+| Scope | Whole instance + Supervisor | Whole instance | Whole instance | Entities exposed to Assist |
+| Tool style | 354 single-purpose tools | 86 tools, many multi-action (`ha_manage_*`) | ~100 tools | Assist intents |
+| Automations, scripts, scenes | ✅ CRUD, traces, linter, reference check | ✅ | ✅ | ❌ |
+| Create helpers | ❌ (set values only) | ✅ | ✅ | ❌ |
+| Dashboards | Section-aware edits with `config_hash`, resources, screenshots, Card Builder; no create/delete | Create/delete, JSON-Patch edits with `config_hash`, auto-backup, screenshots (beta) | Cards, layouts, themes | ❌ |
+| Read-only / limits | Server-wide `read_only`, `disabled_namespaces`, opt-in code-running writes | Read Only Mode, **per-connection `/readonly` URL**, per-tool toggles, approval policies | Not documented | Only what you expose to Assist |
+| Undo | `confirm` gates, git checkpoint + rollback, restore points | Automatic backup before edits | Git commit of every change in a separate repo | — |
+| Also has | ESPHome + LVGL, Node-RED, AdGuard Home, statistics, WebSocket subscriptions | Z-Wave / ZHA / Matter, OAuth / OIDC, Agent Skills, tool search | Deploy workflow for hand-written YAML | Nothing to install |
+
+**Where the others are ahead:** ha-mcp has a much larger community, a read-only URL per connection
+(nexus' `read_only` applies to the whole server), dashboard create/delete with automatic backups,
+OAuth/OIDC, and installs as an integration on every Home Assistant install type. Vibecode Agent
+commits every change to its own git repository automatically and can create helpers. The built-in
+MCP Server needs no install at all and is the right choice if you only want voice-style control.
+
+---
+
+## Read-only mode
+
+**Safe to try:** start nexus in read-only mode, ask questions, and turn writes on once you trust it.
+
+- **Add-on:** Configuration tab → `read_only: true` → **Restart**.
+- **Running `python server.py` directly:** `NEXUS_READ_ONLY=true`.
+- **Docker image:** `-e READ_ONLY=true` (the image's entrypoint passes it on as `NEXUS_READ_ONLY`).
+
+What it does:
+
+- Every tool that is not read-only (ADR-0003) — and every MCP prompt — is hidden from `tools/list`
+  **and** refused at `tools/call`, so a client with a cached tool list cannot call it either.
+- It is one policy for the whole server, decided at startup; there is no per-client or per-session variant.
+- It does not limit what visible read tools can read (for example `files_read_config_file`, `git_log`,
+  add-on logs). Add `disabled_namespaces` (e.g. `["files", "git", "supervisor"]`) to narrow that too.
+- Writes that run arbitrary code stay off even with `read_only: false` until you opt in:
+  `nodered_write_enabled` for Node-RED flows (see [Node-RED](#node-red)).
+
+All options: [Add-on Options](#add-on-options) · threat model: [Security](#security).
+
+---
+
+## Run without the add-on (Docker)
+
+<!--
+  PLACEHOLDER — "Run without the add-on (Docker)".
+  Quick-start text for Home Assistant Container / Core users is supplied separately; paste it here.
+  Keep the "Standalone (outside HA)" and "Docker Image" headings below (or their anchors):
+  DOCS.md links to #standalone-outside-ha and CHANGELOG.md links to README.md#docker-image.
+-->
+
+No Supervisor? Run nexus next to Home Assistant with a long-lived access token — either from the
+signed Docker image or from source.
+
+### Standalone (outside HA)
 
 ```bash
 git clone https://github.com/Fistacho/ha-nexus-agent
@@ -276,15 +298,13 @@ python server.py
 
 Open <http://localhost:7123> to get your API key and MCP client configs.
 
-### Getting a Home Assistant token
+#### Getting a Home Assistant token
 
 1. In HA: **Profile → Security → Long-Lived Access Tokens**
 2. **Create Token** → name it `nexus`
 3. Paste as `HA_TOKEN` in `.env`
 
----
-
-## Docker Image
+### Docker Image
 
 Starting with 0.25.0, nexus also ships as a pre-built, cosign-signed image on
 ghcr.io — no local clone/build needed for standalone/HA Container use:
@@ -326,127 +346,12 @@ details (options, security posture, ESPHome): [DOCS.md](DOCS.md).
 
 ---
 
-## Connecting MCP Clients
-
-Open Nexus with the **Open Web UI** button on the add-on's page (Settings → Add-ons → Nexus Agent) after starting it — that page shows your real API key and the exact, ready-to-paste config for every client below. This works over HA's ingress proxy whether or not you've also enabled **Show in sidebar** on that same add-on page — the sidebar entry is just a shortcut to the same URL. Outside of ingress (or without a valid `Authorization: Bearer` header), the same page hides the key.
-
-The MCP endpoint is a **Streamable HTTP** transport (not SSE) at:
-
-```text
-http://your-ha-ip:7123/mcp
-```
-
-Authenticate with an `Authorization: Bearer YOUR_API_KEY` header wherever the client supports it — **prefer this over the `?token=` query string**, which is kept only for backward compatibility, ends up in plaintext in HTTP access logs and shell history, and will be removed entirely in nexus **1.0.0** (using it logs a one-time deprecation warning per add-on start, without ever logging the key itself).
-
-### Claude Code CLI
-
-```bash
-claude mcp add nexus --transport http "http://your-ha-ip:7123/mcp" --header "Authorization: Bearer YOUR_API_KEY" --scope user
-```
-
-(`--transport http`, not `sse` — Nexus speaks Streamable HTTP. Syntax per the [Claude Code MCP docs](https://code.claude.com/docs/en/mcp).)
-
-### Gemini CLI
-
-```bash
-gemini mcp add --transport http --header "Authorization: Bearer YOUR_API_KEY" nexus "http://your-ha-ip:7123/mcp"
-```
-
-### OpenAI Codex CLI
-
-```bash
-codex mcp add nexus --url "http://your-ha-ip:7123/mcp?token=YOUR_API_KEY"
-```
-
-> Codex's `mcp add` has no `--header` flag for HTTP servers, so this falls back to the query-token URL (logged in plaintext). For header-based auth instead, edit `~/.codex/config.toml` directly, e.g.:
->
-> ```toml
-> [mcp_servers.nexus]
-> url = "http://your-ha-ip:7123/mcp"
-> bearer_token_env_var = "NEXUS_API_KEY"
-> ```
-
-### VS Code
-
-Create `.vscode/mcp.json`:
-
-```json
-{
-  "servers": {
-    "nexus": {
-      "type": "http",
-      "url": "http://your-ha-ip:7123/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_API_KEY"
-      }
-    }
-  }
-}
-```
-
-### Cursor
-
-Add to `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "nexus": {
-      "url": "http://your-ha-ip:7123/mcp",
-      "type": "http",
-      "headers": {
-        "Authorization": "Bearer YOUR_API_KEY"
-      }
-    }
-  }
-}
-```
-
-### Windsurf
-
-Add to `~/.codeium/windsurf/mcp_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "nexus": {
-      "url": "http://your-ha-ip:7123/mcp",
-      "type": "http",
-      "headers": {
-        "Authorization": "Bearer YOUR_API_KEY"
-      }
-    }
-  }
-}
-```
-
-### Claude Desktop
-
-Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac):
-
-```json
-{
-  "mcpServers": {
-    "nexus": {
-      "command": "python",
-      "args": ["server.py"],
-      "cwd": "/path/to/ha-nexus-agent",
-      "env": {
-        "HA_URL": "http://homeassistant.local:8123",
-        "HA_TOKEN": "your_ha_token_here"
-      }
-    }
-  }
-}
-```
-
-> **Tip:** Copy the exact config with your real key from the **Open Web UI** button on the add-on's page (ingress). The same URL outside of ingress hides the key — see [Security](#security).
-
----
-
 ## Tools
 
 354 tools across 32 categories:
+
+<details>
+<summary><b>All 32 namespaces and what they do</b></summary>
 
 | Category | Tools | Highlights |
 | --- | --- | --- |
@@ -483,11 +388,15 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 | `neonplan_*` | 11 | **NeonPlan 3D integration**: `get_status`, `list_plans`, `get_plan`, **`validate_plan`** (references, HA areas/entities), **`suggest_bindings`**, `list_restore_points`; **writes with validation, restore point and revision check**: `save_plan`, **`patch_plan`** (JSON Patch), `create_restore_point`, `restore_restore_point`, `upload_background_image` |
 | `discover_*` | 4 | **BM25 tool search** — query the tool catalogue, list namespaces, fetch full docstrings |
 
+</details>
+
+Ask the server itself: `discover_list_namespaces`, `discover_tool_search("query")` and `discover_get_tool_doc` return the live catalogue with full descriptions.
+
 ---
 
 ## Features
 
-- **354 MCP tools** across 32 categories — the most complete HA MCP server available
+- **354 MCP tools** across 32 categories, one action per tool
 - **Built-in tool search** — `discover_tool_search("query")` finds the right tool without flooding the AI's context
 - **Confirmation gates** — 18 destructive tools, plus 8 guarded services reachable via `services_call_service`, require `confirm=True`; without it they return the exact command to re-run. See [Confirmation Gates](#confirmation-gates).
 - **Automation linter** — `automations_validate_best_practices` catches 7 common YAML mistakes before they cause issues
@@ -497,7 +406,7 @@ Add to `%APPDATA%/Claude/claude_desktop_config.json` (Win) or `~/Library/Applica
 - **Lovelace resources** — add/remove/update custom JS modules and CSS without editing YAML
 - **Dashboard screenshot** — render any Lovelace view to PNG via the Puppet engine (see below)
 - **Real-time WebSocket** — subscribe to state changes, events and triggers live
-- **Git versioning** — every config change auto-committed, instant rollback, `safe_write_with_checkpoint`
+- **Git versioning** — commit `/config`, checkpoint before a risky write (`git_safe_write_with_checkpoint`), rollback behind a confirm gate
 - **YAML validation** before writing any config file (`!include`, `!secret` aware)
 - **Setup web UI** — generates ready-to-use MCP config for every client
 - **HA Add-on native** — one-click install, no manual token setup
@@ -825,6 +734,23 @@ action:
 
 ---
 
+## Contributing & community
+
+- **Questions, ideas, show your setup:** [GitHub Discussions](https://github.com/Fistacho/ha-nexus-agent/discussions)
+- **Bugs and feature requests:** [open an issue](https://github.com/Fistacho/ha-nexus-agent/issues/new/choose) (templates ask for the versions we need)
+- **Code:** [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, tests, lint, and how to add a tool
+- **Security issues:** privately, see [SECURITY.md](SECURITY.md)
+
 ## Changelog
 
-See [Releases](https://github.com/Fistacho/ha-nexus-agent/releases) for full history.
+Every release is described in [CHANGELOG.md](CHANGELOG.md); tagged builds are on
+[Releases](https://github.com/Fistacho/ha-nexus-agent/releases).
+
+---
+
+<div align="center">
+
+**⭐ Star if nexus saved you time** — it helps other Home Assistant users find it.<br>
+Questions, ideas or a dashboard you built with it? Share them in [Discussions](https://github.com/Fistacho/ha-nexus-agent/discussions).
+
+</div>

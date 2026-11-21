@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://github.com/Fistacho/ha-nexus-agent/discussions/categories/q-a
+    about: Setup problems, "how do I…" questions and client configuration — ask in Discussions.
+  - name: Ideas
+    url: https://github.com/Fistacho/ha-nexus-agent/discussions/categories/ideas
+    about: Discuss an idea before it becomes a feature request.
+  - name: Show and tell
+    url: https://github.com/Fistacho/ha-nexus-agent/discussions/categories/show-and-tell
+    about: Share dashboards, automations and setups you built with nexus.
+  - name: Report a security vulnerability
+    url: https://github.com/Fistacho/ha-nexus-agent/security/advisories/new
+    about: Please report security issues privately, never in a public issue (see SECURITY.md).

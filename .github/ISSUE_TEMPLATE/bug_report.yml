@@ -1,0 +1,76 @@
+name: Bug report
+description: Something in nexus does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Security problems go to a private advisory instead — see SECURITY.md.
+        Please remove tokens, API keys, IP addresses and personal names from anything you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you asked the assistant (or which tool you called), what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: Tool(s) involved
+      description: The nexus tool name(s), if you know them, e.g. `dashboards_add_card_to_section`.
+      placeholder: dashboards_add_card_to_section
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+  - type: input
+    id: nexus-version
+    attributes:
+      label: nexus version
+      description: Add-on Info tab, or the image tag you run.
+      placeholder: "0.29.0"
+    validations:
+      required: true
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      description: Settings → About.
+      placeholder: "2026.11.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: install-type
+    attributes:
+      label: Installation type
+      options:
+        - Home Assistant OS (add-on)
+        - Home Assistant Supervised (add-on)
+        - Home Assistant Container + nexus Docker image
+        - Home Assistant Core + nexus from source
+        - Other (describe below)
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client and model
+      description: e.g. Claude Code 2.x with Sonnet, VS Code Copilot, Cursor, Claude Desktop.
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Non-default options
+      description: "Any of read_only, disabled_namespaces, tool_mode, nodered_write_enabled you changed. Do not paste api_key."
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and tool output
+      description: Relevant lines from the nexus add-on log (Settings → Add-ons → Nexus Agent → Log) and the tool's answer. Redact secrets.
+      render: text
