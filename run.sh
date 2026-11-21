@@ -31,11 +31,38 @@ else
     # kept as a fallback for anyone who used them before. Reading only the
     # unprefixed names here used to re-export NEXUS_READ_ONLY=false over a
     # caller's own `-e NEXUS_READ_ONLY=true` -- see
-    # tests/test_run_sh_standalone.py.
-    READ_ONLY=${NEXUS_READ_ONLY:-${READ_ONLY:-false}}
-    DISABLED_NAMESPACES=${NEXUS_DISABLED_NAMESPACES:-${DISABLED_NAMESPACES:-}}
+    # tests/test_run_sh_standalone.py. When both names are set, the security
+    # options fail closed: read_only is on if either one is not false,
+    # Node-RED writes are off if either one is false, and the namespace
+    # lists are joined. Any value that is not a recognised false is passed
+    # through unchanged, so a typo still reaches policy.py, which refuses to
+    # start.
+    _is_false() {
+        case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+            0|false|no|off) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+    READ_ONLY_LEGACY=${READ_ONLY:-}
+    if [ -n "${NEXUS_READ_ONLY:-}" ] && ! _is_false "${NEXUS_READ_ONLY}"; then
+        READ_ONLY=${NEXUS_READ_ONLY}
+    elif [ -n "${READ_ONLY_LEGACY}" ] && ! _is_false "${READ_ONLY_LEGACY}"; then
+        READ_ONLY=${READ_ONLY_LEGACY}
+    else
+        READ_ONLY=false
+    fi
+    NODERED_LEGACY=${NODERED_WRITE_ENABLED:-}
+    if _is_false "${NEXUS_NODERED_WRITE_ENABLED:-}" || _is_false "${NODERED_LEGACY}"; then
+        NODERED_WRITE_ENABLED=false
+    else
+        NODERED_WRITE_ENABLED=${NEXUS_NODERED_WRITE_ENABLED:-${NODERED_LEGACY:-false}}
+    fi
+    if [ -n "${NEXUS_DISABLED_NAMESPACES:-}" ] && [ -n "${DISABLED_NAMESPACES:-}" ]; then
+        DISABLED_NAMESPACES="${NEXUS_DISABLED_NAMESPACES},${DISABLED_NAMESPACES}"
+    else
+        DISABLED_NAMESPACES="${NEXUS_DISABLED_NAMESPACES:-${DISABLED_NAMESPACES:-}}"
+    fi
     TOOL_MODE=${NEXUS_TOOL_MODE:-${TOOL_MODE:-full}}
-    NODERED_WRITE_ENABLED=${NEXUS_NODERED_WRITE_ENABLED:-${NODERED_WRITE_ENABLED:-false}}
 
     # Standalone mode (no Supervisor, e.g. `docker run -e HA_URL -e HA_TOKEN`
     # against the ghcr.io image — ADR-0005 condition (b)): honor whatever the

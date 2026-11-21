@@ -250,3 +250,61 @@ def test_standalone_honors_documented_nexus_policy_env_vars(tmp_path, name, valu
 def test_standalone_still_honors_legacy_unprefixed_read_only(tmp_path):
     env = _run_with_fake_python3(tmp_path, {"READ_ONLY": "true"})
     assert env.get("NEXUS_READ_ONLY") == "true"
+
+
+# Precedence when both the documented NEXUS_* name and the legacy unprefixed
+# name are set: fail closed for the security options. read_only is on if
+# either says so; Node-RED writes are on only if neither says off;
+# disabled_namespaces is the union of both lists. tool_mode (not a security
+# boundary) simply prefers NEXUS_TOOL_MODE.
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+@pytest.mark.parametrize(
+    "nexus_value,legacy_value",
+    [("true", "false"), ("false", "true"), ("FALSE", "yes")],
+)
+def test_standalone_read_only_is_on_if_either_name_says_so(tmp_path, nexus_value, legacy_value):
+    env = _run_with_fake_python3(
+        tmp_path, {"NEXUS_READ_ONLY": nexus_value, "READ_ONLY": legacy_value}
+    )
+    assert env.get("NEXUS_READ_ONLY", "").lower() not in {"", "0", "false", "no", "off"}
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+@pytest.mark.parametrize("nexus_value,legacy_value", [("true", "false"), ("false", "true")])
+def test_standalone_nodered_writes_off_if_either_name_says_off(tmp_path, nexus_value, legacy_value):
+    env = _run_with_fake_python3(
+        tmp_path,
+        {"NEXUS_NODERED_WRITE_ENABLED": nexus_value, "NODERED_WRITE_ENABLED": legacy_value},
+    )
+    assert env.get("NEXUS_NODERED_WRITE_ENABLED") == "false"
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+def test_standalone_disabled_namespaces_is_union_of_both_names(tmp_path):
+    env = _run_with_fake_python3(
+        tmp_path, {"NEXUS_DISABLED_NAMESPACES": "git", "DISABLED_NAMESPACES": "files,git"}
+    )
+    names = {n.strip() for n in env.get("NEXUS_DISABLED_NAMESPACES", "").split(",") if n.strip()}
+    assert names == {"git", "files"}
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+def test_standalone_invalid_read_only_value_is_passed_through_to_fail_startup(tmp_path):
+    """A typo must reach policy.py, which refuses to start, instead of being
+    swallowed into a default by run.sh."""
+    env = _run_with_fake_python3(tmp_path, {"NEXUS_READ_ONLY": "ture"})
+    assert env.get("NEXUS_READ_ONLY") == "ture"
