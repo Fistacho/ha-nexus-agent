@@ -58,7 +58,7 @@ def _repo():
 
 
 @mcp.tool(annotations=write("Initialize the config git repository", idempotent=True))
-def git_init_config() -> dict:
+def init_config() -> dict:
     """Initialize a git repository in the HA config directory.
 
     Creates a git repo at HA_CONFIG_PATH via `git.Repo.init` unless a .git/
@@ -85,7 +85,7 @@ def git_init_config() -> dict:
 
 
 @mcp.tool(annotations=read("Show config git status"))
-def git_status() -> dict:
+def status() -> dict:
     """Show git status of the HA config directory.
 
     Calls `_repo()` for the /config git repo and returns the active branch,
@@ -97,7 +97,7 @@ def git_status() -> dict:
     Returns: dict `{"branch", "staged", "modified", "untracked", "is_dirty"}`.
     Errors: raises `RuntimeError` (from `_repo()`) when gitpython is not
     installed or no git repo exists yet at HA_CONFIG_PATH — run
-    `git_git_init_config` first.
+    `git_init_config` first.
     """
     repo = _repo()
     changed = [item.a_path for item in repo.index.diff(None)]
@@ -113,7 +113,7 @@ def git_status() -> dict:
 
 
 @mcp.tool(annotations=write("Commit all config changes", idempotent=False))
-def git_commit_all(
+def commit_all(
     message: Annotated[
         str,
         Field(description="Commit message describing this checkpoint or change."),
@@ -130,7 +130,7 @@ def git_commit_all(
     Returns: dict `{"status": "committed", "sha", "message"}`, or
     `{"status": "nothing_to_commit"}` when the working tree is clean.
     Errors: raises `RuntimeError` (from `_repo()`) when gitpython is not
-    installed or no git repo exists yet — run `git_git_init_config` first.
+    installed or no git repo exists yet — run `git_init_config` first.
     """
     repo = _repo()
     repo.git.add(A=True)
@@ -141,7 +141,7 @@ def git_commit_all(
 
 
 @mcp.tool(annotations=read("List config git commits"))
-def git_log(
+def log(
     limit: Annotated[
         int,
         Field(description="Maximum number of commits to return, most recent first. Defaults to 20."),
@@ -156,7 +156,7 @@ def git_log(
     Use when: reviewing recent config changes before a rollback or diff.
     Returns: list[dict] `{"sha", "message", "author", "date"}`.
     Errors: raises `RuntimeError` (from `_repo()`) when gitpython is not
-    installed or no git repo exists yet — run `git_git_init_config` first.
+    installed or no git repo exists yet — run `git_init_config` first.
     Limits: `limit` caps the number of commits returned; no further
     pagination is offered.
     """
@@ -173,7 +173,7 @@ def git_log(
 
 
 @mcp.tool(annotations=read("Show config git diff"))
-def git_diff(
+def diff(
     sha: Annotated[
         str | None,
         Field(
@@ -188,7 +188,7 @@ def git_diff(
 
     Without `sha`, calls `repo.git.diff()` for the unified diff of unstaged
     changes to tracked files in /config, excluding staged changes and
-    untracked new files (see `git_git_status`). With `sha`, calls `git show
+    untracked new files (see `git_status`). With `sha`, calls `git show
     --stat <sha>` for the commit header and per-file changed-line counts,
     not the actual patch.
 
@@ -208,7 +208,7 @@ def git_diff(
 
 
 @mcp.tool(annotations=destructive("Restore a config file from git history", idempotent=True))
-def git_rollback_file(
+def rollback_file(
     relative_path: Annotated[
         str,
         Field(
@@ -250,7 +250,7 @@ def git_rollback_file(
 
     Use when: undoing an accidental edit to a single file.
     Not for: resetting the whole config tree — use
-    `git_git_rollback_to_commit`.
+    `git_rollback_to_commit`.
     Returns: dict `{"status": "restored", "file", "to"}` on success.
     Errors: returns `{"error": "invalid_path"|"path_outside_config", ...}`
     when `relative_path` escapes /config; returns `{"error":
@@ -274,7 +274,7 @@ def git_rollback_file(
 
 
 @mcp.tool(annotations=destructive("Hard-reset config to a commit", idempotent=True))
-def git_rollback_to_commit(
+def rollback_to_commit(
     sha: Annotated[
         str,
         Field(description="Commit SHA or ref to hard-reset the entire config directory to."),
@@ -298,7 +298,7 @@ def git_rollback_to_commit(
 
     Use when: reverting /config entirely after a bad batch of changes, and
     the target commit is already known.
-    Not for: restoring a single file — use `git_git_rollback_file`.
+    Not for: restoring a single file — use `git_rollback_file`.
     Returns: dict `{"status": "reset", "to": sha}` on success.
     Errors: returns `{"error": "confirmation_required", "message": ...,
     "action": ...}` when `confirm` is not True; raises `RuntimeError` (from
@@ -326,7 +326,7 @@ def git_rollback_to_commit(
 
 
 @mcp.tool(annotations=write("Create and switch to a new git branch", idempotent=False))
-def git_create_branch(
+def create_branch(
     branch_name: Annotated[
         str,
         Field(description="Name of the new git branch to create, e.g. 'automation-refactor'."),
@@ -341,7 +341,7 @@ def git_create_branch(
     Use when: starting an isolated set of changes without touching the
     current branch's commit history.
     Not for: switching to a branch that already exists — use
-    `git_git_checkout_branch`.
+    `git_checkout_branch`.
     Returns: dict `{"status": "created_and_checked_out", "branch": ...}`.
     Errors: raises an exception from gitpython when a branch named
     `branch_name` already exists; raises `RuntimeError` (from `_repo()`)
@@ -354,7 +354,7 @@ def git_create_branch(
 
 
 @mcp.tool(annotations=destructive("Switch config to an existing branch", idempotent=True))
-def git_checkout_branch(
+def checkout_branch(
     branch_name: Annotated[
         str,
         Field(description="Name of an existing git branch to switch the config repository to."),
@@ -370,7 +370,7 @@ def git_checkout_branch(
     Use when: switching between prepared configurations that are tracked
     as branches.
     Not for: creating a branch that does not exist yet — use
-    `git_git_create_branch`.
+    `git_create_branch`.
     Returns: dict `{"status": "switched", "branch": ...}`.
     Errors: raises an exception from gitpython when `branch_name` does not
     exist, or when uncommitted local changes would conflict with the
@@ -387,7 +387,7 @@ def git_checkout_branch(
 
 
 @mcp.tool(annotations=read("List config git branches"))
-def git_list_branches() -> list[str]:
+def list_branches() -> list[str]:
     """List all local branches in the HA config git repository.
 
     Calls `_repo()` and returns every local branch name from
@@ -395,7 +395,7 @@ def git_list_branches() -> list[str]:
 
     Returns: list[str] of local branch names.
     Errors: raises `RuntimeError` (from `_repo()`) when gitpython is not
-    installed or no git repo exists yet — run `git_git_init_config` first.
+    installed or no git repo exists yet — run `git_init_config` first.
     """
     repo = _repo()
     return [b.name for b in repo.branches]
@@ -444,7 +444,7 @@ def safe_write_with_checkpoint(
     "path": ...}` or `{"success": False, "error": ...}`), plus `git_sha`/
     `git_message` when the new-content commit was made.
     Errors: raises `RuntimeError` (from `_repo()`) when no git repo exists
-    — run `git_git_init_config` first; returns `{"success": False,
+    — run `git_init_config` first; returns `{"success": False,
     "error": ...}` unchanged when YAML validation fails, in which case the
     checkpoint commit of the prior dirty state (if any) still happened, but
     no new-content commit is made.

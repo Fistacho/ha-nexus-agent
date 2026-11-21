@@ -248,6 +248,34 @@ def test_t2_tool_and_namespace_counts():
             )
 
 
+# 1.0.0: the `git` namespace used to publish `git_git_<verb>` because the
+# functions in tools/git_ops.py carried their own `git_` prefix on top of the
+# one `mcp.mount(..., namespace="git")` adds. Pinned here so the double
+# prefix cannot come back through a new tool either.
+_EXPECTED_GIT_TOOLS = {
+    "git_checkout_branch",
+    "git_commit_all",
+    "git_create_branch",
+    "git_diff",
+    "git_init_config",
+    "git_list_branches",
+    "git_log",
+    "git_rollback_file",
+    "git_rollback_to_commit",
+    "git_safe_write_with_checkpoint",
+    "git_status",
+}
+
+
+def test_git_namespace_has_no_double_prefix():
+    git_tools = {n for n in _SERVER_TOOLS if n.startswith("git_")}
+    assert git_tools == _EXPECTED_GIT_TOOLS
+    local_names = set(_MODULE_TOOLS["git_ops"])
+    assert not {n for n in local_names if n.startswith("git_")}, (
+        "tools/git_ops.py names must not start with 'git_': mount() already adds it"
+    )
+
+
 # ---------------------------------------------------------------------------
 # T3 — per-tool checks, opt-in via TOOL_CONTRACT marker
 # ---------------------------------------------------------------------------
@@ -321,16 +349,16 @@ def _first_paragraph(description: str) -> str:
 
 
 # Some modules give (some of) their tools' local names a "subgroup" prefix
-# that repeats before the verb: `git_ops` mounts as namespace "git", but every
-# local name is already `git_<verb>_...` (e.g. `git_rollback_file`, full tool
-# name `git_git_rollback_file`); `esphome`'s `lvgl_*` tools carry an explicit
+# that repeats before the verb: `esphome`'s `lvgl_*` tools carry an explicit
 # `lvgl_` subgroup unrelated to the "esphome" namespace (e.g.
 # `lvgl_delete_widget`, full tool name `esphome_lvgl_delete_widget`). A verb
 # prefix like `list_`/`delete_`/`rollback` then never lands at the start of
 # `local_name`, and `_heuristic_expectation` alone silently says nothing.
-# `git_` is also covered generically below (it equals the namespace), but is
-# kept here too so the intent is explicit and doesn't rely on that coincidence.
-_KNOWN_SUBGROUP_PREFIXES = ("git_", "lvgl_")
+# A local name that repeats its own namespace (`<ns>_<verb>`) is covered
+# generically in `_subgroup_stripped_name`. Until 1.0.0 that was every
+# `git_ops` tool (`git_git_rollback_file`); they are now plain `<verb>` names,
+# pinned by `test_git_namespace_has_no_double_prefix`.
+_KNOWN_SUBGROUP_PREFIXES = ("lvgl_",)
 
 
 def _heuristic_expectation(local_name: str) -> str | None:
@@ -559,22 +587,19 @@ def test_t3c_matches_name_heuristic(tool_name):
 
 # --- T3c subgroup-prefix gap: regression coverage (batch Z, task 3) --------
 #
-# `git_ops` mounts as namespace "git", but every local tool name already
-# starts with "git_" (`git_rollback_file`, full tool name
-# `git_git_rollback_file`); `esphome`'s `lvgl_*` tools carry an explicit
-# `lvgl_` subgroup unrelated to the "esphome" namespace (`lvgl_delete_widget`,
-# full tool name `esphome_lvgl_delete_widget`). In both cases the verb
-# (`rollback`, `delete_`) never lands at the start of `local_name`, so the
-# plain heuristic used to say nothing about them — a wrong annotation would
-# have gone undetected. These tests prove the gap existed and that
-# `_heuristic_expectation_with_subgroups` closes it.
+# `esphome`'s `lvgl_*` tools carry an explicit `lvgl_` subgroup unrelated to
+# the "esphome" namespace (`lvgl_delete_widget`, full tool name
+# `esphome_lvgl_delete_widget`), so the verb (`delete_`) never lands at the
+# start of `local_name` and the plain heuristic says nothing about them — a
+# wrong annotation would go undetected. A local name that repeats its own
+# namespace (`git_rollback_file` under namespace "git", the pre-1.0.0 shape
+# of every git tool) has the same gap. These tests prove the gap exists and
+# that `_heuristic_expectation_with_subgroups` closes it.
 
 
-def test_plain_heuristic_missed_git_rollback_file_before_this_batch():
-    """Documents the gap this batch closes: the plain, non-subgroup-aware
-    heuristic returns None for `git_rollback_file` — 'rollback' is buried
-    after the repeated 'git_' prefix — so it would not have caught a wrong
-    annotation on `git_git_rollback_file`."""
+def test_plain_heuristic_misses_a_namespace_repeating_local_name():
+    """The plain heuristic returns None for `git_rollback_file` as a local
+    name — 'rollback' is buried after the repeated 'git_' prefix."""
     assert _heuristic_expectation("git_rollback_file") is None
 
 
@@ -582,7 +607,7 @@ def test_plain_heuristic_missed_lvgl_delete_widget_before_this_batch():
     assert _heuristic_expectation("lvgl_delete_widget") is None
 
 
-def test_extended_heuristic_recovers_git_rollback_file_as_destructive():
+def test_extended_heuristic_recovers_namespace_repeating_name_as_destructive():
     assert _heuristic_expectation_with_subgroups("git_rollback_file", "git") == "destructive"
 
 
@@ -596,14 +621,12 @@ def test_extended_heuristic_still_prefers_a_directly_matching_verb():
     assert _heuristic_expectation_with_subgroups("list_devices", "git") == "read_only"
 
 
-def test_t3c_extended_heuristic_catches_git_rollback_file_misannotated_as_read(monkeypatch):
-    """RED-by-design proof: `git_git_rollback_file` is correctly annotated
+def test_t3c_catches_git_rollback_file_misannotated_as_read(monkeypatch):
+    """RED-by-design proof: `git_rollback_file` is correctly annotated
     destructive today (sanity-checked below). Monkeypatch its *real* live
     annotations to a wrong read-only classification (simulating the kind of
-    regression T3c exists to catch) and confirm `check_t3c_heuristic` now
-    fails it — which it would NOT have done before this batch, since the
-    plain heuristic is silent on `git_rollback_file` (see the tests above)."""
-    tool = _SERVER_TOOLS["git_git_rollback_file"]
+    regression T3c exists to catch) and confirm `check_t3c_heuristic` fails it."""
+    tool = _SERVER_TOOLS["git_rollback_file"]
     assert tool.annotations.destructiveHint is True  # sanity: real annotation is correct today
     assert tool.annotations.readOnlyHint is False
 
@@ -611,9 +634,9 @@ def test_t3c_extended_heuristic_catches_git_rollback_file_misannotated_as_read(m
     monkeypatch.setattr(tool.annotations, "destructiveHint", False)
     monkeypatch.setattr(tool.annotations, "idempotentHint", True)
 
-    problems = check_t3c_heuristic("git_git_rollback_file", "git_rollback_file", "git", tool, marker=None)
+    problems = check_t3c_heuristic("git_rollback_file", "rollback_file", "git", tool, marker=None)
 
-    assert problems, "extended heuristic must flag git_git_rollback_file mis-annotated as read-only"
+    assert problems, "heuristic must flag git_rollback_file mis-annotated as read-only"
 
 
 @pytest.mark.parametrize("tool_name", _ALL_NAMES, ids=_ALL_NAMES)

@@ -804,7 +804,7 @@ def test_git_rollback_file_rejects_path_outside_config(tmp_path, monkeypatch):
 
     monkeypatch.setattr(git_ops, "_repo", explode)
 
-    result = _unwrap(git_ops.git_rollback_file)("../outside/secrets.yaml", confirm=True)
+    result = _unwrap(git_ops.rollback_file)("../outside/secrets.yaml", confirm=True)
 
     assert "error" in result
 
@@ -817,7 +817,7 @@ def test_git_rollback_file_still_restores_path_inside_config(tmp_path, monkeypat
     fake_repo = _FakeRepo()
     monkeypatch.setattr(git_ops, "_repo", lambda: fake_repo)
 
-    result = _unwrap(git_ops.git_rollback_file)("automations.yaml", confirm=True)
+    result = _unwrap(git_ops.rollback_file)("automations.yaml", confirm=True)
 
     assert result["status"] == "restored"
     assert fake_repo.git.calls == [("HEAD", "--", "automations.yaml")]

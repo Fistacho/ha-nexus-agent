@@ -250,11 +250,11 @@ CONFIRM_TOOL_EQUIVALENTS: dict[str, tuple[GuardedService, ...] | str] = {
         "No guarded HA service removes a dashboard resource -- the Lovelace "
         "resource-CRUD WebSocket API is the only path."
     ),
-    "git_git_rollback_file": (
+    "git_rollback_file": (
         "No guarded HA service rolls back a file in /config -- this uses "
         "nexus's own git working copy, not a HA service."
     ),
-    "git_git_rollback_to_commit": (
+    "git_rollback_to_commit": (
         "No guarded HA service rolls back /config to a commit -- this uses "
         "nexus's own git working copy, not a HA service."
     ),

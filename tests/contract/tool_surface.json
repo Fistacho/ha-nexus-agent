@@ -3697,7 +3697,7 @@
         "type": "object"
       }
     },
-    "git_git_checkout_branch": {
+    "git_checkout_branch": {
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -3711,7 +3711,7 @@
         "type": "object"
       }
     },
-    "git_git_commit_all": {
+    "git_commit_all": {
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -3725,7 +3725,7 @@
         "type": "object"
       }
     },
-    "git_git_create_branch": {
+    "git_create_branch": {
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -3739,7 +3739,7 @@
         "type": "object"
       }
     },
-    "git_git_diff": {
+    "git_diff": {
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -3758,21 +3758,21 @@
         "type": "object"
       }
     },
-    "git_git_init_config": {
+    "git_init_config": {
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
         "type": "object"
       }
     },
-    "git_git_list_branches": {
+    "git_list_branches": {
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
         "type": "object"
       }
     },
-    "git_git_log": {
+    "git_log": {
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -3784,7 +3784,7 @@
         "type": "object"
       }
     },
-    "git_git_rollback_file": {
+    "git_rollback_file": {
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -3806,7 +3806,7 @@
         "type": "object"
       }
     },
-    "git_git_rollback_to_commit": {
+    "git_rollback_to_commit": {
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -3821,13 +3821,6 @@
         "required": [
           "sha"
         ],
-        "type": "object"
-      }
-    },
-    "git_git_status": {
-      "inputSchema": {
-        "additionalProperties": false,
-        "properties": {},
         "type": "object"
       }
     },
@@ -3857,6 +3850,13 @@
           "relative_path",
           "content"
         ],
+        "type": "object"
+      }
+    },
+    "git_status": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
         "type": "object"
       }
     },

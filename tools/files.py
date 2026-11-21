@@ -293,7 +293,7 @@ def delete_config_file(
     Use when: removing a YAML/JSON/txt file that HA no longer needs, once
     that removal is confirmed.
     Not for: keeping the ability to undo — commit the config to git first
-    (`git_git_commit_all`) or write through
+    (`git_commit_all`) or write through
     `git_safe_write_with_checkpoint` so a rollback stays possible.
     Returns: dict `{"success": True, "deleted": ...}` when confirmed,
     otherwise a confirmation prompt.

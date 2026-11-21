@@ -167,7 +167,7 @@ _MUST_BE_HIDDEN = [
     ("areas_control_area", {"area_id": "x", "action": "turn_on"}),
     ("entities_remove_entity", {"entity_id": "light.x"}),
     ("files_write_config_file", {"relative_path": "x.yaml", "content": ""}),
-    ("git_git_rollback_to_commit", {"sha": "abc"}),
+    ("git_rollback_to_commit", {"sha": "abc"}),
     ("esphome_upload_device", {"name": "x"}),
     ("esphome_compile_device", {"name": "x"}),
     ("supervisor_set_addon_options", {"slug": "x", "options": {}}),
