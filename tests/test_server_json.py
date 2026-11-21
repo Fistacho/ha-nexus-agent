@@ -49,3 +49,40 @@ def test_every_declared_env_var_is_read_by_run_sh_or_python():
     sources = run_sh + (ROOT / "auth.py").read_text(encoding="utf-8") + (ROOT / "ha_client.py").read_text(encoding="utf-8")
     for name in _env_vars():
         assert name in sources, name
+
+
+# --- OCI package rules enforced server-side by the MCP Registry -------------
+#
+# modelcontextprotocol/registry internal/validators/registries/oci.go
+# (ValidateOCI, checked at 5fa0c6d, 2026-11-21). `mcp-publisher validate`
+# does not run these; the 1.0.0 publish was rejected with HTTP 400
+# "OCI packages must not have 'registryBaseUrl' field".
+_OCI_FORBIDDEN_FIELDS = ("registryBaseUrl", "version", "fileSha256")
+# isAllowedRegistry(): docker.io (+ aliases), ghcr.io, quay.io,
+# mcr.microsoft.com, *.pkg.dev, *.azurecr.io.
+_OCI_ALLOWED_REGISTRIES = {"docker.io", "registry-1.docker.io", "index.docker.io", "ghcr.io", "quay.io", "mcr.microsoft.com"}
+
+
+def _oci_packages() -> list[dict]:
+    data = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+    return [p for p in data["packages"] if p.get("registryType") == "oci"]
+
+
+def test_there_is_an_oci_package():
+    assert _oci_packages()
+
+
+@pytest.mark.parametrize("field", _OCI_FORBIDDEN_FIELDS)
+def test_oci_package_has_no_field_the_registry_rejects(field):
+    for package in _oci_packages():
+        assert field not in package, f"MCP Registry rejects OCI packages with '{field}'"
+
+
+def test_oci_identifier_is_a_canonical_tagged_reference_on_an_allowed_registry():
+    for package in _oci_packages():
+        identifier = package["identifier"]
+        assert " " not in identifier
+        host, _, rest = identifier.partition("/")
+        assert host in _OCI_ALLOWED_REGISTRIES or host.endswith((".pkg.dev", ".azurecr.io")), host
+        repo, _, tag = rest.rpartition(":")
+        assert repo and tag and tag != "latest", identifier
