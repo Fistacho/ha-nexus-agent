@@ -57,8 +57,35 @@ def delete_api_key() -> None:
         pass
 
 
+def api_key_matches(candidate: str | None) -> bool:
+    """Constant-time check of a presented key against `API_KEY`.
+
+    Compares UTF-8 bytes: `secrets.compare_digest` raises `TypeError` for a
+    `str` with non-ASCII characters, which would turn a garbage header into
+    a 500 instead of a 401. Different lengths simply compare unequal.
+    """
+    if not candidate or not API_KEY:
+        return False
+    return secrets.compare_digest(candidate.encode("utf-8"), API_KEY.encode("utf-8"))
+
+
+def bearer_credential(header_value: str | None) -> str | None:
+    """The token from an `Authorization: Bearer <token>` value, or None.
+
+    The scheme is matched case-insensitively (RFC 7235 section 2.1); any
+    other scheme, or a bare key with no scheme, gives None.
+    """
+    if not header_value:
+        return None
+    scheme, _, token = header_value.strip().partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    token = token.strip()
+    return token or None
+
+
 async def verify_token(credentials: HTTPAuthorizationCredentials = Security(_bearer)) -> str:
-    if credentials is None or credentials.credentials != API_KEY:
+    if credentials is None or not api_key_matches(credentials.credentials):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing API key",
@@ -186,11 +213,7 @@ def is_localhost_request(request: Request) -> bool:
 
 
 def bearer_token_matches(request: Request) -> bool:
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.lower().startswith("bearer "):
-        return False
-    token = auth_header[len("Bearer "):].strip()
-    return bool(token) and token == API_KEY
+    return api_key_matches(bearer_credential(request.headers.get("authorization")))
 
 
 def can_access_ui(request: Request) -> bool:

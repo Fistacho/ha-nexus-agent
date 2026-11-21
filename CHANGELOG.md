@@ -18,6 +18,10 @@ the last clean-up before that freeze. Still 354 tools across 32 domains.
   `codex mcp add nexus --url http://<host>:7123/mcp --bearer-token-env-var NEXUS_API_KEY`
   (the key is read from the `NEXUS_API_KEY` environment variable). The
   add-on still masks a `token=` value in its access log.
+- **The `Bearer` scheme is required.** A bare `Authorization: <API_KEY>`
+  header (no scheme), which 0.x accepted on `/mcp`, now gets `401` with a
+  hint. The scheme is case-insensitive (`bearer`, `BEARER` work). Same rule
+  for the Setup UI and `/regenerate`.
 - **Add-on options `port`, `git_versioning_auto` and `max_backups` are
   removed.** `port` has done nothing since 0.23.0 (the LAN port is set on
   the add-on's Network tab); the other two were never read. Nothing to do:
@@ -48,6 +52,12 @@ the last clean-up before that freeze. Still 354 tools across 32 domains.
   standalone) turns the check off. **Turning it on means full trust**: such
   code runs with that add-on's privileges, and an add-on with the
   Supervisor `manager` role can change nexus's own options.
+
+**Security**
+
+- The API key is compared in constant time (`secrets.compare_digest` on
+  UTF-8 bytes) on `/mcp`, the Setup UI and `/regenerate`, instead of a
+  plain string comparison. A header with non-ASCII bytes gets a clean `401`.
 
 **Fixed**
 

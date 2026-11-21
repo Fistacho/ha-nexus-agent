@@ -115,6 +115,12 @@ _UNAUTHORIZED_QUERY_TOKEN_BODY = (
     b'{"error":"Unauthorized","hint":"The ?token= query parameter was removed in '
     b'nexus 1.0.0. Send the API key as an Authorization: Bearer <API_KEY> header."}'
 )
+# Sent when an Authorization header is present but isn't `Bearer <key>`
+# (e.g. the bare key, accepted before 1.0.0).
+_UNAUTHORIZED_SCHEME_BODY = (
+    b'{"error":"Unauthorized","hint":"Send the API key as an Authorization: Bearer '
+    b'<API_KEY> header; since nexus 1.0.0 the Bearer scheme is required."}'
+)
 
 
 class RedactTokenFilter(logging.Filter):
@@ -338,7 +344,7 @@ def _build_app(listen_plan=None):
     from starlette.datastructures import Headers
     import setup_ui
     from setup_ui import setup_page, health, regenerate
-    from auth import API_KEY, is_ingress_request
+    from auth import api_key_matches, bearer_credential, is_ingress_request
     from urllib.parse import parse_qs
 
     # Streamable HTTP transport — modern MCP spec, more robust than SSE
@@ -351,20 +357,27 @@ def _build_app(listen_plan=None):
 
         async def __call__(self, scope, receive, send):
             if scope["type"] == "http" and scope.get("path", "").startswith("/mcp"):
-                # Only the `Authorization: Bearer` header authenticates
-                # (`?token=` was removed in 1.0.0). `Headers(scope=scope)`
-                # instead of `dict(scope.get("headers", []))`: a plain dict
-                # built from the raw header-tuple list silently keeps only
-                # the *last* occurrence of a repeated header name. Same
-                # semantics reproduced explicitly here via `getlist(...)[-1]`
-                # — unlike Origin below, a repeated `Authorization` header
-                # isn't given special "reject as ambiguous" treatment.
+                # Only `Authorization: Bearer <key>` authenticates: `?token=`
+                # and the bare key without a scheme were removed in 1.0.0.
+                # The comparison is constant-time (`auth.api_key_matches`).
+                # `Headers(scope=scope)` instead of
+                # `dict(scope.get("headers", []))`: a plain dict built from
+                # the raw header-tuple list silently keeps only the *last*
+                # occurrence of a repeated header name. Same semantics
+                # reproduced explicitly here via `getlist(...)[-1]` — unlike
+                # Origin below, a repeated `Authorization` header isn't given
+                # special "reject as ambiguous" treatment.
                 headers = Headers(scope=scope)
                 auth_values = headers.getlist("authorization")
-                token = auth_values[-1].removeprefix("Bearer ").strip() if auth_values else ""
-                if not token or token != API_KEY:
+                header_value = auth_values[-1] if auth_values else ""
+                if not api_key_matches(bearer_credential(header_value)):
                     query = parse_qs(scope.get("query_string", b"").decode())
-                    body = _UNAUTHORIZED_QUERY_TOKEN_BODY if "token" in query else _UNAUTHORIZED_BODY
+                    if "token" in query:
+                        body = _UNAUTHORIZED_QUERY_TOKEN_BODY
+                    elif header_value and bearer_credential(header_value) is None:
+                        body = _UNAUTHORIZED_SCHEME_BODY
+                    else:
+                        body = _UNAUTHORIZED_BODY
                     await send({"type": "http.response.start", "status": 401, "headers": [(b"content-type", b"application/json")]})
                     await send({"type": "http.response.body", "body": body})
                     return

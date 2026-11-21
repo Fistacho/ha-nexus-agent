@@ -28,6 +28,7 @@ import re
 from contextlib import contextmanager
 from types import SimpleNamespace
 
+import pytest
 from starlette.testclient import TestClient
 
 import auth
@@ -281,6 +282,101 @@ def test_mcp_bearer_header_still_works_with_a_stale_query_token(monkeypatch):
         )
 
     assert resp.status_code != 401
+
+
+# --- 1.0.0 hardening: `Bearer` scheme required, constant-time comparison ----
+
+_PING = {"jsonrpc": "2.0", "method": "ping", "id": 1}
+_ACCEPT = "application/json, text/event-stream"
+
+
+def test_mcp_bare_key_without_bearer_scheme_is_unauthorized(monkeypatch):
+    with _make_client(monkeypatch, addon_mode=True) as tc:
+        resp = tc.post("/mcp", json=_PING, headers={"Authorization": auth.API_KEY, "Accept": _ACCEPT})
+
+    assert resp.status_code == 401
+    assert "Authorization: Bearer" in resp.json()["hint"]
+    assert auth.API_KEY not in resp.text
+
+
+@pytest.mark.parametrize("scheme", ["bearer", "BEARER", "Bearer", "bEaReR"])
+def test_mcp_bearer_scheme_is_case_insensitive(monkeypatch, scheme):
+    with _make_client(monkeypatch, addon_mode=True) as tc:
+        resp = tc.post("/mcp", json=_PING, headers={"Authorization": f"{scheme} {auth.API_KEY}", "Accept": _ACCEPT})
+
+    assert resp.status_code == 200
+
+
+def test_mcp_wrong_key_is_unauthorized(monkeypatch):
+    with _make_client(monkeypatch, addon_mode=True) as tc:
+        resp = tc.post("/mcp", json=_PING, headers={"Authorization": f"Bearer {auth.API_KEY}x", "Accept": _ACCEPT})
+
+    assert resp.status_code == 401
+
+
+def test_mcp_other_scheme_is_unauthorized(monkeypatch):
+    with _make_client(monkeypatch, addon_mode=True) as tc:
+        resp = tc.post("/mcp", json=_PING, headers={"Authorization": f"Basic {auth.API_KEY}", "Accept": _ACCEPT})
+
+    assert resp.status_code == 401
+
+
+def test_mcp_non_ascii_key_is_a_clean_401(monkeypatch):
+    """`secrets.compare_digest` raises TypeError on non-ASCII `str`; the
+    comparison must work on bytes so this is a 401, not a 500."""
+    with _make_client(monkeypatch, addon_mode=True) as tc:
+        resp = tc.post(
+            "/mcp",
+            json=_PING,
+            headers=[("Authorization", "Bearer ".encode() + "zażółć".encode("utf-8")), ("Accept", _ACCEPT)],
+        )
+
+    assert resp.status_code == 401
+
+
+def test_mcp_key_comparison_uses_compare_digest(monkeypatch):
+    calls = []
+    real = auth.secrets.compare_digest
+
+    def spy(a, b):
+        calls.append((type(a), type(b)))
+        return real(a, b)
+
+    monkeypatch.setattr(auth.secrets, "compare_digest", spy)
+    with _make_client(monkeypatch, addon_mode=True) as tc:
+        resp = tc.post("/mcp", json=_PING, headers={"Authorization": f"Bearer {auth.API_KEY}", "Accept": _ACCEPT})
+
+    assert resp.status_code == 200
+    assert calls == [(bytes, bytes)]
+
+
+def test_setup_ui_bearer_check_uses_compare_digest_and_needs_the_scheme(monkeypatch):
+    calls = []
+    real = auth.secrets.compare_digest
+    monkeypatch.setattr(auth.secrets, "compare_digest", lambda a, b: calls.append(1) or real(a, b))
+
+    def request(value):
+        return SimpleNamespace(headers={"authorization": value})
+
+    assert auth.bearer_token_matches(request(f"bearer {auth.API_KEY}")) is True
+    assert calls
+    assert auth.bearer_token_matches(request(auth.API_KEY)) is False
+    assert auth.bearer_token_matches(request(f"Bearer {auth.API_KEY}x")) is False
+    assert auth.bearer_token_matches(request("Bearer ")) is False
+
+
+def test_regenerate_with_bare_key_is_forbidden(monkeypatch):
+    with _make_client(monkeypatch, addon_mode=True) as tc:
+        resp = tc.post("/regenerate", headers={"Authorization": auth.API_KEY})
+
+    assert resp.status_code == 403
+
+
+def test_api_key_matches_handles_empty_and_non_ascii():
+    assert auth.api_key_matches(auth.API_KEY) is True
+    assert auth.api_key_matches("") is False
+    assert auth.api_key_matches(None) is False
+    assert auth.api_key_matches("zażółć") is False
 
 
 # --- B. token redaction in uvicorn's access log ------------------------------
