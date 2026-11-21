@@ -398,10 +398,30 @@ def test_set_addon_options_preserves_real_secret_when_marker_is_echoed_back(monk
     assert posted["json"] == {"options": {"password": "hunter2", "anonymous": True}}
 
 
-def test_set_addon_options_skips_the_options_read_when_no_marker_present(monkeypatch):
+def test_set_addon_options_reads_stored_options_once_then_posts(monkeypatch):
     """No self_protection lookup at all (it's a pure in-memory check now,
-    see `self_protection.py`) and no merge-read GET when there's no
-    placeholder to resolve — a single POST, nothing else."""
+    see `self_protection.py`). Since 1.0.0 (ADR-0008) the stored options are
+    read once even without a placeholder, to check code-running options —
+    one GET, one POST, nothing else."""
+    calls = []
+
+    def fake_request(method, path, json=None):
+        calls.append((method, path))
+        if method == "GET":
+            return _info_envelope({"options": {"anonymous": False}})
+        return {"result": "ok"}
+
+    monkeypatch.setattr(supervisor_tools, "_supervisor_request", fake_request)
+
+    result = set_addon_options("core_mosquitto", {"anonymous": True})
+
+    assert result == {"result": "ok"}
+    assert calls == [("GET", "/addons/core_mosquitto/info"), ("POST", "/addons/core_mosquitto/options")]
+
+
+def test_set_addon_options_skips_the_read_with_exec_options_enabled(monkeypatch):
+    """With `addon_exec_options_enabled` on and no placeholder, there is
+    nothing to check or merge — a single POST, as before 1.0.0."""
     calls = []
 
     def fake_request(method, path, json=None):
@@ -409,6 +429,7 @@ def test_set_addon_options_skips_the_options_read_when_no_marker_present(monkeyp
         return {"result": "ok"}
 
     monkeypatch.setattr(supervisor_tools, "_supervisor_request", fake_request)
+    monkeypatch.setattr(supervisor_tools, "_exec_options_enabled", True)
 
     result = set_addon_options("core_mosquitto", {"anonymous": True})
 
@@ -426,7 +447,8 @@ def test_set_addon_options_surfaces_read_error_instead_of_writing_marker_literal
 
     result = set_addon_options("core_mosquitto", {"password": _REDACTED})
 
-    assert result == {"error": "HTTP 404", "detail": "no such addon"}
+    assert result["error"] == "addon_options_unverifiable"
+    assert result["supervisor_error"] == {"error": "HTTP 404", "detail": "no such addon"}
 
 
 def test_set_addon_options_preserves_marker_nested_one_level_deep(monkeypatch):
@@ -510,6 +532,8 @@ def test_set_addon_options_keeps_detail_when_no_marker_was_involved(monkeypatch)
     the ordinary (unsanitized) Supervisor error detail is still useful."""
 
     def fake_request(method, path, json=None):
+        if method == "GET":
+            return _info_envelope({"options": {"port": 1883}})
         return {"error": "HTTP 400", "detail": "invalid config: 'port' out of range"}
 
     monkeypatch.setattr(supervisor_tools, "_supervisor_request", fake_request)
@@ -551,6 +575,8 @@ def test_set_addon_options_does_not_block_other_addons(monkeypatch):
     posted = {}
 
     def fake_request(method, path, json=None):
+        if method == "GET":
+            return _info_envelope({"options": {"anonymous": False}})
         posted["method"] = method
         posted["path"] = path
         return {"result": "ok"}
@@ -582,6 +608,8 @@ def test_set_addon_options_is_inert_outside_addon_mode(monkeypatch):
     posted = {}
 
     def fake_request(method, path, json=None):
+        if method == "GET":
+            return _info_envelope({"options": {"anonymous": False}})
         posted["method"] = method
         posted["path"] = path
         return {"result": "ok"}

@@ -134,7 +134,7 @@ jobs:
           # port/git_versioning_auto/max_backups were removed in 1.0.0. Supervisor
           # drops unknown keys before it writes options.json; they stay in this
           # file anyway so the smoke test also proves run.sh ignores them.
-          printf '{"port":7123,"log_level":"info","git_versioning_auto":true,"max_backups":30,"api_key":"","read_only":true,"disabled_namespaces":[],"tool_mode":"full","nodered_write_enabled":false}\n' > "$RUNNER_TEMP/options.json"
+          printf '{"port":7123,"log_level":"info","git_versioning_auto":true,"max_backups":30,"api_key":"","read_only":true,"disabled_namespaces":[],"tool_mode":"full","nodered_write_enabled":false,"addon_exec_options_enabled":false}\n' > "$RUNNER_TEMP/options.json"
           python3 scripts/smoke_stdio_image.py nexus-ci-smoke:smoke --expect-tools 169 \
             --expect-stderr "read_only=True" -- -v "$RUNNER_TEMP/options.json:/data/options.json:ro"
 

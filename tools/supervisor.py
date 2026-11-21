@@ -277,6 +277,100 @@ def _merge_redaction_markers(new_value: Any, old_value: Any, path: str = "") -> 
     return new_value
 
 
+# --- ADR-0008: options that run code inside the target add-on --------------
+#
+# Node-RED `init_commands`/`npm_packages`/`system_packages`, Terminal & SSH
+# `packages`/`authorized_keys`, AppDaemon `python_packages` and the like run
+# whatever they are given on the add-on's next start. An add-on holding a
+# Supervisor token with the `manager` role can then POST other add-ons'
+# options, nexus's own included (supervisor/api/middleware/security.py), and
+# lift nexus's restrictions; any add-on gets a shell nexus itself never
+# offers. Changing such a key therefore needs the nexus add-on option
+# `addon_exec_options_enabled` (default off, like ADR-0007's
+# `nodered_write_enabled`). It applies to every add-on: the role is only one
+# of the privileges an add-on can hold (`homeassistant_api`, `map`,
+# `full_access`, `docker_api`), and it can change with the add-on's next
+# update. Supervisor's own schema types (str/int/bool/url/password/...) say
+# nothing about execution, so the rule is name-based, exact-token matched.
+_EXEC_OPTION_TOKENS = frozenset({
+    "cmd", "cmds", "cmdline", "command", "commands", "exec", "execute", "executable",
+    "shell", "script", "scripts", "hook", "hooks", "init", "startup", "entrypoint",
+    "eval", "package", "packages", "pkg", "pkgs", "pip", "pypi", "npm", "yarn", "apk",
+    "apt", "deb", "requirements", "deps", "dependencies", "plugin", "plugins",
+    "extension", "extensions", "module", "modules", "converter", "converters",
+    "env", "envs", "environment",
+})
+# Whole-key names whose tokens alone are too generic to list above.
+_EXEC_OPTION_KEYS = frozenset({"authorized_keys"})
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_KEY_TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+")
+
+# Set once at startup by `server._apply_tool_policy_or_exit()` from
+# `ToolPolicy.addon_exec_options_enabled`. A process that never ran it
+# (tests, tooling importing this module) keeps the safe default.
+_exec_options_enabled = False
+
+
+def set_exec_options_enabled(enabled: bool) -> None:
+    global _exec_options_enabled
+    _exec_options_enabled = bool(enabled)
+
+
+def _is_exec_option_key(key: object) -> bool:
+    if not isinstance(key, str):
+        return False
+    normalized = _CAMEL_BOUNDARY_RE.sub("_", key).lower()
+    if normalized in _EXEC_OPTION_KEYS:
+        return True
+    return any(token in _EXEC_OPTION_TOKENS for token in _KEY_TOKEN_SPLIT_RE.split(normalized) if token)
+
+
+def _has_exec_option_key(value: Any) -> bool:
+    """True when any dict key anywhere in `value` (dicts and lists, nested)
+    is exec-class."""
+    if isinstance(value, dict):
+        return any(_is_exec_option_key(k) or _has_exec_option_key(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(_has_exec_option_key(item) for item in value)
+    return False
+
+
+_MISSING = object()
+
+
+def _changed_exec_options(new_options: dict, current_options: dict) -> list[str]:
+    """Top-level option names that are, or contain, an exec-class key and
+    whose value differs between the request and what is stored (added,
+    changed or removed alike)."""
+    changed = []
+    for key in sorted(set(new_options) | set(current_options), key=str):
+        new_value = new_options.get(key, _MISSING)
+        current_value = current_options.get(key, _MISSING)
+        exec_class = (
+            _is_exec_option_key(key)
+            or (new_value is not _MISSING and _has_exec_option_key(new_value))
+            or (current_value is not _MISSING and _has_exec_option_key(current_value))
+        )
+        if exec_class and new_value != current_value:
+            changed.append(str(key))
+    return changed
+
+
+def _exec_option_blocked_error(keys: list[str]) -> dict:
+    return {
+        "error": "addon_exec_option_blocked",
+        "keys": keys,
+        "message": (
+            "Refusing to change add-on options that run code inside the add-on "
+            f"({', '.join(keys)}): commands, scripts, packages, plugins, environment "
+            "variables or SSH keys. Change them in the Home Assistant UI, or turn on "
+            "the nexus add-on option addon_exec_options_enabled (full trust, ADR-0008) "
+            "and restart nexus. Other options can be changed if these are sent back "
+            "exactly as read."
+        ),
+    }
+
+
 # Own-add-on identity and the "is this slug nexus itself" check moved to
 # `self_protection.py` (W3 Security review M1/M4): a per-call `GET
 # /addons/self/info` here couldn't be shared with `tools/services.py`'s
@@ -759,28 +853,26 @@ def set_addon_options(
 ) -> dict:
     """Replace an add-on's stored options with the given object.
 
-    Calls `POST /addons/<slug>/options` as `{"options": options}`. Read
-    current values via `supervisor_get_addon`, modify them, and send the
-    full dict back — overwrites previous options entirely, so omitted
-    fields are lost. A value left as the placeholder for a secret field is
-    swapped for the real stored value first, so echoing it back unchanged
-    never overwrites the secret — a list containing it must keep every
-    item's order/count as read, or the call is refused rather than guessed.
-    Once a placeholder was resolved, a Supervisor error strips `detail`
-    (it can otherwise echo the rejected payload, secret included). Takes
-    effect after `supervisor_restart_addon`. Refuses to run against
-    nexus's own add-on — could otherwise lift its own restrictions.
+    Reads the stored options, then calls `POST /addons/<slug>/options` as
+    `{"options": options}`. Overwrites all options, so send the full dict
+    read via `supervisor_get_addon`. A secret left as the placeholder is
+    swapped for the stored value (a list holding one must keep its order
+    and length); a Supervisor error then drops `detail`. Refuses nexus's
+    own add-on. Unless the nexus option `addon_exec_options_enabled` is on,
+    also refuses to add, change or remove an option that runs code in the
+    add-on (a key named like commands, scripts, packages, plugins, env vars
+    or `authorized_keys`, at any depth); send those back as read and the
+    other options still change.
 
     Use when: changing an add-on's configuration programmatically.
     Not for: reading the current options first — use
     `supervisor_get_addon`; for changing nexus's own configuration — use the
     Home Assistant Supervisor UI instead.
     Returns: Supervisor's options-update result.
-    Errors: `{"error": "invalid_slug"}` for a bad slug; `self_addon_options_blocked` for nexus's own add-on;
-    `redaction_marker_list_length_mismatch` on a placeholder list-length
-    mismatch; `SUPERVISOR_TOKEN not set` when the token is missing;
-    `{"error": "HTTP <status>"}` on a schema-validation or placeholder
-    read-back failure.
+    Errors: `invalid_slug`; `self_addon_options_blocked`;
+    `addon_exec_option_blocked` (with `keys`); `addon_options_unverifiable`
+    when the stored options can't be read; `redaction_marker_list_length_mismatch`;
+    `SUPERVISOR_TOKEN not set`; `HTTP <status>` on schema validation.
     Limits: does not apply until the add-on is restarted.
     """
     invalid = _validate_slug(slug)
@@ -796,25 +888,49 @@ def set_addon_options(
                 "Supervisor UI (Settings > Add-ons > Nexus > Configuration) instead."
             ),
         }
-    if _contains_redaction_marker(options):
-        current = _supervisor_request("GET", f"/addons/{slug}/info")
-        if "error" in current:
-            # Nothing has been reconstituted into `options` yet at this point
-            # (the merge below hasn't run) — this GET's own error detail is
-            # Supervisor's generic "no such add-on"/HTTP-failure text, not an
-            # echo of any payload, so S2's sanitization isn't needed here.
-            return current
-        current_data = current.get("data")
-        current_options = current_data.get("options") if isinstance(current_data, dict) else None
+    has_marker = _contains_redaction_marker(options)
+    if not has_marker and _exec_options_enabled:
+        return _supervisor_request("POST", f"/addons/{slug}/options", json={"options": options})
+
+    current = _supervisor_request("GET", f"/addons/{slug}/info")
+    if "error" in current:
+        if not _exec_options_enabled:
+            # ADR-0008 fail-closed: without the stored options there is no way
+            # to tell whether a code-running option would change.
+            return _options_unverifiable_error(slug, current)
+        # Nothing has been reconstituted into `options` yet at this point
+        # (the merge below hasn't run) — this GET's own error detail is
+        # Supervisor's generic "no such add-on"/HTTP-failure text, not an
+        # echo of any payload, so S2's sanitization isn't needed here.
+        return current
+    current_data = current.get("data")
+    current_options = current_data.get("options") if isinstance(current_data, dict) else None
+    if not isinstance(current_options, dict):
+        if not _exec_options_enabled:
+            return _options_unverifiable_error(slug, "no options object in the add-on info")
+        current_options = {}
+    if has_marker:
         try:
-            options = _merge_redaction_markers(
-                options, current_options if isinstance(current_options, dict) else {}
-            )
+            options = _merge_redaction_markers(options, current_options)
         except RedactionMergeError as exc:
             return {"error": "redaction_marker_list_length_mismatch", "message": str(exc)}
-        result = _supervisor_request("POST", f"/addons/{slug}/options", json={"options": options})
-        return _sanitize_error_detail(result)
-    return _supervisor_request("POST", f"/addons/{slug}/options", json={"options": options})
+    if not _exec_options_enabled:
+        changed = _changed_exec_options(options, current_options)
+        if changed:
+            return _exec_option_blocked_error(changed)
+    result = _supervisor_request("POST", f"/addons/{slug}/options", json={"options": options})
+    return _sanitize_error_detail(result) if has_marker else result
+
+
+def _options_unverifiable_error(slug: str, detail: object) -> dict:
+    return {
+        "error": "addon_options_unverifiable",
+        "message": (
+            f"Could not read add-on {slug!r}'s current options, so nexus cannot check "
+            "whether this change touches an option that runs code. Nothing was changed."
+        ),
+        "supervisor_error": detail,
+    }
 
 
 @mcp.tool(annotations=read("Get add-on resource stats"))

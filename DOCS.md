@@ -160,6 +160,7 @@ rather than the default branch.
 | `NEXUS_DISABLED_NAMESPACES` | empty | Comma-separated namespaces to hide, e.g. `supervisor,git` |
 | `NEXUS_TOOL_MODE` | `full` | `search` = a small `tools/list` with lookup and call-by-name tools |
 | `NEXUS_NODERED_WRITE_ENABLED` | `false` | Allow the `nodered_*` write tools (full trust, ADR-0007) |
+| `NEXUS_ADDON_EXEC_OPTIONS_ENABLED` | `false` | Allow code-running add-on options in `supervisor_set_addon_options` (full trust, ADR-0008) |
 | `ESPHOME_DASHBOARD_URL` | — | ESPHome Device Builder URL for `esphome_*` without a Supervisor |
 
 The unprefixed `READ_ONLY`, `DISABLED_NAMESPACES`, `TOOL_MODE` and
@@ -216,6 +217,7 @@ need a **restart** to take effect. Full descriptions:
 | `read_only` | Hide and refuse every tool/prompt that isn't read-only (ADR-0003). Does **not** restrict what an already-visible read tool can read — pair with `disabled_namespaces` for that. |
 | `disabled_namespaces` | Hide and refuse entire tool namespaces (e.g. `["supervisor", "git"]`). An unknown name refuses to start with a log error instead of silently no-op'ing. |
 | `nodered_write_enabled` | Off by default. Allows the `nodered_*` tools that change flows. **Full trust:** a flow runs any code inside the Node-RED add-on, which holds a Supervisor token with the `manager` role and Node-RED's node secrets (ADR-0007). |
+| `addon_exec_options_enabled` | Off by default. Allows `supervisor_set_addon_options` to change other add-ons' options that run code (commands, packages, plugins, env vars, `authorized_keys`). **Full trust** (ADR-0008). |
 | `tool_mode` | `full` (default) or `search` — `search` swaps `tools/list` for a handful of lookup + call-by-name-proxy tools, for context-constrained clients. Everything it hides still works if called by name and stays subject to `read_only`/`disabled_namespaces`. |
 | `api_key` | Pin the MCP API key instead of letting nexus auto-generate one. |
 | `log_level` | Add-on's own log verbosity — does not affect what an MCP client sees. |

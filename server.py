@@ -475,17 +475,24 @@ def _apply_tool_policy_or_exit():
         print(f"Nexus refused to start: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
+    # ADR-0008: not a visibility rule, so apply_policy() doesn't carry it.
+    from tools import supervisor as supervisor_tools
+
+    supervisor_tools.set_exec_options_enabled(tool_policy.addon_exec_options_enabled)
+
     # stderr via print(), like the startup banner: nexus never configures the
     # root logger, so a logger.info() here was dropped by Python's last-resort
     # handler (WARNING+) in every mode, and stdout is the MCP stream in stdio
     # mode. No secrets: booleans, namespace names and counts only.
     print(
         "Tool policy applied: read_only={} disabled_namespaces={} tool_mode={} "
-        "nodered_write_enabled={} -> {}/{} tools visible, {}/{} prompts visible".format(
+        "nodered_write_enabled={} addon_exec_options_enabled={} -> {}/{} tools visible, "
+        "{}/{} prompts visible".format(
             tool_policy.read_only,
             sorted(tool_policy.disabled_namespaces),
             tool_policy.tool_mode,
             tool_policy.nodered_write_enabled,
+            tool_policy.addon_exec_options_enabled,
             application.tools_total - application.tools_disabled,
             application.tools_total,
             application.prompts_total - application.prompts_disabled,

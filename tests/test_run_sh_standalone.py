@@ -224,6 +224,7 @@ _POLICY_ENV = {
     "NEXUS_DISABLED_NAMESPACES": "esphome,git",
     "NEXUS_TOOL_MODE": "search",
     "NEXUS_NODERED_WRITE_ENABLED": "true",
+    "NEXUS_ADDON_EXEC_OPTIONS_ENABLED": "true",
 }
 
 
@@ -330,3 +331,13 @@ def test_standalone_honors_nexus_port(tmp_path):
 def test_standalone_nexus_port_defaults_to_7123(tmp_path):
     env = _run_with_fake_python3(tmp_path, {})
     assert env.get("NEXUS_PORT") == "7123"
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+def test_standalone_addon_exec_options_default_off(tmp_path):
+    """ADR-0008: off unless the caller turns it on."""
+    env = _run_with_fake_python3(tmp_path, {})
+    assert env.get("NEXUS_ADDON_EXEC_OPTIONS_ENABLED") == "false"

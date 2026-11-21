@@ -44,9 +44,10 @@ which caller (direct or indirect) reaches it. Stopping nexus via an indirect
 path is nexus disabling itself, not a privilege escalation.
 
 Indirect paths that can change those options: code running inside another
-add-on that holds a Supervisor token with the `manager` role (per the
-0.29.0 security review, such a token can change other add-ons' options,
-nexus's included — not verified here against Supervisor's source). Nothing
+add-on that holds a Supervisor token with the `manager` role. Such a token
+can change other add-ons' options, nexus's included: Supervisor's
+`supervisor/api/middleware/security.py` allows `ROLE_MANAGER` every
+`/addons/<slug>/...` path except `/security` (checked 2026-11-21). Nothing
 in this module (or in nexus at all) can see or stop a call made from inside
 another add-on. Two ways nexus can get code running there:
 
@@ -55,11 +56,12 @@ another add-on. Two ways nexus can get code running there:
   and refused unless the add-on option `nodered_write_enabled` is on, and
   turning it on is documented as full trust.
 - `supervisor_set_addon_options` on such an add-on (e.g. Node-RED's
-  `init_commands`, `npm_packages`, `system_packages`) followed by a restart:
-  this module only guards nexus's own slug, so this way stays open. It
-  predates 0.29.0 (not a regression) and is a known residual risk pending
-  the owner's decision (block those option keys, or make them opt-in) —
-  DECISIONS-LOG 2026-11-12.
+  `init_commands`, `npm_packages`, `system_packages`) followed by a restart.
+  This module only guards nexus's own slug. Since 1.0.0 (ADR-0008)
+  `tools/supervisor.py` refuses to change options whose key names say they
+  run code, on every add-on, unless the add-on option
+  `addon_exec_options_enabled` is on. The check is name-based, so an option
+  that runs code under an innocent name stays a residual risk.
 
 Fail-closed contract (M4) — single entry point assumed
 --------------------------------------------------------

@@ -20,6 +20,12 @@ of whatever the first two already hid:
   is not read-only. A deployed Node-RED flow runs arbitrary code in the
   Node-RED add-on, which holds a Supervisor token with the `manager` role
   and the flows' credential secret, so writing flows is opt-in.
+- **`addon_exec_options_enabled`** (`NEXUS_ADDON_EXEC_OPTIONS_ENABLED`,
+  default false; ADR-0008): not a visibility rule. `server.main()` hands it
+  to `tools.supervisor.set_exec_options_enabled()`; unless true,
+  `supervisor_set_addon_options` refuses to change options that run code
+  inside the target add-on (`init_commands`, `*_packages`, ...). Parsed
+  here so a typo refuses to start, like the options above.
 - **`tool_mode`** (`NEXUS_TOOL_MODE`, `full` default or `search`): `full`
   leaves `tools/list` as everything `read_only`/`disabled_namespaces` didn't
   already hide. `search` additionally replaces that list with
@@ -98,6 +104,9 @@ class ToolPolicy:
     # ADR-0007: Node-RED write tools stay hidden unless the add-on option says
     # otherwise (fail-closed default, same as the add-on's own default).
     nodered_write_enabled: bool = False
+    # ADR-0008: `supervisor_set_addon_options` may change code-running add-on
+    # options only when this is on (fail-closed default).
+    addon_exec_options_enabled: bool = False
     # ADR-0003 P3 (tool-search mode), parsed from `NEXUS_TOOL_MODE` by
     # `from_env()`. "full" (default) leaves `tools/list` exactly as today
     # (T1/T2's 323-tool/29-namespace catalogue is unaffected — see
@@ -134,12 +143,16 @@ class ToolPolicy:
         nodered_write = _parse_bool(
             env.get("NEXUS_NODERED_WRITE_ENABLED", "false"), option="nodered_write_enabled"
         )
+        addon_exec = _parse_bool(
+            env.get("NEXUS_ADDON_EXEC_OPTIONS_ENABLED", "false"), option="addon_exec_options_enabled"
+        )
 
         return cls(
             read_only=read_only,
             disabled_namespaces=disabled,
             tool_mode=tool_mode,
             nodered_write_enabled=nodered_write,
+            addon_exec_options_enabled=addon_exec,
         )
 
 

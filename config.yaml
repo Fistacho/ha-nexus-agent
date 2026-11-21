@@ -53,6 +53,7 @@ options:
   disabled_namespaces: []
   tool_mode: full
   nodered_write_enabled: false
+  addon_exec_options_enabled: false
 
 schema:
   log_level: list(debug|info|warning|error)
@@ -62,6 +63,7 @@ schema:
     - str
   tool_mode: list(full|search)
   nodered_write_enabled: bool
+  addon_exec_options_enabled: bool
 
 ports:
   7123/tcp: 7123

@@ -9,6 +9,7 @@ if [ -f "$OPTIONS" ]; then
     DISABLED_NAMESPACES=$(jq -r '(.disabled_namespaces // []) | join(",")' "$OPTIONS")
     TOOL_MODE=$(jq -r '.tool_mode // "full"' "$OPTIONS")
     NODERED_WRITE_ENABLED=$(jq -r '.nodered_write_enabled // false' "$OPTIONS")
+    ADDON_EXEC_OPTIONS_ENABLED=$(jq -r '.addon_exec_options_enabled // false' "$OPTIONS")
 
     # Add-on / Supervisor mode only: nexus always talks to HA Core through the
     # Supervisor proxy and reads/writes the Supervisor's own /config bind
@@ -64,6 +65,8 @@ else
         DISABLED_NAMESPACES="${NEXUS_DISABLED_NAMESPACES:-${DISABLED_NAMESPACES:-}}"
     fi
     TOOL_MODE=${NEXUS_TOOL_MODE:-${TOOL_MODE:-full}}
+    # ADR-0008, new in 1.0.0: no unprefixed legacy name to merge.
+    ADDON_EXEC_OPTIONS_ENABLED=${NEXUS_ADDON_EXEC_OPTIONS_ENABLED:-false}
 
     # Standalone mode (no Supervisor, e.g. `docker run -e HA_URL -e HA_TOKEN`
     # against the ghcr.io image — ADR-0005 condition (b)): honor whatever the
@@ -86,6 +89,7 @@ export NEXUS_READ_ONLY="${READ_ONLY}"
 export NEXUS_DISABLED_NAMESPACES="${DISABLED_NAMESPACES}"
 export NEXUS_TOOL_MODE="${TOOL_MODE}"
 export NEXUS_NODERED_WRITE_ENABLED="${NODERED_WRITE_ENABLED}"
+export NEXUS_ADDON_EXEC_OPTIONS_ENABLED="${ADDON_EXEC_OPTIONS_ENABLED}"
 
 if [ -n "${API_KEY}" ]; then
     export NEXUS_API_KEY="${API_KEY}"

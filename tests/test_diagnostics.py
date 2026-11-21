@@ -212,15 +212,18 @@ def test_set_addon_options_builds_a_posix_path(monkeypatch):
     seen = {}
 
     def fake_request(method, path, json=None):
+        if method == "GET":
+            assert "\\" not in path
+            return {"result": "ok", "data": {"options": {"zsh": False}}}
         seen["method"] = method
         seen["path"] = path
         seen["json"] = json
         return {"result": "ok"}
 
     monkeypatch.setattr(supervisor_tools, "_supervisor_request", fake_request)
-    _unwrap(supervisor_tools.set_addon_options)("core_ssh", {"packages": ["nmap"]})
+    _unwrap(supervisor_tools.set_addon_options)("core_ssh", {"zsh": True})
 
     assert seen["path"] == "/addons/core_ssh/options"
     assert "\\" not in seen["path"]
     assert "\a" not in seen["path"]
-    assert seen["json"] == {"options": {"packages": ["nmap"]}}
+    assert seen["json"] == {"options": {"zsh": True}}

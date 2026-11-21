@@ -270,7 +270,8 @@ What it does:
 - It does not limit what visible read tools can read (for example `files_read_config_file`, `git_log`,
   add-on logs). Add `disabled_namespaces` (e.g. `["files", "git", "supervisor"]`) to narrow that too.
 - Writes that run arbitrary code stay off even with `read_only: false` until you opt in:
-  `nodered_write_enabled` for Node-RED flows (see [Node-RED](#node-red)).
+  `nodered_write_enabled` for Node-RED flows (see [Node-RED](#node-red)) and
+  `addon_exec_options_enabled` for other add-ons' options that run code (see [Security](#security)).
 
 All options: [Add-on Options](#add-on-options) · threat model: [Security](#security).
 
@@ -432,6 +433,7 @@ Ask the server itself: `discover_list_namespaces`, `discover_tool_search("query"
 - **Access logs never contain the raw key** — a client still sending a pre-1.0.0 `?token=...` URL is rejected, and the add-on redacts that value in uvicorn's access log before it's written.
 - **Startup logs never print the raw key** — only the path of the file it's stored in (`/config/.nexus_api_key`).
 - **Tool-exposure policy** (`read_only`, `disabled_namespaces`) — see [Add-on Options](#add-on-options) — narrows what a client can see/call at the MCP protocol level itself: a hidden tool is refused at `tools/call`, not merely omitted from `tools/list`. `read_only` does not restrict what an already-visible read tool can read (e.g. `files_read_config_file`, `git_log`, `supervisor_get_addon_logs`); combine with `disabled_namespaces` to also narrow that.
+- **Add-on options that run code are opt-in** (ADR-0008). By default `supervisor_set_addon_options` refuses to add, change or remove another add-on's option whose name (at any depth) says it runs code — commands, scripts, packages, plugins, environment variables, `authorized_keys` — on every add-on, not only those with the Supervisor `manager` role. Such code would run with that add-on's privileges, and a `manager` add-on can change nexus's own options. Turn on `addon_exec_options_enabled` only if you trust whoever drives nexus that far. The check is by key name: an option that runs code under an innocent name (for example a free-text socat address) is not caught.
 - Found a vulnerability? See [SECURITY.md](SECURITY.md) for how to report it privately.
 
 ---
@@ -486,6 +488,7 @@ them return a response payload anyway.
 | `read_only` | `false` | Hide and refuse every tool that is not read-only (ADR-0003), and every MCP prompt. See [Security](#security) for what it does *not* restrict. Requires a restart. |
 | `disabled_namespaces` | `[]` | List of tool namespaces (e.g. `["supervisor", "git"]`) to hide and refuse entirely. An unknown namespace name refuses to start with a readable error in the add-on log. Requires a restart. |
 | `nodered_write_enabled` | `false` | Allow the five `nodered_*` write tools (create/update/delete/enable/restore flows). **Full trust**: a flow runs any code inside the Node-RED add-on, which holds a Supervisor token with the `manager` role and Node-RED's node secrets — see [Node-RED](#node-red) and ADR-0007. `read_only` still hides them. Requires a restart. |
+| `addon_exec_options_enabled` | `false` | Allow `supervisor_set_addon_options` to add, change or remove other add-ons' options that run code on their next start: commands (`init_commands`), packages (`npm_packages`, `system_packages`, `python_packages`, `packages`), plugins, environment variables, SSH `authorized_keys`. Off, other options still change if those are sent back as read. **Full trust** when on (ADR-0008). Requires a restart. |
 | `tool_mode` | `full` | `full` exposes every tool in `tools/list`, unchanged. `search` instead shows only 3 lookup tools (`discover_tool_search`, `discover_get_tool_doc`, `discover_list_namespaces`) plus 3 call-by-name proxies, one per tool class (`discover_call_read_tool` / `_write_tool` / `_destructive_tool`) — a much smaller catalogue for context-constrained clients. Every tool `search` hides still works if called directly by name, and stays subject to `read_only`/`disabled_namespaces` exactly as in `full` mode — this option only changes what `tools/list` shows. `discover` must stay out of `disabled_namespaces` while this is `search` (the add-on refuses to start otherwise — it would leave `tools/list` empty). Requires a restart. |
 
 `read_only` and `disabled_namespaces` combine as a union — a tool hidden by either one is hidden. Both are evaluated once at startup; there is no per-session or per-client variant. `tool_mode` is a context-budget convenience, not a security boundary — it never widens or narrows what `read_only`/`disabled_namespaces` already decided.
@@ -729,6 +732,7 @@ action:
 | `NEXUS_READ_ONLY` | No | `false` | Standalone equivalent of the `read_only` add-on option — see [Add-on Options](#add-on-options) |
 | `NEXUS_DISABLED_NAMESPACES` | No | *(empty)* | Standalone equivalent of `disabled_namespaces`, comma-separated (e.g. `supervisor,git`) |
 | `NEXUS_NODERED_WRITE_ENABLED` | No | `false` | Standalone equivalent of `nodered_write_enabled` |
+| `NEXUS_ADDON_EXEC_OPTIONS_ENABLED` | No | `false` | Standalone equivalent of `addon_exec_options_enabled` (matters only where `supervisor_*` works, i.e. with a Supervisor) |
 | `NEXUS_TOOL_MODE` | No | `full` | Standalone equivalent of the `tool_mode` add-on option (`full`\|`search`) — see [Add-on Options](#add-on-options) |
 
 ---

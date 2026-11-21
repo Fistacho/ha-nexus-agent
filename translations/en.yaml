@@ -55,6 +55,18 @@ configuration:
       and can read the secrets stored in Node-RED's nodes. Reading flows
       works either way. read_only still hides the write tools. Requires an
       add-on restart to take effect.
+  addon_exec_options_enabled:
+    name: Allow add-on options that run code
+    description: >-
+      Off by default. When on, supervisor_set_addon_options may also change
+      other add-ons' options that run code when that add-on starts:
+      commands (e.g. Node-RED's init_commands), packages (npm_packages,
+      system_packages, python_packages), plugins, environment variables and
+      SSH authorized_keys. Turning this on means full trust in whoever
+      drives nexus: such code runs with that add-on's privileges, and an
+      add-on with the Supervisor manager role can change nexus's own
+      options. Other options can be changed either way. Requires an add-on
+      restart to take effect.
 
 network:
   7123/tcp: >-
