@@ -426,6 +426,37 @@ def test_startup_log_lines_stdio_mode_never_contain_the_api_key():
     assert not any(auth.API_KEY in line for line in lines)
 
 
+def test_startup_log_lines_stdio_mode_do_not_point_at_ingress():
+    """Outside the add-on there is no ingress panel; in stdio there is no API
+    key either. The banner used to say "open the Nexus panel (ingress)"."""
+    text = "\n".join(server._startup_log_lines(port=7123, http_mode=False))
+
+    assert "ingress" not in text
+    assert "no API key" in text
+
+
+def test_startup_log_lines_for_plan_standalone_http_does_not_point_at_ingress():
+    import addon_network
+
+    plan = addon_network.ListenPlan.standalone(7123)
+    text = "\n".join(server._startup_log_lines_for_plan(plan, addon_mode=False))
+
+    assert "ingress" not in text
+    assert "http://localhost:7123" in text
+    assert "key" in text.lower()
+
+
+def test_startup_log_lines_for_plan_addon_mode_still_points_at_ingress():
+    import addon_network
+
+    plan = addon_network.ListenPlan.from_self_info(
+        {"network": {"7123/tcp": 7123}, "ip_address": "172.30.32.1"}
+    )
+    text = "\n".join(server._startup_log_lines_for_plan(plan, addon_mode=True))
+
+    assert "Open Web UI" in text
+
+
 # --- D. tool count is read from the live FastMCP registry --------------------
 
 def _tool_count_sync() -> int:

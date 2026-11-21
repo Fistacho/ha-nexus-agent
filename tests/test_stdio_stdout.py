@@ -38,7 +38,10 @@ def test_stdio_startup_writes_nothing_to_stdout(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert captured.out == "", f"stdio startup wrote to stdout: {captured.out!r}"
     assert "Nexus starting (stdio)" in captured.err
-    assert "API key stored in" in captured.err
+    # 1.0.0: the stdio banner no longer points at the add-on's ingress panel
+    # and API key, which have nothing to do with a stdio session.
+    assert "ingress" not in captured.err
+    assert "no API key" in captured.err
 
 
 def test_stdio_subprocess_first_stdout_line_is_valid_jsonrpc(tmp_path):

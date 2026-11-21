@@ -143,20 +143,24 @@ def _startup_log_lines(port: int, http_mode: bool) -> list[str]:
     """
     from auth import _KEY_FILE
 
-    if http_mode:
-        lines = [
-            f"Nexus starting (HTTP) on port {port}",
-            f"Setup UI  → http://localhost:{port}",
-            f"MCP       → http://localhost:{port}/mcp",
+    if not http_mode:
+        # No HTTP listener, no Setup UI and no ingress in stdio mode: the MCP
+        # client that started this process talks to it over stdin/stdout and
+        # needs no API key. 0.x printed the add-on's "open the Nexus panel
+        # (ingress)" hint here too, which only applies inside the add-on.
+        return [
+            "Nexus starting (stdio): the MCP client that started this process talks "
+            "to it over stdin/stdout; no API key or Setup UI is used in this mode"
         ]
-    else:
-        lines = ["Nexus starting (stdio)"]
+    return [
+        f"Nexus starting (HTTP) on port {port}",
+        f"Setup UI  → http://localhost:{port}",
+        f"MCP       → http://localhost:{port}/mcp",
+        f"API key stored in {_KEY_FILE}; open the Setup UI from this machine to see client config",
+    ]
 
-    lines.append(f"API key stored in {_KEY_FILE}; open the Nexus panel (ingress) to see client config")
-    return lines
 
-
-def _startup_log_lines_for_plan(plan) -> list[str]:
+def _startup_log_lines_for_plan(plan, addon_mode: bool | None = None) -> list[str]:
     """HTTP-mode startup banner for a `ListenPlan` (ADR-0004 D1b).
 
     Unlike `_startup_log_lines`, this reports every socket nexus actually
@@ -167,9 +171,15 @@ def _startup_log_lines_for_plan(plan) -> list[str]:
     socket at all (port disabled) — see `addon_network.ListenPlan`.
 
     Never includes the raw API key, for the same reason as
-    `_startup_log_lines`.
+    `_startup_log_lines`. `addon_mode` (default: `SUPERVISOR_TOKEN` is set)
+    picks where the last line sends the user: the add-on's Open Web UI
+    (ingress), or the Setup UI on localhost in standalone `NEXUS_HTTP=1`,
+    where `setup_ui.can_access_ui` trusts localhost.
     """
     from auth import _KEY_FILE
+
+    if addon_mode is None:
+        addon_mode = bool(os.getenv("SUPERVISOR_TOKEN"))
 
     lines = ["Nexus starting (HTTP)"]
     for host, sock_port in plan.sockets:
@@ -184,7 +194,15 @@ def _startup_log_lines_for_plan(plan) -> list[str]:
             "add-on's Network settings) — reach Nexus via Home Assistant ingress instead"
         )
 
-    lines.append(f"API key stored in {_KEY_FILE}; open the Nexus panel (ingress) to see client config")
+    if addon_mode:
+        lines.append(
+            f"API key stored in {_KEY_FILE}; open the add-on's Open Web UI (Home Assistant "
+            "ingress) to see client config"
+        )
+    else:
+        lines.append(
+            f"API key stored in {_KEY_FILE}; open the Setup UI from this machine to see client config"
+        )
     return lines
 
 
