@@ -1,5 +1,82 @@
 # Changelog
 
+## 1.0.0
+
+First stable release and first listing in the MCP Registry. From 1.0.0 on,
+tool names and parameters are a stable API: a change that breaks existing
+calls needs a new major version (ADR-0009). The breaking changes below are
+the last clean-up before that freeze. Still 354 tools across 32 domains.
+
+**Breaking changes**
+
+- **`?token=` authentication is gone.** `/mcp` accepts the API key only as an
+  `Authorization: Bearer <API_KEY>` header. A request that still uses
+  `?token=` gets `401` with a hint, and the query string can no longer
+  override the header. Re-copy your client config from the Setup UI
+  (**Open Web UI**) if it still has `?token=` in its URL. Codex CLI now has a
+  header-based snippet too:
+  `codex mcp add nexus --url http://<host>:7123/mcp --bearer-token-env-var NEXUS_API_KEY`
+  (the key is read from the `NEXUS_API_KEY` environment variable). The
+  add-on still masks a `token=` value in its access log.
+- **Add-on options `port`, `git_versioning_auto` and `max_backups` are
+  removed.** `port` has done nothing since 0.23.0 (the LAN port is set on
+  the add-on's Network tab); the other two were never read. Nothing to do:
+  Supervisor ignores the stored values with a warning in its log
+  (`Option 'port' does not exist in the schema …`), and the add-on starts
+  normally. Standalone, `-e NEXUS_PORT=…` is now honoured (the image used to
+  overwrite it with 7123); `PORT` still works as a fallback.
+- **`git_git_*` tools are renamed to `git_*`**: `git_init_config`,
+  `git_status`, `git_commit_all`, `git_log`, `git_diff`,
+  `git_rollback_file`, `git_rollback_to_commit`, `git_create_branch`,
+  `git_checkout_branch`, `git_list_branches`. Parameters are unchanged;
+  `git_safe_write_with_checkpoint` keeps its name. Update saved prompts or
+  client-side tool allowlists that use the old names.
+- **Add-on options that run code are opt-in** (ADR-0008).
+  `supervisor_set_addon_options` now reads the add-on's stored options first
+  and refuses (`addon_exec_option_blocked`) to add, change or remove an
+  option that runs code in that add-on: commands (`init_commands`),
+  packages (`npm_packages`, `system_packages`, `python_packages`,
+  `packages`), plugins, environment variables, SSH `authorized_keys` — on
+  every add-on. Other options still change as long as those are sent back
+  exactly as read. If the stored options can't be read, nothing is changed
+  (`addon_options_unverifiable`). New add-on option
+  **`addon_exec_options_enabled`** (default off; `NEXUS_ADDON_EXEC_OPTIONS_ENABLED`
+  standalone) turns the check off. **Turning it on means full trust**: such
+  code runs with that add-on's privileges, and an add-on with the
+  Supervisor `manager` role can change nexus's own options.
+
+**Fixed**
+
+- Docker image, standalone: `-e NEXUS_READ_ONLY=true`,
+  `NEXUS_DISABLED_NAMESPACES`, `NEXUS_TOOL_MODE` and
+  `NEXUS_NODERED_WRITE_ENABLED` were overwritten by the entrypoint, so
+  read-only mode silently stayed off (349 tools visible instead of 169).
+  They are honoured now; when both the `NEXUS_*` and the old unprefixed
+  name are set, the safer value wins.
+- Docker image, stdio: the entrypoint printed `Starting Nexus Agent…` on
+  stdout before the first MCP message, which breaks stdio clients. Nothing
+  but MCP messages goes to stdout now (CI checks this on the built image).
+- The `Tool policy applied: read_only=… -> N/354 tools visible` line was
+  never printed; it is now, on stderr, in every mode.
+- The stdio and standalone HTTP startup messages no longer tell you to open
+  the add-on's ingress panel, which doesn't exist outside the add-on.
+
+**Added**
+
+- `server.json` declares the optional `NEXUS_READ_ONLY` and
+  `NEXUS_DISABLED_NAMESPACES` inputs for MCP Registry clients.
+- The set of tools visible in read-only mode is pinned to a reviewed list
+  (`tests/contract/read_only_tools.json`, 169 of 354), so a new read tool
+  can't join it unnoticed.
+
+**Docs**
+
+- New README: shorter first screen, demo GIF, "What can you ask?",
+  comparison with other Home Assistant MCP servers, Docker quick start
+  (stdio and HTTP) and a read-only section. DOCS.md documents the
+  standalone Docker/`uvx` path. CONTRIBUTING.md, issue forms and a pull
+  request template.
+
 ## 0.29.0
 
 **Added**

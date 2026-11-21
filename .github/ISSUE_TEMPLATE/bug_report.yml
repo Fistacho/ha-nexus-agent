@@ -32,7 +32,7 @@ body:
     attributes:
       label: nexus version
       description: Add-on Info tab, or the image tag you run.
-      placeholder: "0.29.0"
+      placeholder: "1.0.0"
     validations:
       required: true
   - type: input

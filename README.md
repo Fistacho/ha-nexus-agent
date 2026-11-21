@@ -21,7 +21,7 @@ Works with **Claude Code**, **Claude Desktop**, **VS Code (Copilot)**, **Cursor*
 
 <sub>Illustration of a typical session. Tool names, parameters and result shapes are nexus' real API; the entities and the dashboard are generic, not a real home.</sub>
 
-**Latest release: v0.29.0** — Node-RED and NeonPlan 3D tools, `entities_remove_entity`, fixes. [Release notes](CHANGELOG.md#0290) · [all releases](https://github.com/Fistacho/ha-nexus-agent/releases)
+**Latest release: v1.0.0** — stable tool API, MCP Registry listing, Docker quick start; breaking changes listed in the notes. [Release notes](CHANGELOG.md#100) · [all releases](https://github.com/Fistacho/ha-nexus-agent/releases)
 
 ---
 
