@@ -178,3 +178,133 @@ def test_addon_branch_still_forces_supervisor_url_and_config_path():
         "if/else again -- that is the exact standalone-mode regression this test suite "
         "guards against (see test_standalone_honors_ha_url_env_override)"
     )
+
+
+# --- ADR-0005 condition (a) through the image entrypoint, and policy env vars ---
+#
+# `docker run -i --rm -e HA_URL -e HA_TOKEN ghcr.io/fistacho/nexus-agent` runs
+# `run.sh`, not `python server.py` -- so the stdio stdout guarantee in
+# tests/test_stdio_stdout.py only holds for the image if run.sh itself prints
+# nothing to stdout before `exec`. Verified against the published 0.29.0
+# image: its first stdout line was "Starting Nexus Agent on port 7123...",
+# ahead of the JSON-RPC `initialize` response.
+
+
+def _run_capturing_stdout(tmp_path: Path, env_overrides: dict[str, str]) -> subprocess.CompletedProcess:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_python3 = fake_bin / "python3"
+    fake_python3.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_python3.chmod(fake_python3.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    env = dict(os.environ)
+    env.pop("SUPERVISOR_TOKEN", None)
+    env.update(env_overrides)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    return subprocess.run(
+        ["bash", str(RUN_SH)], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30
+    )
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+def test_standalone_run_sh_writes_nothing_to_stdout(tmp_path):
+    result = _run_capturing_stdout(tmp_path, {"HA_URL": "http://ha.test:8123", "HA_TOKEN": "t"})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "", (
+        "run.sh is the image's CMD; in stdio mode its stdout IS the MCP stream "
+        f"(MCP spec: nothing but MCP messages). Got: {result.stdout!r}"
+    )
+    assert "Starting Nexus Agent" in result.stderr
+
+
+_POLICY_ENV = {
+    "NEXUS_READ_ONLY": "true",
+    "NEXUS_DISABLED_NAMESPACES": "esphome,git",
+    "NEXUS_TOOL_MODE": "search",
+    "NEXUS_NODERED_WRITE_ENABLED": "true",
+}
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+@pytest.mark.parametrize("name,value", list(_POLICY_ENV.items()))
+def test_standalone_honors_documented_nexus_policy_env_vars(tmp_path, name, value):
+    """README/DOCS document `NEXUS_READ_ONLY` (etc.) as the standalone
+    equivalent of the add-on option. run.sh used to read only the unprefixed
+    `READ_ONLY` and then re-export `NEXUS_READ_ONLY=${READ_ONLY}` -- so
+    `docker run -e NEXUS_READ_ONLY=true` was silently overwritten with
+    `false` (verified on the 0.29.0 image: 349 tools visible instead of 169).
+    Fail-open for a security option."""
+    env = _run_with_fake_python3(tmp_path, {name: value})
+    assert env.get(name) == value
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+def test_standalone_still_honors_legacy_unprefixed_read_only(tmp_path):
+    env = _run_with_fake_python3(tmp_path, {"READ_ONLY": "true"})
+    assert env.get("NEXUS_READ_ONLY") == "true"
+
+
+# Precedence when both the documented NEXUS_* name and the legacy unprefixed
+# name are set: fail closed for the security options. read_only is on if
+# either says so; Node-RED writes are on only if neither says off;
+# disabled_namespaces is the union of both lists. tool_mode (not a security
+# boundary) simply prefers NEXUS_TOOL_MODE.
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+@pytest.mark.parametrize(
+    "nexus_value,legacy_value",
+    [("true", "false"), ("false", "true"), ("FALSE", "yes")],
+)
+def test_standalone_read_only_is_on_if_either_name_says_so(tmp_path, nexus_value, legacy_value):
+    env = _run_with_fake_python3(
+        tmp_path, {"NEXUS_READ_ONLY": nexus_value, "READ_ONLY": legacy_value}
+    )
+    assert env.get("NEXUS_READ_ONLY", "").lower() not in {"", "0", "false", "no", "off"}
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+@pytest.mark.parametrize("nexus_value,legacy_value", [("true", "false"), ("false", "true")])
+def test_standalone_nodered_writes_off_if_either_name_says_off(tmp_path, nexus_value, legacy_value):
+    env = _run_with_fake_python3(
+        tmp_path,
+        {"NEXUS_NODERED_WRITE_ENABLED": nexus_value, "NODERED_WRITE_ENABLED": legacy_value},
+    )
+    assert env.get("NEXUS_NODERED_WRITE_ENABLED") == "false"
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+def test_standalone_disabled_namespaces_is_union_of_both_names(tmp_path):
+    env = _run_with_fake_python3(
+        tmp_path, {"NEXUS_DISABLED_NAMESPACES": "git", "DISABLED_NAMESPACES": "files,git"}
+    )
+    names = {n.strip() for n in env.get("NEXUS_DISABLED_NAMESPACES", "").split(",") if n.strip()}
+    assert names == {"git", "files"}
+
+
+@pytest.mark.skipif(
+    Path("/data/options.json").exists(),
+    reason="this machine has a real /data/options.json -- would exercise add-on mode instead",
+)
+def test_standalone_invalid_read_only_value_is_passed_through_to_fail_startup(tmp_path):
+    """A typo must reach policy.py, which refuses to start, instead of being
+    swallowed into a default by run.sh."""
+    env = _run_with_fake_python3(tmp_path, {"NEXUS_READ_ONLY": "ture"})
+    assert env.get("NEXUS_READ_ONLY") == "ture"

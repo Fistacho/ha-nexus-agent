@@ -490,17 +490,23 @@ def _apply_tool_policy_or_exit():
         print(f"Nexus refused to start: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 
-    logging.getLogger(__name__).info(
-        "Tool policy applied: read_only=%s disabled_namespaces=%s tool_mode=%s "
-        "nodered_write_enabled=%s -> %d/%d tools visible, %d/%d prompts visible",
-        tool_policy.read_only,
-        sorted(tool_policy.disabled_namespaces),
-        tool_policy.tool_mode,
-        tool_policy.nodered_write_enabled,
-        application.tools_total - application.tools_disabled,
-        application.tools_total,
-        application.prompts_total - application.prompts_disabled,
-        application.prompts_total,
+    # stderr via print(), like the startup banner: nexus never configures the
+    # root logger, so a logger.info() here was dropped by Python's last-resort
+    # handler (WARNING+) in every mode, and stdout is the MCP stream in stdio
+    # mode. No secrets: booleans, namespace names and counts only.
+    print(
+        "Tool policy applied: read_only={} disabled_namespaces={} tool_mode={} "
+        "nodered_write_enabled={} -> {}/{} tools visible, {}/{} prompts visible".format(
+            tool_policy.read_only,
+            sorted(tool_policy.disabled_namespaces),
+            tool_policy.tool_mode,
+            tool_policy.nodered_write_enabled,
+            application.tools_total - application.tools_disabled,
+            application.tools_total,
+            application.prompts_total - application.prompts_disabled,
+            application.prompts_total,
+        ),
+        file=sys.stderr,
     )
     return tool_policy
 
