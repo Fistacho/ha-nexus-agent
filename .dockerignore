@@ -11,3 +11,4 @@ tests_e2e
 scripts
 .github
 .pytest_cache
+docs
