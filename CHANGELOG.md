@@ -31,6 +31,10 @@ the last clean-up before that freeze. Still 354 tools across 32 domains.
   `git_checkout_branch`, `git_list_branches`. Parameters are unchanged;
   `git_safe_write_with_checkpoint` keeps its name. Update saved prompts or
   client-side tool allowlists that use the old names.
+- **`search_search_*` tools are renamed the same way**:
+  `search_search_entities` → `search_entities`, `search_search_devices` →
+  `search_devices`, `search_search_areas` → `search_areas`. Parameters are
+  unchanged. No tool name repeats its namespace any more (a test pins it).
 - **Add-on options that run code are opt-in** (ADR-0008).
   `supervisor_set_addon_options` now reads the add-on's stored options first
   and refuses (`addon_exec_option_blocked`) to add, change or remove an

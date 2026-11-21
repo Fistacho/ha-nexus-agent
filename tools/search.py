@@ -47,7 +47,7 @@ def _safe_ws(msg_type: str, **kwargs) -> list[dict]:
 
 
 @mcp.tool(annotations=read("Search entities"))
-def search_entities(
+def entities(
     query: Annotated[str, Field(description="Search text to fuzzy-match against entity_id, friendly_name and device_id.")],
     limit: Annotated[int, Field(description="Maximum number of ranked results to return; defaults to 20.")] = 20,
 ) -> list[dict]:
@@ -84,7 +84,7 @@ def search_entities(
 
 
 @mcp.tool(annotations=read("Search devices"))
-def search_devices(
+def devices(
     query: Annotated[str, Field(description="Search text to fuzzy-match against a device's name, name_by_user, manufacturer and model.")],
     limit: Annotated[int, Field(description="Maximum number of ranked results to return; defaults to 20.")] = 20,
 ) -> list[dict]:
@@ -125,7 +125,7 @@ def search_devices(
 
 
 @mcp.tool(annotations=read("Search areas"))
-def search_areas(
+def areas(
     query: Annotated[str, Field(description="Search text to fuzzy-match against area names.")],
     limit: Annotated[int, Field(description="Maximum number of ranked results to return; defaults to 20.")] = 20,
 ) -> list[dict]:
@@ -172,8 +172,8 @@ def deep_search(
 
     Use when: you don't know whether what you're looking for is an entity,
     device or area.
-    Not for: results scoped to one kind — use `search_search_entities`,
-    `search_search_devices` or `search_search_areas`.
+    Not for: results scoped to one kind — use `search_entities`,
+    `search_devices` or `search_areas`.
     Returns: list of dicts tagged with `kind` ('entity'/'automation'/
     'device'/'area'), each with kind-specific fields plus `score`, up to
     `limit` entries."""

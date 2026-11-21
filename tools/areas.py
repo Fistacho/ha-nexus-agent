@@ -128,7 +128,7 @@ def list_devices() -> list[dict]:
     projects each entry down to id/name/area_id/manufacturer/model/
     entry_type plus config_entries/disabled_by; devices scoped to one area —
     use `devices_list_devices_in_area`; fuzzy name-based search — use
-    `search_search_devices`.
+    `search_devices`.
     Returns: list of full device registry dicts as returned by
     config/device_registry/list."""
     return ha.get_device_registry()

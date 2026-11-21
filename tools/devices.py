@@ -45,7 +45,7 @@ def list_devices() -> list[dict]:
     Use when: you need the device registry without every raw field.
     Not for: the full unfiltered registry — use `areas_list_devices`;
     devices scoped to one area — use `devices_list_devices_in_area`; fuzzy
-    name-based search — use `search_search_devices`.
+    name-based search — use `search_devices`.
     Returns: list of slimmed device dicts as described above."""
     devices = ha._ws_call("config/device_registry/list")
     return [_slim(d) for d in (devices or [])]
@@ -141,7 +141,7 @@ def list_devices_in_area(
     registry.
     Not for: the whole device registry — use `devices_list_devices` or
     `areas_list_devices`; fuzzy name-based search — use
-    `search_search_devices`.
+    `search_devices`.
     Returns: list of slimmed device dicts (see `devices_list_devices`) whose
     area_id equals the given area_id.
     Limits: devices without an area are never returned here."""

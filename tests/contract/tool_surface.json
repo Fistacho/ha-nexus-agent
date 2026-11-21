@@ -5304,7 +5304,61 @@
         "type": "object"
       }
     },
+    "search_areas": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
     "search_deep_search": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "search_devices": {
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    "search_entities": {
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -5347,60 +5401,6 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
-        "type": "object"
-      }
-    },
-    "search_search_areas": {
-      "inputSchema": {
-        "additionalProperties": false,
-        "properties": {
-          "limit": {
-            "default": 20,
-            "type": "integer"
-          },
-          "query": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "query"
-        ],
-        "type": "object"
-      }
-    },
-    "search_search_devices": {
-      "inputSchema": {
-        "additionalProperties": false,
-        "properties": {
-          "limit": {
-            "default": 20,
-            "type": "integer"
-          },
-          "query": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "query"
-        ],
-        "type": "object"
-      }
-    },
-    "search_search_entities": {
-      "inputSchema": {
-        "additionalProperties": false,
-        "properties": {
-          "limit": {
-            "default": 20,
-            "type": "integer"
-          },
-          "query": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "query"
-        ],
         "type": "object"
       }
     },

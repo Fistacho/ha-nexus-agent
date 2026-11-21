@@ -267,6 +267,21 @@ _EXPECTED_GIT_TOOLS = {
 }
 
 
+def test_no_tool_repeats_its_namespace_prefix():
+    """1.0.0: `search_entities` and friends had the same cause as
+    `git_git_*` (a local name starting with its own namespace). No mounted
+    tool may publish `<ns>_<ns>_...` again."""
+    doubled = sorted(n for n in _SERVER_TOOLS if n.startswith(f"{_namespace_for(n)}_{_namespace_for(n)}_"))
+    assert doubled == []
+    for mod, ns in _MODULE_NAMESPACE.items():
+        bad = sorted(n for n in _MODULE_TOOLS[mod] if n.startswith(f"{ns}_"))
+        assert bad == [], f"tools/{mod}.py: local names must not start with '{ns}_' (mount() adds it): {bad}"
+
+
+def test_search_entities_devices_areas_names():
+    assert {"search_entities", "search_devices", "search_areas"} <= set(_SERVER_TOOLS)
+
+
 def test_git_namespace_has_no_double_prefix():
     git_tools = {n for n in _SERVER_TOOLS if n.startswith("git_")}
     assert git_tools == _EXPECTED_GIT_TOOLS
@@ -319,7 +334,7 @@ _OVERLAP_GROUPS: list[tuple[str, ...]] = [
     ("files_write_config_file", "git_safe_write_with_checkpoint", "esphome_write_config"),
     ("entities_bulk_control", "entities_bulk_set_state"),
     ("esphome_get_addon_logs", "supervisor_get_addon_logs"),
-    ("areas_list_devices", "devices_list_devices", "search_search_devices", "devices_list_devices_in_area"),
+    ("areas_list_devices", "devices_list_devices", "search_devices", "devices_list_devices_in_area"),
     ("ws_get_states", "entities_list_entities"),
     ("statistics_get_statistics", "history_get_state_history"),
     ("statistics_list_statistic_ids", "history_get_state_history"),
